@@ -1,0 +1,698 @@
+/* =============================================================================
+ * SUPERMINE — style.css                        [OWNER: Agent 3 — presentation]
+ * -----------------------------------------------------------------------------
+ * Fullscreen canvas + a DOM overlay for the HUD.
+ *
+ * DESIGN LANGUAGE — "heavy industrial"
+ *   * brushed dark metal panels with a hard top bevel and a black bottom edge
+ *   * hazard/warning stripes as the accent on anything that means "machinery"
+ *   * amber-gold for money, cyan for progress/tech, orange for overdrive
+ *   * chunky monospace numerals (tabular) so counters never reflow
+ *   * THE CENTRE OF THE SCREEN STAYS EMPTY. Everything is pinned to an edge
+ *     except the upgrade announcement (upper third) and the end-of-run card.
+ *
+ * #ui-root is pointer-events:none so drags pass through to the canvas; only
+ * buttons and the start overlay opt back in.
+ *
+ * Class prefix convention: every UI class starts with `sm-`.
+ * Layout switches: `.sm-compact` (<900px wide or <520px tall) and `.sm-tiny`
+ * (<420px) are toggled from ui.js on resize — no JS-driven pixel maths.
+ * In compact the progress gauge moves from the top centre to the bottom edge,
+ * because the stat panel and the button cluster leave no room across the top.
+ * ========================================================================== */
+
+:root {
+  --sm-bg:        #0b0a0d;
+
+  /* metal */
+  --sm-panel:     linear-gradient(180deg, rgba(38,42,50,0.90) 0%, rgba(20,23,28,0.92) 42%, rgba(13,15,19,0.94) 100%);
+  --sm-panel-flat: rgba(16, 18, 23, 0.88);
+  --sm-edge-hi:   rgba(255, 255, 255, 0.16);
+  --sm-edge-lo:   rgba(0, 0, 0, 0.72);
+  --sm-border:    rgba(126, 140, 158, 0.26);
+
+  /* type */
+  --sm-text:      #eef3f8;
+  --sm-dim:       #8e9bab;
+  --sm-dimmer:    #5c6674;
+
+  /* accents */
+  --sm-gold:      #ffc21f;
+  --sm-gold-hot:  #fff0a8;
+  --sm-cyan:      #66e2ff;
+  --sm-cyan-hot:  #c4f6ff;
+  --sm-orange:    #ff8a1f;
+  --sm-red:       #ff5a48;
+  --sm-green:     #58e08a;
+
+  --sm-radius:    6px;
+  --sm-font:      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sm-mono:      ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Roboto Mono", monospace;
+
+  --sm-hazard: repeating-linear-gradient(
+      135deg,
+      #f0b31b 0 8px,
+      #171512 8px 16px
+  );
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--sm-bg);
+  color: var(--sm-text);
+  font-family: var(--sm-font);
+  /* Stop mobile browsers hijacking drags / double-tap zoom. */
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#game {
+  display: block;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+#game:active { cursor: grabbing; }
+
+/* ===========================================================================
+ * OVERLAY ROOT
+ * ======================================================================== */
+#ui-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0)
+           env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+}
+
+/* --- the shared metal plate ------------------------------------------- */
+.sm-panel {
+  position: relative;
+  background: var(--sm-panel);
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius);
+  /* hard bevel: light on top, black underneath, plus a drop shadow */
+  box-shadow:
+    inset 0 1px 0 var(--sm-edge-hi),
+    inset 0 -2px 0 var(--sm-edge-lo),
+    inset 1px 0 0 rgba(255,255,255,0.05),
+    0 6px 18px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(7px) saturate(1.1);
+  -webkit-backdrop-filter: blur(7px) saturate(1.1);
+  overflow: hidden;
+}
+
+/* Warning stripe welded to the top edge of a panel. */
+.sm-stripe {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--sm-hazard);
+  opacity: 0.85;
+}
+
+/* ===========================================================================
+ * STATS (top-left)
+ * ======================================================================== */
+.sm-stats {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 12px 14px 11px;
+  min-width: 208px;
+}
+
+.sm-currency {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  line-height: 1;
+  transform-origin: left center;
+}
+.sm-ico {
+  color: var(--sm-gold);
+  font-size: 19px;
+  text-shadow: 0 0 14px rgba(255, 194, 31, 0.8);
+}
+.sm-currency-val {
+  font-family: var(--sm-mono);
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--sm-gold);
+  text-shadow:
+    0 0 22px rgba(255, 194, 31, 0.45),
+    0 2px 0 rgba(0, 0, 0, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+
+/* count-up "payout" pop */
+@keyframes sm-pop-kf {
+  0%   { transform: scale(1); }
+  22%  { transform: scale(1.13); }
+  100% { transform: scale(1); }
+}
+.sm-pop { animation: sm-pop-kf 0.22s cubic-bezier(0.2, 1.4, 0.4, 1); }
+
+.sm-statrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.sm-stat {
+  font-family: var(--sm-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--sm-dim);
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 3px;
+  padding: 4px 7px;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.sm-stat-mult { color: var(--sm-dimmer); }
+.sm-stat-hot {
+  color: #0e1116;
+  background: linear-gradient(180deg, var(--sm-gold-hot), var(--sm-gold));
+  border-color: rgba(255, 240, 168, 0.6);
+  text-shadow: none;
+  box-shadow: 0 0 16px rgba(255, 194, 31, 0.5);
+}
+
+@keyframes sm-flash-kf {
+  0%   { transform: scale(1);   filter: brightness(1); }
+  25%  { transform: scale(1.28); filter: brightness(2.2); }
+  100% { transform: scale(1);   filter: brightness(1); }
+}
+.sm-flash { animation: sm-flash-kf 0.42s ease-out; }
+
+/* ===========================================================================
+ * PROGRESS (top-centre)
+ * ======================================================================== */
+.sm-progwrap {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  /* Width is derived from the space LEFT OVER by the stat panel (~300px) and
+     the button cluster (~190px) so the three top elements can never collide
+     on a narrow desktop window. Below `.sm-compact` the bar moves to the
+     bottom edge instead, where there is always room. */
+  width: clamp(200px, calc(100vw - 700px), 420px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.sm-zonelabel {
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2.4px;
+  color: var(--sm-cyan);
+  text-shadow: 0 0 12px rgba(102, 226, 255, 0.55), 0 1px 2px #000;
+  height: 12px;
+  white-space: nowrap;
+}
+
+.sm-progress {
+  position: relative;
+  width: 100%;
+  height: 15px;
+  background: linear-gradient(180deg, #05070a, #10141a);
+  border: 1px solid var(--sm-border);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 2px 4px rgba(0,0,0,0.9),
+    0 1px 0 rgba(255,255,255,0.07);
+}
+.sm-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(180deg, #b8f6ff 0%, var(--sm-cyan) 38%, #1e93c9 100%);
+  box-shadow: 0 0 16px rgba(102, 226, 255, 0.75);
+  transition: width 0.12s linear;
+}
+/* rivet ticks so the bar reads as a machined gauge */
+.sm-progress-notches {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+      90deg,
+      rgba(0,0,0,0) 0 calc(10% - 1px),
+      rgba(0,0,0,0.55) calc(10% - 1px) 10%
+  );
+  pointer-events: none;
+}
+.sm-progress-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-depth {
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  color: var(--sm-dimmer);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px #000;
+}
+
+/* ===========================================================================
+ * OVERDRIVE BAR (under the progress bar, hidden by default)
+ * ======================================================================== */
+.sm-od {
+  width: 100%;
+  margin-top: 3px;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+.sm-od-on { opacity: 1; transform: translateY(0); }
+
+.sm-od-label {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--sm-orange);
+  text-align: center;
+  text-shadow: 0 0 12px rgba(255, 138, 31, 0.9);
+  animation: sm-od-blink 0.5s steps(2, end) infinite;
+}
+@keyframes sm-od-blink { 50% { opacity: 0.45; } }
+
+.sm-od-bar {
+  height: 6px;
+  background: #0a0705;
+  border: 1px solid rgba(255, 138, 31, 0.35);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.sm-od-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #ff4d1a, var(--sm-orange) 60%, #ffd479);
+  box-shadow: 0 0 14px rgba(255, 138, 31, 0.85);
+}
+
+/* ===========================================================================
+ * BUTTONS (top-right)
+ * ======================================================================== */
+.sm-buttons {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.sm-btn {
+  font-family: var(--sm-mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  color: var(--sm-text);
+  background: var(--sm-panel);
+  border: 1px solid var(--sm-border);
+  border-radius: 4px;
+  /* 44px minimum touch target */
+  min-height: 40px;
+  min-width: 74px;
+  padding: 10px 14px;
+  cursor: pointer;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  box-shadow:
+    inset 0 1px 0 var(--sm-edge-hi),
+    inset 0 -2px 0 var(--sm-edge-lo),
+    0 4px 12px rgba(0,0,0,0.5);
+  transition: filter 0.12s, transform 0.06s, box-shadow 0.12s;
+}
+.sm-btn:hover { filter: brightness(1.35); }
+.sm-btn:active {
+  transform: translateY(2px);
+  box-shadow: inset 0 2px 5px rgba(0,0,0,0.8);
+}
+.sm-btn-primary {
+  color: #06131a;
+  background: linear-gradient(180deg, var(--sm-cyan-hot), var(--sm-cyan) 45%, #2597c4 100%);
+  border-color: rgba(196, 246, 255, 0.5);
+  text-shadow: 0 1px 0 rgba(255,255,255,0.35);
+}
+.sm-btn-off { color: var(--sm-dimmer); }
+.sm-btn-off::after {
+  content: '';
+  position: absolute;
+}
+.sm-btn-big {
+  font-size: 14px;
+  letter-spacing: 2.4px;
+  min-height: 52px;
+  padding: 16px 34px;
+  margin-top: 20px;
+  width: 100%;
+}
+
+/* ===========================================================================
+ * UPGRADE ANNOUNCEMENT (upper third — never the dead centre)
+ * ======================================================================== */
+.sm-toast {
+  position: absolute;
+  top: 21%;
+  left: 50%;
+  width: min(760px, 88vw);
+  transform: translate(-50%, -18px) scale(0.9);
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.34s cubic-bezier(0.16, 1.7, 0.35, 1);
+  will-change: opacity, transform;
+}
+.sm-toast-on {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+.sm-toast-kicker {
+  font-family: var(--sm-mono);
+  font-size: clamp(9px, 1.1vw, 12px);
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: var(--sm-cyan);
+  margin-bottom: 6px;
+  text-shadow: 0 0 16px rgba(102, 226, 255, 0.9), 0 2px 3px #000;
+}
+.sm-toast-title {
+  font-size: clamp(26px, 5.2vw, 62px);
+  font-weight: 900;
+  letter-spacing: 2px;
+  line-height: 1.02;
+  color: #fff;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 26px rgba(102, 226, 255, 0.9),
+    0 0 70px rgba(102, 226, 255, 0.5),
+    0 4px 0 rgba(0, 0, 0, 0.65),
+    0 8px 22px rgba(0, 0, 0, 0.8);
+}
+.sm-toast-sub {
+  margin-top: 8px;
+  font-family: var(--sm-mono);
+  font-size: clamp(11px, 1.5vw, 16px);
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  color: var(--sm-cyan-hot);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
+}
+
+/* ===========================================================================
+ * ZONE BANNER (left edge — announces a new section)
+ * ======================================================================== */
+.sm-banner {
+  position: absolute;
+  left: 0;
+  top: 46%;
+  opacity: 0;
+  transform: translateX(-60px);
+  transition: opacity 0.22s ease, transform 0.42s cubic-bezier(0.16, 1.4, 0.3, 1);
+  will-change: opacity, transform;
+}
+.sm-banner-on { opacity: 1; transform: translateX(0); }
+
+.sm-banner-text {
+  font-family: var(--sm-mono);
+  font-size: clamp(12px, 1.7vw, 18px);
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #0d1014;
+  background: linear-gradient(180deg, var(--sm-cyan-hot), var(--sm-cyan) 55%, #2a9ac6);
+  padding: 9px 20px 9px 16px;
+  border-left: 5px solid #0d1014;
+  border-radius: 0 4px 4px 0;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.7), 0 0 30px rgba(102, 226, 255, 0.35);
+  white-space: nowrap;
+}
+.sm-banner-final .sm-banner-text {
+  background:
+    var(--sm-hazard) left top / 100% 5px repeat-x,
+    var(--sm-hazard) left bottom / 100% 5px repeat-x,
+    linear-gradient(180deg, #23262c, #101318);
+  color: #ffd257;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-left-color: #f0b31b;
+  text-shadow: 0 2px 4px #000, 0 0 14px rgba(240,179,27,0.6);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.8), 0 0 44px rgba(240, 179, 27, 0.6);
+  animation: sm-banner-throb 0.42s ease-in-out infinite alternate;
+}
+@keyframes sm-banner-throb { to { filter: brightness(1.35); } }
+
+/* ===========================================================================
+ * END OF RUN SUMMARY
+ * ======================================================================== */
+.sm-summary {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(4,6,9,0.55), rgba(2,3,5,0.88));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+.sm-summary-on { opacity: 1; pointer-events: auto; }
+
+.sm-card {
+  position: relative;
+  width: min(560px, 92vw);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 26px 28px 24px;
+  background: var(--sm-panel);
+  border: 1px solid var(--sm-border);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 1px 0 var(--sm-edge-hi),
+    inset 0 -3px 0 var(--sm-edge-lo),
+    0 24px 70px rgba(0, 0, 0, 0.85);
+  transform: translateY(24px) scale(0.96);
+  transition: transform 0.42s cubic-bezier(0.16, 1.5, 0.35, 1);
+}
+.sm-summary-on .sm-card { transform: translateY(0) scale(1); }
+
+.sm-card-kicker {
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 5px;
+  color: var(--sm-gold);
+  text-shadow: 0 0 14px rgba(255, 194, 31, 0.6);
+  margin-bottom: 4px;
+}
+.sm-card-title {
+  font-size: clamp(26px, 4vw, 40px);
+  font-weight: 900;
+  letter-spacing: 1.5px;
+  line-height: 1.05;
+  color: #fff;
+  text-shadow: 0 0 28px rgba(255, 194, 31, 0.45), 0 3px 0 rgba(0,0,0,0.6);
+  margin-bottom: 18px;
+}
+.sm-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.sm-cell {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-left: 3px solid rgba(255, 194, 31, 0.55);
+  border-radius: 3px;
+  padding: 9px 12px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.sm-cell-label {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--sm-dimmer);
+}
+.sm-cell-value {
+  font-family: var(--sm-mono);
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--sm-text);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+/* ===========================================================================
+ * START OVERLAY
+ * ======================================================================== */
+.sm-start {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(6,8,12,0.55) 0%, rgba(2,3,5,0.92) 78%);
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 0.45s ease;
+  z-index: 20;
+}
+.sm-start-off { opacity: 0; pointer-events: none; }
+
+.sm-start-inner { text-align: center; padding: 0 22px; }
+
+.sm-start-logo {
+  font-size: clamp(40px, 10vw, 108px);
+  font-weight: 900;
+  letter-spacing: clamp(4px, 1.4vw, 14px);
+  line-height: 1;
+  color: #fff;
+  text-shadow:
+    0 0 40px rgba(255, 194, 31, 0.55),
+    0 0 110px rgba(255, 138, 31, 0.35),
+    0 6px 0 rgba(0,0,0,0.7);
+}
+.sm-start-sub {
+  margin-top: 10px;
+  font-family: var(--sm-mono);
+  font-size: clamp(10px, 1.4vw, 14px);
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: var(--sm-gold);
+  text-shadow: 0 0 16px rgba(255, 194, 31, 0.6);
+}
+.sm-start-cta {
+  margin-top: 40px;
+  display: inline-block;
+  font-family: var(--sm-mono);
+  font-size: clamp(11px, 1.5vw, 15px);
+  font-weight: 800;
+  letter-spacing: 3.4px;
+  color: #fff;
+  /* Hazard tape on the top and bottom edges only, with a dark plate between:
+     white text directly on the stripes is unreadable. */
+  background:
+    var(--sm-hazard) left top / 100% 7px repeat-x,
+    var(--sm-hazard) left bottom / 100% 7px repeat-x,
+    linear-gradient(180deg, #1c2027, #0b0d11);
+  padding: 20px 30px;
+  border-radius: 4px;
+  text-shadow: 0 2px 5px #000;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.75), inset 0 0 0 1px rgba(255,255,255,0.10);
+  animation: sm-cta-pulse 1.25s ease-in-out infinite;
+}
+@keyframes sm-cta-pulse {
+  0%, 100% { transform: scale(1);    filter: brightness(1); }
+  50%      { transform: scale(1.045); filter: brightness(1.3); }
+}
+.sm-start-keys {
+  margin-top: 22px;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  letter-spacing: 1.6px;
+  color: var(--sm-dimmer);
+}
+
+/* ===========================================================================
+ * HINT + DEBUG (bottom)
+ * ======================================================================== */
+.sm-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  color: rgba(255, 255, 255, 0.24);
+  white-space: nowrap;
+  transition: opacity 1.2s ease 3s;
+}
+.sm-hint-fade { opacity: 0; }
+
+.sm-debug {
+  position: absolute;
+  bottom: 9px;
+  left: 12px;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  color: rgba(140, 210, 255, 0.40);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px #000;
+}
+
+/* ===========================================================================
+ * COMPACT / TINY LAYOUTS — toggled from ui.js, no pixel maths in JS
+ * ======================================================================== */
+.sm-compact .sm-stats { min-width: 0; padding: 9px 10px 8px; top: 8px; left: 8px; }
+.sm-compact .sm-currency-val { font-size: 23px; }
+.sm-compact .sm-ico { font-size: 15px; }
+.sm-compact .sm-stat { font-size: 9px; padding: 3px 5px; letter-spacing: 0.3px; }
+/* No room across the top on a small screen: dock the gauge to the bottom. */
+.sm-compact .sm-progwrap {
+  top: auto;
+  bottom: 12px;
+  width: clamp(200px, 74vw, 380px);
+}
+.sm-compact .sm-debug { bottom: auto; top: 96px; }
+.sm-compact .sm-progress { height: 12px; }
+.sm-compact .sm-zonelabel { font-size: 9px; letter-spacing: 1.6px; }
+.sm-compact .sm-buttons { top: 8px; right: 8px; gap: 6px; }
+.sm-compact .sm-btn { min-width: 62px; padding: 9px 10px; font-size: 10px; letter-spacing: 1px; }
+.sm-compact .sm-hint { display: none; }
+.sm-compact .sm-toast { top: 25%; }
+.sm-compact .sm-banner { top: 62%; }
+.sm-compact .sm-card { padding: 18px 18px 16px; }
+.sm-compact .sm-cell-value { font-size: 17px; }
+.sm-compact .sm-start-keys { display: none; }
+
+.sm-tiny .sm-statrow { gap: 4px; }
+.sm-tiny .sm-stat:nth-child(3) { display: none; }   /* drop MAG first */
+.sm-tiny .sm-progwrap { width: 40vw; }
+.sm-tiny .sm-card-grid { grid-template-columns: 1fr; }
+.sm-tiny .sm-depth { display: none; }
+
+/* Users who ask for less motion get the information, not the theatre. */
+@media (prefers-reduced-motion: reduce) {
+  .sm-pop, .sm-flash, .sm-od-label, .sm-start-cta, .sm-banner-final .sm-banner-text {
+    animation: none !important;
+  }
+  .sm-toast, .sm-banner, .sm-card, .sm-summary, .sm-start { transition-duration: 0.01ms !important; }
+}

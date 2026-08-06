@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SUPERMINE</title>
+<!-- viewport-fit + user-scalable=no so touch dragging steers instead of zooming -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0a0d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Everything is drawn here. -->
+<canvas id="game"></canvas>
+
+<!-- All UI DOM is created at runtime by js/ui.js. This file never changes. -->
+<div id="ui-root"></div>
+
+<!--
+  CLASSIC SCRIPT TAGS IN DEPENDENCY ORDER.
+  Not ES modules: this must run from file:// and module imports are blocked
+  there by CORS. Every file attaches itself to the single global `SM`.
+
+  >>> index.html IS FROZEN. Agents 2 and 3 must not add or reorder files. <<<
+-->
+<script src="js/config.js"></script>     <!-- SM.config    : constants, no deps        -->
+<script src="js/events.js"></script>     <!-- SM.events    : pub/sub, no deps          -->
+<script src="js/materials.js"></script>  <!-- SM.materials : data table, no deps       -->
+<script src="js/input.js"></script>      <!-- SM.input     : config, events            -->
+<script src="js/camera.js"></script>     <!-- SM.camera    : config, (vehicle at run)  -->
+<script src="js/particles.js"></script>  <!-- SM.particles : config, events, materials -->
+<script src="js/terrain.js"></script>    <!-- SM.terrain   : particles, upgrades, cam  -->
+<script src="js/vehicle.js"></script>    <!-- SM.vehicle   : input, particles, events  -->
+<script src="js/upgrades.js"></script>   <!-- SM.upgrades  : vehicle, camera, events   -->
+<script src="js/level.js"></script>      <!-- SM.level     : upgrades, vehicle         -->
+<script src="js/effects.js"></script>    <!-- SM.effects   : materials, camera, events -->
+<script src="js/sound.js"></script>      <!-- SM.sound     : vehicle, events           -->
+<script src="js/ui.js"></script>         <!-- SM.ui        : everything, events        -->
+<script src="js/main.js"></script>       <!-- SM.main      : boots the game            -->
+
+</body>
+</html>
