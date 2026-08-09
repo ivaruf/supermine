@@ -37,6 +37,21 @@
  *  sparkle       number   optional 0..1, chance-weight of twinkle in effects.
  *  shape         string   optional 'round' | 'chunk' | 'shard'. Sprite silhouette.
  *                         Defaults to the break style's preferred shape.
+ *  pickup        string   optional. Marks a POWER-UP rather than a resource:
+ *                         'time'  -> level.js adds seconds to the clock
+ *                         'boost' -> vehicle.js starts a speed surge
+ *                         These carry value 0, so they never move the score and
+ *                         never appear in the end-of-run haul breakdown. They
+ *                         are ordinary particles in every other respect, which
+ *                         is the point: terrain seeds them, they shatter, and
+ *                         the collector has to actually hoover the fragments.
+ *  ore           bool     optional, default false. "This is what you came down
+ *                         here for." The end-of-run haul breakdown gives every
+ *                         ore its own coloured line and folds everything else
+ *                         into one SPOIL row. It is a PRESENTATION flag, not an
+ *                         economic one — obsidian is worth more per deposit than
+ *                         gold, but you meet it as a wall to be survived rather
+ *                         than a seam to be hunted, so it counts as spoil.
  * ========================================================================== */
 
 var SM = SM || {};
@@ -83,6 +98,23 @@ SM.materials = (function () {
     shatter: {
       debrisScale: 0.50, speed: [270, 610], spread: 3.1, backBias: 0.12,
       spin: [9, 26], drag: 0.30, jitter: 1.15, shape: 'shard'
+    },
+    // POWER-UP BLOCKS. Every other style is tuned for spectacle first and lets
+    // the magnet catch what it catches; this one is tuned so a clean hit is
+    // RELIABLY worth its advertised number, because the splash announces that
+    // number out loud. Three deliberate departures from `burst`:
+    //   * speed is halved  — 460 u/s throws a fragment 200 units clear of a
+    //     215-unit collector before the COLLECT_DELAY immunity even lifts,
+    //     and anything that escapes is seconds the player was promised and
+    //     did not get.
+    //   * backBias is the highest in the table: fragments are pushed PAST the
+    //     machine, into the collector, instead of ahead of it.
+    //   * drag is high, so the cloud settles inside the magnet radius rather
+    //     than skating out of it.
+    // A full 3.0 spread keeps it looking like a firework despite all that.
+    prize: {
+      debrisScale: 0.55, speed: [110, 300], spread: 3.0, backBias: 0.55,
+      spin: [8, 24], drag: 1.30, jitter: 1.0, shape: 'chunk'
     }
   };
 
@@ -112,7 +144,8 @@ SM.materials = (function () {
       hardness: 3.4, value: 12,
       radius: [8.0, 10.4], density: 2.10,
       restitution: 0.24, friction: 0.88,
-      debrisCount: 4, breakStyle: 'fracture', glow: false, sparkle: 0.15
+      debrisCount: 4, breakStyle: 'fracture', glow: false, sparkle: 0.15,
+      ore: true
     },
     {
       id: 'gold', name: 'Gold',
@@ -120,15 +153,20 @@ SM.materials = (function () {
       hardness: 2.9, value: 30,
       radius: [7.6, 10.0], density: 3.10,
       restitution: 0.10, friction: 0.95,   // heavy, rolls less
-      debrisCount: 5, breakStyle: 'burst', glow: true, sparkle: 0.7
+      debrisCount: 5, breakStyle: 'burst', glow: true, sparkle: 0.7,
+      ore: true
     },
     {
-      id: 'gem', name: 'Gem',
+      // The id stays 'gem' — terrain zone tables and the ore weights all
+      // reference it — but the ramp has always been emerald green, so the
+      // haul readout calls it what the player actually sees.
+      id: 'gem', name: 'Emerald',
       colors: ['#33dd80', '#12a05a', '#a5ffce'],
       hardness: 4.0, value: 55,
       radius: [7.0, 9.4], density: 0.95,
       restitution: 0.74, friction: 0.62,   // bouncy little things, ping around
-      debrisCount: 5, breakStyle: 'burst', glow: true, sparkle: 1.0
+      debrisCount: 5, breakStyle: 'burst', glow: true, sparkle: 1.0,
+      ore: true
     },
     {
       id: 'crystal', name: 'Crystal',
@@ -137,7 +175,8 @@ SM.materials = (function () {
       radius: [7.8, 11.0], density: 1.20,
       restitution: 0.44, friction: 0.72,
       debrisCount: 6, breakStyle: 'fracture', glow: true, sparkle: 0.9,
-      shape: 'shard'                       // fractures into sharp splinters
+      shape: 'shard',                      // fractures into sharp splinters
+      ore: true
     },
     {
       id: 'rare', name: 'Voidstone',
@@ -145,7 +184,8 @@ SM.materials = (function () {
       hardness: 6.6, value: 190,
       radius: [8.2, 11.0], density: 1.65,
       restitution: 0.52, friction: 0.78,
-      debrisCount: 7, breakStyle: 'burst', glow: true, sparkle: 1.0
+      debrisCount: 7, breakStyle: 'burst', glow: true, sparkle: 1.0,
+      ore: true
     },
 
     /* ---------------------------------------------------------------------
@@ -183,7 +223,8 @@ SM.materials = (function () {
       radius: [8.6, 11.0], density: 1.45,
       restitution: 0.58, friction: 0.68,
       debrisCount: 7, breakStyle: 'shatter', glow: true, sparkle: 1.0,
-      shape: 'shard'
+      shape: 'shard',
+      ore: true
     },
     {
       // LATE-GAME BARRIER. Three times granite's hardness, so a mid-run rig
@@ -196,6 +237,77 @@ SM.materials = (function () {
       restitution: 0.30, friction: 0.86,
       debrisCount: 5, breakStyle: 'fracture', glow: false, sparkle: 0.2,
       shape: 'shard'
+    },
+
+    /* ---------------------------------------------------------------------
+     * PHASE 3 ADDITIONS — POWER-UPS (appended — indices 11, 12)
+     * Scattered through the world by terrain.js rather than handed out at a
+     * gate, so they are a STEERING decision: you see one off your line and
+     * decide whether the detour is worth it. Both are deliberately soft, so
+     * even a starting rig pops one instantly and the reward is about reaching
+     * it, never about grinding it.
+     *
+     * They break into several fragments and pay per fragment, so blasting
+     * past one at full speed collects only part of it. That is the skill in
+     * them: line up, slow into the cloud, take the whole thing.
+     *
+     * WHY THESE ARE THE BIGGEST DEPOSITS IN THE TABLE
+     * They are not a seam you stumble into, they are a PRIZE you steer for,
+     * so they have to be legible from the far side of the lane while you are
+     * already committed to a line. Everything here serves that:
+     *   radius   the top two sprite buckets only (9.8 and 11.0, where
+     *            SPRITE_MAX_RADIUS is 11.0) — nothing else in the game is
+     *            uniformly this big, so the silhouette alone identifies them.
+     *   shape    round vs shard, deliberately the two most different families
+     *            available, so the two power-ups are told apart by outline and
+     *            not only by hue (they are also announced by a full-screen
+     *            splash, but you steer toward one before that ever fires).
+     *
+     * WHY BOTH ARE DARK-SHELLED WITH A WHITE-HOT CORE
+     * The first version of these was a bright, uniformly coloured deposit,
+     * and it turned out that "bright green glowing lump" is already taken:
+     * at gameplay zoom a time cell was indistinguishable from an emerald, and
+     * a boost was close enough to gold to cost you a moment. Hue alone could
+     * not fix that — every free hue is either an ore or means something on
+     * the HUD.
+     *
+     * So they are separated by VALUE STRUCTURE instead, which no ore uses.
+     * bakeAtlas() runs the body gradient highlight -> base -> shadow and then
+     * paints a specular facet in the highlight colour at 0.8 alpha, so a dark
+     * base with a near-white highlight comes out as a dark machined casing
+     * with something blazing inside it. Ore is geology and is lit from
+     * outside; these are manufactured and lit from within. That reads
+     * instantly, at any zoom, and it separates them from the WHOLE table at
+     * once rather than from one neighbour.
+     * ------------------------------------------------------------------ */
+    {
+      // Teal-green, not the spring green of the gates: the gate arch, the
+      // "+10s" clock float and the splash all still speak that green, but on
+      // the HUD, where nothing else is competing for it. Down in the rock the
+      // casing has to get out of Emerald's (#33dd80) way, and pulling the hue
+      // toward teal while dropping two thirds of its brightness does that
+      // without wandering into Crystal's blue (#48bcff).
+      id: 'timecell', name: 'Time Cell',
+      colors: ['#13b891', '#04322a', '#eafff8'],
+      hardness: 0.8, value: 0,
+      radius: [9.8, 11.0], density: 0.70,
+      restitution: 0.60, friction: 0.66,
+      debrisCount: 5, breakStyle: 'prize', glow: true, sparkle: 1.0,
+      shape: 'round', pickup: 'time'
+    },
+    {
+      // Red-orange rather than the HUD's #ff8a1f, for the same reason: Gold
+      // (#ffcb31) is a bright yellow and the old boost colour sat close enough
+      // to it to cost a glance. Pushed toward red and darkened, it is still
+      // obviously the same family as the SPEED BOOST bar without being
+      // mistakable for money.
+      id: 'boostcell', name: 'Boost',
+      colors: ['#e2530c', '#3d1200', '#fff0dc'],
+      hardness: 0.8, value: 0,
+      radius: [9.8, 11.0], density: 0.70,
+      restitution: 0.62, friction: 0.64,
+      debrisCount: 5, breakStyle: 'prize', glow: true, sparkle: 1.0,
+      shape: 'shard', pickup: 'boost'
     }
   ];
 
@@ -211,6 +323,8 @@ SM.materials = (function () {
     m.style = s;                                   // resolved once, no lookups later
     if (!m.shape) m.shape = s.shape || 'round';
     if (m.sparkle === undefined) m.sparkle = 0;
+    if (m.ore === undefined) m.ore = false;
+    if (m.pickup === undefined) m.pickup = '';
     // Pre-split value so particles.js never divides on the hot path.
     m.debrisValue = m.value / Math.max(1, m.debrisCount);
     // Pre-compute inverse mass factor used by the collision solver.

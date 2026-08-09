@@ -439,6 +439,33 @@ html, body {
   text-shadow: 0 1px 2px #000;
 }
 
+/* --- OVERTIME: past 100%, still digging ---------------------------------
+ * The map is finished but the run is not, so the gauge stops being a
+ * progress bar and becomes a trophy: full, gold, breathing. Cyan is the
+ * colour of "how far through are you", and that question no longer has an
+ * answer down here — gold is the colour of "this is worth money", which is
+ * the only thing the core is about. */
+.sm-prog-core .sm-progress {
+  border-color: rgba(255, 194, 31, 0.55);
+  box-shadow:
+    inset 0 2px 4px rgba(0,0,0,0.9),
+    0 0 16px rgba(255, 194, 31, 0.35);
+}
+.sm-prog-core .sm-progress-fill {
+  background: linear-gradient(180deg, var(--sm-gold-hot) 0%, var(--sm-gold) 42%, #b87a06 100%);
+  box-shadow: 0 0 20px rgba(255, 194, 31, 0.9);
+  animation: sm-core-breathe 1.6s ease-in-out infinite;
+}
+.sm-prog-core .sm-progress-text {
+  color: #1a1206;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.sm-prog-core .sm-zonelabel {
+  color: var(--sm-gold);
+  text-shadow: 0 0 12px rgba(255, 194, 31, 0.6), 0 1px 2px #000;
+}
+@keyframes sm-core-breathe { 50% { filter: brightness(1.35); } }
+
 /* ===========================================================================
  * OVERDRIVE BAR (under the progress bar, hidden by default)
  * ======================================================================== */
@@ -589,6 +616,119 @@ html, body {
 }
 
 /* ===========================================================================
+ * POWER-UP SPLASH (mid screen — the one exception to "keep the centre empty")
+ * ---------------------------------------------------------------------------
+ * "+5 SEC" when a time cell shatters, "BOOST MODE" when a boost block does.
+ * It breaks the centre-stays-empty rule on purpose and pays for it by being
+ * brief: the whole thing is on and gone inside 1.1s, matching SPLASH_TIME in
+ * ui.js. Everything about it is tuned for a player who is STEERING:
+ *   * two words, no sentence — you parse the shape, not the text
+ *   * sat at 41% rather than dead centre, so it is above the machine and out
+ *     of the strip of rock you are actually aiming at
+ *   * the material's own colour, so the splash and the thing you just drove
+ *     through are obviously the same event
+ * The wash is a deliberately weak echo of the overdrive colour grade in
+ * effects.js — same gesture, ~a fifth of the alpha and half a second instead
+ * of six, because boost mode has to stay legible as the LESSER of the two.
+ * ======================================================================== */
+/* The outer element is the whole viewport and is NEVER transformed: a
+   transformed ancestor would become the containing block for the wash and
+   shrink it to the width of the text. All the motion lives on -inner. */
+.sm-splash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* The tint is set by the -time / -boost modifiers below and everything else
+     in the block inherits from it, so a colour change is one line. */
+  --sm-sp: var(--sm-cyan);
+  --sm-sp-hot: var(--sm-cyan-hot);
+  --sm-sp-rgb: 102, 226, 255;
+}
+/* Time keeps the GATE green (rgb 90,255,150) rather than the darker teal the
+   time-cell casing was pushed to, because on the HUD green already means "the
+   clock just went up" — the arch, the "+10s" float and this all have to agree.
+   The casing colour is a WORLD-side readability fix, not a HUD one. */
+.sm-splash-time  { --sm-sp: #5aff96; --sm-sp-hot: #ddffea; --sm-sp-rgb: 90, 255, 150; }
+.sm-splash-boost { --sm-sp: #ff8a1f; --sm-sp-hot: #ffe3bd; --sm-sp-rgb: 255, 138, 31; }
+/* 100% reached. Gold, because it is the same "you banked something big"
+   language the currency and the final score already use. */
+.sm-splash-core  { --sm-sp: #ffc21f; --sm-sp-hot: #fff0a8; --sm-sp-rgb: 255, 194, 31; }
+
+/* Full-screen wash. Radial and centred on the text, so the edges of the
+   screen never actually tint — it reads as the world flaring around the thing
+   you just hit, not as a coloured pane dropped over the game. */
+.sm-splash-wash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse 70% 55% at 50% 46%,
+              rgba(var(--sm-sp-rgb), 0.20) 0%,
+              rgba(var(--sm-sp-rgb), 0.07) 42%,
+              rgba(var(--sm-sp-rgb), 0) 72%);
+}
+
+.sm-splash-inner {
+  position: absolute;
+  top: 43%;
+  left: 50%;
+  width: min(720px, 92vw);
+  transform: translate(-50%, -50%);
+  text-align: center;
+  opacity: 0;
+}
+
+.sm-splash-big {
+  position: relative;
+  font-size: clamp(42px, 8.4vw, 104px);
+  font-weight: 900;
+  letter-spacing: 3px;
+  line-height: 0.98;
+  color: #fff;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  /* Two tight shadows for legibility over bright rock, two wide ones for the
+     glow. The hard black offset is what keeps it readable against a gold seam
+     — colour alone loses that fight every time. */
+  text-shadow:
+    0 0 22px rgba(var(--sm-sp-rgb), 0.95),
+    0 0 78px rgba(var(--sm-sp-rgb), 0.65),
+    0 4px 0 rgba(0, 0, 0, 0.7),
+    0 10px 26px rgba(0, 0, 0, 0.9);
+}
+.sm-splash-sub {
+  position: relative;
+  margin-top: 7px;
+  font-family: var(--sm-mono);
+  font-size: clamp(11px, 1.6vw, 17px);
+  font-weight: 800;
+  letter-spacing: 5px;
+  text-indent: 5px;                 /* letter-spacing pads the right edge only */
+  color: var(--sm-sp-hot);
+  text-shadow: 0 0 14px rgba(var(--sm-sp-rgb), 0.9), 0 2px 5px rgba(0, 0, 0, 0.95);
+}
+
+/* One animation on the wrapper drives the whole thing. Punch in over 0.16s
+   with an overshoot, hold for half a second, then leave UPWARD while fading —
+   drifting up reads as "banked" and clears the machine's approach at the same
+   time. Keyframe times are percentages of SPLASH_TIME (1.1s). */
+.sm-splash-on .sm-splash-inner { animation: sm-splash-kf 1.1s cubic-bezier(0.2, 0.9, 0.3, 1) both; }
+.sm-splash-on .sm-splash-wash  { animation: sm-splash-wash-kf 1.1s ease-out both; }
+
+@keyframes sm-splash-kf {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.72); }
+  14%  { opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
+  22%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  62%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, calc(-50% - 46px)) scale(0.97); }
+}
+@keyframes sm-splash-wash-kf {
+  0%   { opacity: 0; }
+  12%  { opacity: 1; }
+  46%  { opacity: 0.55; }
+  100% { opacity: 0; }
+}
+
+/* ===========================================================================
  * UPGRADE RAIL (left edge, under the stat panel)
  * A column of tiles, one per owned upgrade. `flex-wrap: column` against a
  * max-height means a 13-upgrade run spills into a SECOND column rather than
@@ -598,7 +738,10 @@ html, body {
   position: absolute;
   left: 10px;
   top: 116px;
-  max-height: calc(100vh - 170px);
+  /* Reserves the bottom of the left edge for the haul tally (11 rows of 18px
+     + head + its 46px bottom offset ~= 268px). A long run wraps into a second
+     column instead of running down into the tally. */
+  max-height: calc(100vh - 400px);
   display: flex;
   flex-direction: column;
   flex-wrap: wrap;
@@ -661,6 +804,92 @@ html, body {
   100% { transform: scale(1)    translateX(0);     opacity: 1; filter: brightness(1); }
 }
 .sm-rail-pop { animation: sm-rail-pop-kf 0.44s cubic-bezier(0.16, 1.5, 0.35, 1); }
+
+/* ===========================================================================
+ * LIVE HAUL TALLY (left edge, below the rail)
+ * A running count of every material gathered, most valuable at the top.
+ *
+ * BOTTOM-ANCHORED ON PURPOSE. Rows are revealed as materials are discovered,
+ * so the block GROWS during a run. Anchoring it to the bottom means it grows
+ * upward into the gap under the rail; anchoring it to the top would push the
+ * last-discovered rows off the bottom of a short screen — exactly the rows
+ * that just changed. The rail's max-height reserves the space above it.
+ * ======================================================================== */
+.sm-tally {
+  position: absolute;
+  left: 10px;
+  bottom: 46px;
+  width: 122px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+  z-index: 4;
+}
+.sm-tally-head {
+  font-family: var(--sm-mono);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--sm-dimmer);
+  padding-left: 2px;
+  margin-bottom: 2px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+}
+.sm-tally-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+  padding: 0 5px 0 4px;
+  background: rgba(10, 12, 16, 0.52);
+  border-left: 2px solid rgba(126, 140, 158, 0.3);
+  border-radius: 2px;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+/* An actual payday reads brighter than spoil. */
+.sm-tally-ore { background: rgba(14, 17, 22, 0.66); }
+
+.sm-tally-sw {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 2px;
+  transform: rotate(45deg);            /* reads as a gem, not a checkbox */
+}
+.sm-tally-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--sm-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sm-tally-count {
+  flex: 0 0 auto;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--sm-text);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+.sm-tally-ore .sm-tally-count { color: var(--sm-gold-hot); }
+
+/* First find of a material only — see updateTally(). */
+@keyframes sm-tally-pop-kf {
+  0%   { transform: translateX(-14px); opacity: 0; filter: brightness(2.6); }
+  55%  { transform: translateX(0);     opacity: 1; filter: brightness(2.2); }
+  100% { transform: translateX(0);     opacity: 1; filter: brightness(1); }
+}
+.sm-tally-pop { animation: sm-tally-pop-kf 0.5s cubic-bezier(0.16, 1.5, 0.35, 1); }
 
 /* ===========================================================================
  * ZONE BANNER (RIGHT edge — announces a new section)
@@ -819,6 +1048,120 @@ html, body {
   color: var(--sm-gold-hot);
   font-variant-numeric: tabular-nums;
   text-shadow: 0 0 28px rgba(255, 194, 31, 0.6), 0 2px 0 rgba(0, 0, 0, 0.7);
+}
+
+/* ===========================================================================
+ * HAUL BREAKDOWN (summary card) — what the score was made of.
+ * Each row is a proportional bar in the material's own colour, so the run
+ * reads as a shape before any of the numbers are actually parsed.
+ * ======================================================================== */
+.sm-haul {
+  margin-bottom: 14px;
+}
+.sm-haul-head {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--sm-dimmer);
+  margin-bottom: 6px;
+}
+.sm-haul-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 9px;
+  margin-bottom: 3px;
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+/* The proportional fill sits behind the text, inside the row's own clip. */
+.sm-haul-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.sm-haul-row > .sm-haul-sw,
+.sm-haul-row > .sm-haul-name,
+.sm-haul-row > .sm-haul-count,
+.sm-haul-row > .sm-haul-val { position: relative; z-index: 1; }
+
+.sm-haul-sw {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+.sm-haul-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+}
+.sm-haul-count {
+  flex: 0 0 auto;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--sm-dim);
+  font-variant-numeric: tabular-nums;
+}
+.sm-haul-val {
+  flex: 0 0 auto;
+  min-width: 62px;
+  text-align: right;
+  font-family: var(--sm-mono);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--sm-text);
+  font-variant-numeric: tabular-nums;
+}
+/* Dirt, stone, rubble and the barrier rock, folded into one line. */
+.sm-haul-spoil .sm-haul-val { color: var(--sm-dim); }
+
+/* Power-ups collected — a footnote, because they paid in seconds and speed
+   rather than currency and are deliberately outside the column that has to
+   add up to the score. */
+.sm-haul-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.10);
+}
+.sm-haul-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.sm-haul-pick-label {
+  font-family: var(--sm-mono);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+}
+.sm-haul-empty {
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--sm-dimmer);
+  padding: 6px 0 2px;
 }
 
 /* Ran out of time rather than reaching the bottom: recolour the header. */
@@ -1115,11 +1458,28 @@ html, body {
   left: 7px;
   top: 114px;
   gap: 5px;
-  /* Compact docks the progress gauge to the bottom edge, so the rail has to
-     stop ~100px short of it — otherwise a long run wraps a column straight
-     into the gauge. */
-  max-height: calc(100vh - 216px);
+  /* Compact docks the progress gauge to the bottom edge AND keeps the haul
+     tally above it, so the rail has to stop short of both — otherwise a long
+     run wraps a column straight down into them. */
+  max-height: calc(100vh - 330px);
 }
+
+/* Compact lifts the tally clear of the bottom-docked progress gauge, narrows
+   it, and shows ORES ONLY. On a short screen eleven rows is most of the left
+   edge, and dirt/stone/rubble are the lines nobody is reading mid-run.
+   !important because updateTally() clears the inline display on reveal. */
+.sm-compact .sm-tally {
+  left: 7px;
+  bottom: 78px;
+  width: 96px;
+  gap: 1px;
+}
+.sm-compact .sm-tally-row:not(.sm-tally-ore) { display: none !important; }
+.sm-compact .sm-tally-row { height: 15px; gap: 5px; }
+.sm-compact .sm-tally-name { font-size: 8px; letter-spacing: 0.3px; }
+.sm-compact .sm-tally-count { font-size: 9px; }
+.sm-compact .sm-haul-row { height: 21px; padding: 0 7px; gap: 6px; }
+.sm-compact .sm-haul-val { font-size: 12px; min-width: 54px; }
 .sm-compact .sm-rail-tile { width: 30px; height: 30px; border-left-width: 2px; }
 .sm-compact .sm-rail-ico { width: 18px; height: 18px; }
 .sm-compact .sm-rail-lv {
@@ -1133,6 +1493,10 @@ html, body {
 .sm-compact .sm-hint { display: none; }
 .sm-compact .sm-toast { top: 25%; }
 .sm-compact .sm-banner { top: 62%; }
+/* The toast drops to 25% in compact, so the splash drops with it to keep the
+   same clear gap between the two when both happen to be up. */
+.sm-compact .sm-splash-inner { top: 47%; }
+.sm-compact .sm-splash-sub { letter-spacing: 3px; text-indent: 3px; }
 .sm-compact .sm-card { padding: 18px 18px 16px; }
 .sm-compact .sm-cell-value { font-size: 17px; }
 .sm-compact .sm-start-keys { display: none; }
@@ -1157,6 +1521,15 @@ html, body {
 .sm-tiny .sm-clock-urgent .sm-clock-digits { font-size: 26px; }
 .sm-tiny .sm-rail-tile { width: 26px; height: 26px; }
 .sm-tiny .sm-rail-ico { width: 16px; height: 16px; }
+/* Under 420px the swatch has to carry the identification on its own — the
+   colours are the same ones the debris was drawn in, and the row keeps its
+   title attribute. */
+.sm-tiny .sm-tally { width: 52px; }
+.sm-tiny .sm-tally-name { display: none; }
+.sm-tiny .sm-tally-head { font-size: 7px; letter-spacing: 2px; }
+.sm-tiny .sm-tally-count { font-size: 10px; margin-left: auto; }
+.sm-tiny .sm-haul-count { display: none; }
+.sm-tiny .sm-haul-name { font-size: 9px; letter-spacing: 1px; }
 .sm-tiny .sm-hs-depth { display: none; }
 .sm-tiny .sm-hs-row { grid-template-columns: 18px 1fr auto; }
 .sm-tiny .sm-hs-form { flex-direction: column; }

@@ -15,6 +15,11 @@
  *   under bar     overdrive countdown bar (only while overdriving)
  *   left edge     upgrade icon rail — one inline-SVG tile per owned upgrade
  *   upper-centre  upgrade announcement (big title + description)
+ *   mid-screen    POWER-UP SPLASH — "+5 SEC" / "BOOST MODE", ~1s, the only
+ *                 thing allowed into the middle of the screen and the only
+ *                 HUD element you are meant to read without looking away
+ *                 from the rock. Driven by time:granted (source 'cell') and
+ *                 boost:start; both carry the amount actually granted.
  *   left edge     zone banner, slides in on zone:entered (offset past the rail)
  *   centre        end-of-run summary card + local top-10 table (run:over)
  *   fullscreen    "tap to start" overlay, dismissed on the first gesture
@@ -48,6 +53,12 @@ SM.ui = (function () {
   var COUNTER_SNAP    = 0.7;
   var TOAST_TIME      = 2.8;
   var BANNER_TIME     = 2.2;
+  // The power-up splash sits in the middle of the screen, over the rock you
+  // are steering through, so it is timed to be GONE rather than to be read
+  // twice: 1.1s is long enough to register "+5 SEC" at a glance and short
+  // enough that it is never still there when the next decision arrives. The
+  // CSS animation is authored to the same length.
+  var SPLASH_TIME     = 1.1;
   var POP_MIN_GAP     = 0.14;   // seconds between currency pop animations
   var COMPACT_W       = 900;    // px viewport width that switches to compact
   var COMPACT_H       = 520;
@@ -176,11 +187,13 @@ SM.ui = (function () {
 
   var toastTimer = 0;
   var bannerTimer = 0;
+  var splashTimer = 0;
   var popCooldown = 0;
   var pendingPop = false;
 
   var multiplier = 1;
   var overdriveLeft = 0, overdriveTotal = 0;
+  var boostLeft = 0, boostTotal = 0;
   var zoneName = '';
   var summaryOpen = false;
   var started = false;
@@ -192,12 +205,39 @@ SM.ui = (function () {
 
   // countdown
   var lastTickSec = -1;         // whole second the urgent tick last fired on
-  var completeFallback = 0;     // see onLevelComplete()
-  var fallbackDist = 0;
 
   // upgrade rail — rebuilt only when the version integer moves
   var railVersion = -1;
   var railTiles = [];
+
+  /* --- haul tally ------------------------------------------------------
+   * Two typed arrays indexed by matIndex, filled in onCollected(). That
+   * handler fires ~30x per step during a torrent, so the hot path has to be
+   * one integer increment and one float add — no string keys, no objects.
+   * Both the live rail-side tally and the end-of-run breakdown are just
+   * different views over these same buckets.
+   * ------------------------------------------------------------------ */
+  var MAT_N = (SM.materials && SM.materials.count) || 0;
+  var oreCount = new Uint32Array(MAT_N);   // pieces collected, by matIndex
+  var oreValue = new Float64Array(MAT_N);  // currency banked, by matIndex
+  var tallyRows = [];                      // one per material, hidden until found
+  var TALLY_REFRESH = 0.1;                 // seconds between count redraws
+  var tallyTimer = 0;
+
+  // Display order, most valuable material first, resolved once. Every row is
+  // created up front and merely revealed on first pickup, so discovering a new
+  // material never reorders or reflows the list — it just lights a row up.
+  // Also the iteration order of the end-of-run breakdown, which is why POWER-UPS
+  // ARE STILL IN HERE even though they no longer get a tally row (see below).
+  var TALLY_ORDER = (function () {
+    var l = (SM.materials && SM.materials.list) || [];
+    var order = [];
+    for (var i = 0; i < l.length; i++) order.push(i);
+    order.sort(function (a, b) { return l[b].value - l[a].value; });
+    return order;
+  })();
+
+  var SPOIL_COLOR = '#7f8792';
 
   // game over / high scores
   var runScore = 0, runDepth = 0;
@@ -401,6 +441,7 @@ SM.ui = (function () {
 
     /* --- top-centre progress (under the clock) -------------------------- */
     var progWrap = el('div', 'sm-progwrap', root);
+    els.progWrap = progWrap;
     els.zoneLabel = el('div', 'sm-zonelabel', progWrap, '');
     var prog = el('div', 'sm-progress', progWrap);
     els.progFill = el('div', 'sm-progress-fill', prog);
@@ -413,6 +454,12 @@ SM.ui = (function () {
     el('div', 'sm-od-label', els.odWrap, 'OVERDRIVE');
     var odBar = el('div', 'sm-od-bar', els.odWrap);
     els.odFill = el('div', 'sm-od-fill', odBar);
+
+    /* --- speed boost countdown (same shape, own colour) ----------------- */
+    els.boostWrap = el('div', 'sm-od sm-boost', progWrap);
+    el('div', 'sm-od-label', els.boostWrap, 'SPEED BOOST');
+    var boostBar = el('div', 'sm-od-bar', els.boostWrap);
+    els.boostFill = el('div', 'sm-od-fill', boostBar);
 
     /* --- top-right buttons --------------------------------------------- */
     var btns = el('div', 'sm-buttons', root);
@@ -434,6 +481,22 @@ SM.ui = (function () {
       els.restart.blur();
     });
 
+    /* --- POWER-UP SPLASH (mid screen, above the machine) -----------------
+     * The one thing on the HUD that is allowed into the middle of the screen,
+     * and only for a second at a time. A power-up block is collected while you
+     * are mid-corner at full speed with your eyes on the rock ahead — the
+     * upgrade toast up at 21% is the wrong instrument for that moment, because
+     * reading it costs you a glance you cannot afford. So: two words, in the
+     * material's own colour, right where you are already looking.
+     * The wash behind it is a deliberately WEAK sibling of the overdrive
+     * colour grade in effects.js — same idea, a fifth of the alpha and half a
+     * second instead of six, so a boost never gets mistaken for a frenzy. */
+    els.splash = el('div', 'sm-splash', root);
+    els.splashWash = el('div', 'sm-splash-wash', els.splash);
+    var splashInner = el('div', 'sm-splash-inner', els.splash);
+    els.splashBig = el('div', 'sm-splash-big', splashInner, '');
+    els.splashSub = el('div', 'sm-splash-sub', splashInner, '');
+
     /* --- upgrade announcement (upper centre, above the machine) --------- */
     els.toast = el('div', 'sm-toast', root);
     els.toastKicker = el('div', 'sm-toast-kicker', els.toast, 'UPGRADE ACQUIRED');
@@ -444,6 +507,26 @@ SM.ui = (function () {
     // Column flex with wrap + a max-height: a very long run spills into a
     // second column instead of running off the bottom of the screen.
     els.rail = el('div', 'sm-rail', root);
+
+    /* --- live haul tally (left edge, under the rail) --------------------- */
+    // Bottom-anchored so it grows UPWARD toward the rail: the row you just
+    // unlocked never shoves the others off the bottom of the screen.
+    els.tally = el('div', 'sm-tally', root);
+    el('div', 'sm-tally-head', els.tally, 'HAUL');
+    tallyRows.length = 0;
+    for (var ti = 0; ti < TALLY_ORDER.length; ti++) {
+      // POWER-UPS GET NO ROW. They used to be pinned to the top of this list,
+      // back when they were a common trickle and a running count was the only
+      // feedback they had. They are now rare, they announce themselves with a
+      // full-screen splash, and each has a live readout of its own (the clock
+      // for cells, the SPEED BOOST bar for boosts) — so a third counter here
+      // would be redundant, and worse: this panel is headed HAUL and the haul
+      // IS the score. A row of "TIME CELL ×7" sitting above the gold is
+      // exactly the "counted with the ore" reading we do not want. They still
+      // appear on the end-of-run card, as a footnote under the breakdown.
+      if (SM.materials.get(TALLY_ORDER[ti]).pickup) continue;
+      tallyRows.push(makeTallyRow(TALLY_ORDER[ti]));
+    }
 
     /* --- zone banner (left edge, offset clear of the rail) --------------- */
     els.banner = el('div', 'sm-banner', root);
@@ -460,6 +543,10 @@ SM.ui = (function () {
     var score = el('div', 'sm-score', card);
     el('div', 'sm-score-label', score, 'FINAL SCORE');
     els.sumScore = el('div', 'sm-score-value', score, '0');
+
+    // Where that score actually came from. Sits directly under the hero
+    // number because it is the breakdown OF the hero number.
+    els.haul = el('div', 'sm-haul', card);
 
     // No TOTAL HAUL cell: the haul is the score, and it is already the
     // biggest number on the card. TIME LEFT is the interesting one now —
@@ -625,6 +712,202 @@ SM.ui = (function () {
   }
 
   /* =====================================================================
+   * HAUL TALLY — live counter of every material gathered
+   * ---------------------------------------------------------------------
+   * Rows exist from the start and are revealed on the first pickup of that
+   * material, so the ordering is fixed for the whole run. updateTally() is
+   * called from the fixed step, so it compares an integer per row and only
+   * touches the DOM when a count has actually moved.
+   * ================================================================== */
+  function makeTallyRow(mi) {
+    var m = SM.materials.get(mi);
+    var node = el('div', 'sm-tally-row', els.tally);
+    node.setAttribute('title', m.name);
+    node.style.display = 'none';
+
+    var sw = el('span', 'sm-tally-sw', node);
+    // The swatch is the material's own base colour, so the row matches the
+    // debris the player just watched fly into the collector.
+    sw.style.background = m.colors[0];
+    sw.style.boxShadow = '0 0 7px ' + m.colors[0];
+    if (m.glow) sw.style.borderColor = m.colors[2];
+
+    el('span', 'sm-tally-name', node, m.name);
+    var cnt = el('span', 'sm-tally-count', node, '0');
+    if (m.ore) node.classList.add('sm-tally-ore');
+
+    return { mi: mi, node: node, count: cnt, shown: -1, on: false };
+  }
+
+  /**
+   * @param flush  rewrite the count digits. See TALLY_REFRESH: in a rich seam
+   *               every one of these counters moves on EVERY step, so writing
+   *               them at the step rate made this the single biggest source of
+   *               DOM churn in the HUD (measured: 107 mutations/sec, more than
+   *               the stat block). Nobody reads a per-frame delta on "DIRT
+   *               2 800", so the digits refresh at TALLY_REFRESH instead.
+   *               A FIRST FIND still reveals its row immediately — that one is
+   *               punctuation, and a tenth of a second late would read as lag.
+   */
+  function updateTally(flush) {
+    for (var i = 0; i < tallyRows.length; i++) {
+      var r = tallyRows[i];
+      var c = oreCount[r.mi];
+      if (c === r.shown) continue;          // the common case, every step
+      var reveal = (c > 0 && !r.on);
+      if (!flush && !reveal) continue;      // leave r.shown stale for the flush
+      r.shown = c;
+      r.count.textContent = fmt(c);
+      if (reveal) {
+        r.on = true;
+        r.node.style.display = '';
+        // Punctuate the first find only. Popping on every increment would
+        // restart the animation dozens of times a second in a rich seam.
+        retrigger(r.node, 'sm-tally-pop');
+      }
+    }
+  }
+
+  function resetTally() {
+    tallyTimer = 0;
+    for (var i = 0; i < MAT_N; i++) { oreCount[i] = 0; oreValue[i] = 0; }
+    for (var j = 0; j < tallyRows.length; j++) {
+      var r = tallyRows[j];
+      r.shown = -1;
+      r.on = false;
+      r.node.style.display = 'none';
+      r.node.classList.remove('sm-tally-pop');
+    }
+  }
+
+  /* =====================================================================
+   * END-OF-RUN HAUL BREAKDOWN
+   * ---------------------------------------------------------------------
+   * Runs once per run, so ordinary allocation is fine here.
+   * Ores get their own coloured line, sorted by what they actually PAID
+   * (not by their table value — 400 iron can out-earn three emeralds).
+   * Everything non-ore folds into one SPOIL line: an itemised list of dirt,
+   * stone and rubble would bury the two lines the player cares about.
+   * ================================================================== */
+  function renderHaul() {
+    if (!els.haul) return;
+    els.haul.innerHTML = '';
+
+    var mats = SM.materials.list;
+    var rows = [];
+    var spoilVal = 0, spoilCount = 0;
+    var picks = [];
+    var i, mi, m, c;
+
+    for (i = 0; i < TALLY_ORDER.length; i++) {
+      mi = TALLY_ORDER[i];
+      c = oreCount[mi];
+      if (!c) continue;
+      m = mats[mi];
+      if (m.pickup) {
+        // Power-ups paid in seconds, not currency. Keeping them out of the
+        // rows is what lets the column still add up to exactly the score;
+        // they get their own footnote under the table instead.
+        // colors[2] as well as colors[0]: a power-up's base colour is a dark
+        // machined casing (see materials.js), so the swatch needs the hot core
+        // colour for its glow or the chip reads as a black dot on a black card.
+        // `c` is only used as "did you get any at all" — see renderHaulPickups
+        // for why the chip does NOT report it.
+        picks.push({ kind: m.pickup, name: m.name, color: m.colors[0], glow: m.colors[2] });
+      } else if (m.ore) {
+        rows.push({ name: m.name, color: m.colors[0], count: c, value: oreValue[mi] });
+      } else {
+        spoilVal += oreValue[mi];
+        spoilCount += c;
+      }
+    }
+    rows.sort(function (a, b) { return b.value - a.value; });
+    if (spoilCount > 0) {
+      rows.push({
+        name: 'Spoil', color: SPOIL_COLOR,
+        count: spoilCount, value: spoilVal, spoil: true
+      });
+    }
+
+    if (!rows.length && !picks.length) {
+      el('div', 'sm-haul-empty', els.haul, 'NOTHING BANKED');
+      return;
+    }
+    if (!rows.length) {
+      el('div', 'sm-haul-empty', els.haul, 'NO ORE BANKED');
+      renderHaulPickups(picks);
+      return;
+    }
+
+    el('div', 'sm-haul-head', els.haul, 'WHERE IT CAME FROM');
+
+    // Bars are scaled against the biggest single line, not the total, so the
+    // composition is still readable when one ore dominates the run.
+    var max = rows[0].value;
+    for (i = 0; i < rows.length; i++) if (rows[i].value > max) max = rows[i].value;
+    if (max <= 0) max = 1;
+
+    for (i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var row = el('div', 'sm-haul-row', els.haul);
+      if (r.spoil) row.classList.add('sm-haul-spoil');
+
+      var bar = el('div', 'sm-haul-bar', row);
+      bar.style.width = (r.value / max * 100).toFixed(1) + '%';
+      bar.style.background = 'linear-gradient(90deg,' + r.color + '2e,' + r.color + '05)';
+
+      var sw = el('span', 'sm-haul-sw', row);
+      sw.style.background = r.color;
+      sw.style.boxShadow = '0 0 8px ' + r.color;
+
+      var name = el('span', 'sm-haul-name', row, r.name.toUpperCase());
+      name.style.color = r.color;
+
+      el('span', 'sm-haul-count', row, '×' + fmt(r.count));
+      el('span', 'sm-haul-val', row, fmt(Math.round(r.value)));
+    }
+
+    renderHaulPickups(picks);
+  }
+
+  /**
+   * Power-ups collected, as a footnote — they paid in seconds, not currency.
+   *
+   * COUNTED IN BLOCKS AND SECONDS, NEVER IN FRAGMENTS. The haul buckets count
+   * collected particles, which is the right unit for ore ("×18 786 starcore"
+   * genuinely means that many chips) and completely the wrong one here: a time
+   * cell is a single object you steered for and hit maybe eight times in a
+   * run, so the old "TIME CELL ×375" told the player they had picked up 375
+   * of something they picked up eight of. level.js and vehicle.js each keep a
+   * per-run block count and a per-run seconds total for exactly this line —
+   * and seconds are what the player was actually buying, so they lead.
+   */
+  function renderHaulPickups(picks) {
+    if (!picks || !picks.length) return;
+    var note = el('div', 'sm-haul-picks', els.haul);
+    for (var i = 0; i < picks.length; i++) {
+      var p = picks[i];
+      var blocks = 0, secs = 0;
+      if (p.kind === 'time') {
+        blocks = SM.level.getCellBlocks ? SM.level.getCellBlocks() : 0;
+        secs = SM.level.getCellSeconds ? SM.level.getCellSeconds() : 0;
+      } else if (p.kind === 'boost') {
+        blocks = SM.vehicle.getBoostBlocks ? SM.vehicle.getBoostBlocks() : 0;
+        secs = SM.vehicle.getBoostSeconds ? SM.vehicle.getBoostSeconds() : 0;
+      }
+      var chip = el('span', 'sm-haul-pick', note);
+      var dot = el('span', 'sm-haul-sw', chip);
+      dot.style.background = p.color;
+      dot.style.boxShadow = '0 0 9px ' + (p.glow || p.color);
+      dot.style.borderColor = p.glow || p.color;
+      var lbl = el('span', 'sm-haul-pick-label', chip,
+                   p.name.toUpperCase() + ' ×' + fmt(blocks) +
+                   '  ·  +' + secs.toFixed(1) + 's');
+      lbl.style.color = p.color;
+    }
+  }
+
+  /* =====================================================================
    * HIGH SCORE TABLE
    * ================================================================== */
   function renderScores(list, highlight) {
@@ -728,6 +1011,14 @@ SM.ui = (function () {
     burstAcc += v;
     burstTimer = 0.35;
     pendingPop = true;
+
+    // Haul buckets. Two array writes, no branching beyond the bounds guard —
+    // this runs ~30x per step when the collector is full.
+    var mi = p.matIndex;
+    if (mi >= 0 && mi < MAT_N) {
+      oreCount[mi]++;
+      oreValue[mi] += v;
+    }
   }
 
   function onUpgrade(p) {
@@ -765,10 +1056,66 @@ SM.ui = (function () {
     setClass('odon', els.odWrap, 'sm-od-on', false);
   }
 
+  /* =====================================================================
+   * POWER-UP SPLASH
+   * ---------------------------------------------------------------------
+   * Fired from two rare events, never from the step, so writing textContent
+   * here unguarded is fine — it happens ~15 times in a four-minute run. The
+   * only per-step cost is the timer in update().
+   * ================================================================== */
+  /**
+   * @param kind  'time' | 'boost' | 'core' — picks the colour set in
+   *              style.css. Classes rather than an inline colour so the whole
+   *              treatment (text, glow, wash, sub) stays in the stylesheet.
+   * @param big   the headline. ALWAYS the amount that was actually granted,
+   *              never the amount a whole block is worth: clip the edge of a
+   *              cell and it says +2 SEC, because it paid you two.
+   */
+  function splash(kind, big, sub) {
+    if (!els.splash) return;
+    els.splashBig.textContent = big;
+    els.splashSub.textContent = sub;
+    setClass('sptime', els.splash, 'sm-splash-time', kind === 'time');
+    setClass('spboost', els.splash, 'sm-splash-boost', kind === 'boost');
+    setClass('spcore', els.splash, 'sm-splash-core', kind === 'core');
+    retrigger(els.splash, 'sm-splash-on');
+    splashTimer = SPLASH_TIME;
+  }
+
+  /* --- speed boost -------------------------------------------------------
+   * vehicle.js emits one boost:start per BLOCK (not per fragment), with the
+   * total it ended up worth, so the bar is filled once and drains cleanly. */
+  function onBoostStart(p) {
+    boostTotal = (p && p.duration) || 1;
+    boostLeft = boostTotal;
+    setClass('bston', els.boostWrap, 'sm-od-on', true);
+    if (els.clockInner) retrigger(els.clockInner, 'sm-clock-kick');
+    // The bar under the progress gauge is the sustained readout; this is the
+    // moment of collection. The duration goes in the SUB line because the
+    // headline is the state you just entered, not a number.
+    splash('boost', 'BOOST MODE', '+' + Math.round(boostTotal) + ' SEC  ·  SPEED SURGE');
+  }
+
+  function onBoostEnd() {
+    boostLeft = 0;
+    setClass('bston', els.boostWrap, 'sm-od-on', false);
+  }
+
   /* --- the countdown -------------------------------------------------- */
   function onTimeGranted(p) {
     // Payload objects are reused: read now, stash nothing.
     var secs = (p && typeof p.seconds === 'number') ? p.seconds : 10;
+    var source = (p && p.source) || 'gate';
+
+    // A shattered TIME CELL has no other announcement of its own, so it gets
+    // the splash. A +10 SECONDS GATE already owns a whole beat — the arch
+    // flashes, the upgrade toast drops at 21%, the sound stings — and putting
+    // a third headline for the same event in the middle of the screen just
+    // makes the moment noisy. So the splash is the cell's voice, and the toast
+    // stays the gate's. Anything that adds a new source lands here as 'gate'
+    // and stays quiet until someone decides otherwise.
+    if (source === 'cell') splash('time', '+' + Math.round(secs) + ' SEC', 'TIME CELL');
+
     if (!els.clockGain) return;
     els.clockGain.textContent = '+' + Math.round(secs) + 's';
     retrigger(els.clockGain, 'sm-clock-gain-on');
@@ -794,29 +1141,43 @@ SM.ui = (function () {
   }
 
   /**
-   * `level:complete` is immediately followed by `run:over` with reason
-   * 'depth', so run:over owns the summary now. This handler is a belt-and-
-   * braces timer: if run:over never lands, the end screen still opens.
+   * 100%. This used to open the end screen, because level.js ended the run
+   * here. It does not any more: the core is the payoff zone and the clock is
+   * the only exit, so this is a MILESTONE mid-run and the player is still
+   * driving while it plays. It therefore gets the splash rather than a modal
+   * — one second, out of the way, and it does not stop anything.
    */
-  function onLevelComplete(p) {
+  function onLevelComplete() {
     if (summaryOpen) return;
-    fallbackDist = (p && p.distance) || 0;
-    completeFallback = 0.8;
+    splash('core', 'THE CORE', 'MAP CLEARED  ·  KEEP DIGGING');
   }
 
   function openSummary(reason, dist, timeLeft) {
     if (!els.summary || summaryOpen) return;
     summaryOpen = true;
-    completeFallback = 0;
 
     if (burstAcc > statBestBurst) statBestBurst = burstAcc;
     runScore = Math.round(currency);
     runDepth = Math.round(dist || 0);
 
-    var outOfTime = (reason !== 'depth');
-    setText('sumkick', els.sumKicker, outOfTime ? 'THE CLOCK BEAT YOU' : 'EXCAVATION COMPLETE');
-    setText('sumtitle', els.sumTitle, outOfTime ? "TIME'S UP" : 'YOU HIT THE BOTTOM');
-    setClass('sumtimeout', els.summary, 'sm-summary-timeout', outOfTime);
+    /* Every run now ends on the clock — reaching the bottom is something you
+     * DID during the run, not a way to finish it. So the title reports the
+     * achievement if there was one and the clock otherwise, and only the runs
+     * that never made it get the red timeout treatment. `reason` is read
+     * rather than assumed, so a future non-clock ending still lands somewhere
+     * sensible instead of claiming the player ran out of time. */
+    var reachedCore = !!(SM.level.isComplete && SM.level.isComplete());
+    var outOfTime = (reason === 'time' || reason === undefined);
+    // How deep INTO the core, because that is where the run's score was
+    // actually earned — the last stretch is worth several times the whole
+    // map above it, so the card should name it rather than bury it in DEPTH.
+    var overtime = SM.level.getOvertime ? Math.round(SM.level.getOvertime()) : 0;
+    setText('sumkick', els.sumKicker,
+            reachedCore ? ('THE WHOLE MAP IS BEHIND YOU  ·  ' + fmt(overtime) + ' m INTO THE CORE')
+                        : (outOfTime ? 'THE CLOCK BEAT YOU' : 'EXCAVATION ENDED'));
+    setText('sumtitle', els.sumTitle,
+            reachedCore ? 'YOU REACHED THE CORE' : "TIME'S UP");
+    setClass('sumtimeout', els.summary, 'sm-summary-timeout', !reachedCore);
 
     setText('sumscore', els.sumScore, fmt(runScore));
     setText('sumtime', els.sumTime, (timeLeft > 0 ? timeLeft.toFixed(1) : '0.0') + ' s');
@@ -825,6 +1186,9 @@ SM.ui = (function () {
     setText('sumpick', els.sumPick, fmt(statPickups));
     setText('sumpower', els.sumPower, '' + Math.round(SM.vehicle.getMiningPower()));
     setText('sumburst', els.sumBurst, fmt(Math.round(statBestBurst)));
+
+    /* --- what the score was actually made of ----------------------------- */
+    renderHaul();
 
     /* --- high scores ---------------------------------------------------- */
     var list = loadScores();
@@ -872,6 +1236,8 @@ SM.ui = (function () {
       SM.events.on('multiplier:changed', onMultiplier);
       SM.events.on('overdrive:start', onOverdriveStart);
       SM.events.on('overdrive:end', onOverdriveEnd);
+      SM.events.on('boost:start', onBoostStart);
+      SM.events.on('boost:end', onBoostEnd);
       SM.events.on('gate:missed', function () { toast('GATE MISSED', 'Steer into the arch next time', 1.8); });
       SM.events.on('gate:passed', function () { pendingPop = true; });
       SM.events.on('time:granted', onTimeGranted);
@@ -905,9 +1271,12 @@ SM.ui = (function () {
     shown = 0;
     toastTimer = 0;
     bannerTimer = 0;
+    splashTimer = 0;
     multiplier = 1;
     overdriveLeft = 0;
     overdriveTotal = 0;
+    boostLeft = 0;
+    boostTotal = 0;
     statPickups = 0;
     statBestBurst = 0;
     burstAcc = 0;
@@ -917,8 +1286,6 @@ SM.ui = (function () {
 
     // countdown
     lastTickSec = -1;
-    completeFallback = 0;
-    fallbackDist = 0;
 
     // game over / high scores
     runScore = 0;
@@ -927,11 +1294,21 @@ SM.ui = (function () {
 
     if (els.toast) els.toast.classList.remove('sm-toast-on');
     if (els.banner) els.banner.classList.remove('sm-banner-on');
+    // A restart mid-splash must not leave a "+5 SEC" hanging over a fresh run.
+    // The colour classes go too, or the next splash inherits the last one's
+    // hue for the frame before setClass() catches up (lastStrings is wiped at
+    // the bottom of reset(), so those guards are re-armed either way).
+    if (els.splash) {
+      els.splash.classList.remove('sm-splash-on');
+      els.splash.classList.remove('sm-splash-time');
+      els.splash.classList.remove('sm-splash-boost');
+    }
     if (els.summary) {
       els.summary.classList.remove('sm-summary-on');
       els.summary.classList.remove('sm-summary-timeout');
     }
     if (els.odWrap) els.odWrap.classList.remove('sm-od-on');
+    if (els.boostWrap) els.boostWrap.classList.remove('sm-od-on');
 
     // The clock's escalation classes are re-derived from the value on the very
     // next update(), but they have to come off NOW or a restart flashes red.
@@ -942,6 +1319,10 @@ SM.ui = (function () {
     }
     if (els.clockInner) els.clockInner.classList.remove('sm-clock-kick');
     if (els.clockGain) els.clockGain.classList.remove('sm-clock-gain-on');
+
+    // Haul buckets and every tally row go back to zero / hidden.
+    resetTally();
+    if (els.haul) els.haul.innerHTML = '';
 
     // name entry back to a clean slate
     if (els.hsInput) { els.hsInput.blur(); els.hsInput.value = ''; }
@@ -1027,24 +1408,41 @@ SM.ui = (function () {
       if (uv !== railVersion) { railVersion = uv; rebuildRail(); }
     }
 
-    /* --- run-over fallback (see onLevelComplete) --------------------------- */
-    if (completeFallback > 0) {
-      completeFallback -= dt;
-      if (completeFallback <= 0) {
-        openSummary('depth', fallbackDist,
-                    SM.level.getTimeLeft ? SM.level.getTimeLeft() : 0);
-      }
+    /* --- live haul tally ---------------------------------------------------
+     * One integer compare per material per step (11 of them). The digits are
+     * rewritten on a slower cadence than the step — see updateTally(). */
+    if (els.tally) {
+      tallyTimer -= dt;
+      var tflush = (tallyTimer <= 0);
+      if (tflush) tallyTimer = TALLY_REFRESH;
+      updateTally(tflush);
     }
 
     /* --- progress ------------------------------------------------------- */
     var p = SM.level.getProgress ? SM.level.getProgress() : 0;
     if (!(p >= 0)) p = 0;
     if (p > 1) p = 1;
-    setText('progtxt', els.progText, Math.round(p * 100) + '%');
     setStyle('progw', els.progFill, 'width', (p * 100).toFixed(1) + '%');
     setText('zone', els.zoneLabel, zoneName);
     var dist = SM.level.getDistance ? SM.level.getDistance() : 0;
     setText('depth', els.depth, fmt(Math.round(dist)) + ' m');
+
+    /* --- OVERTIME ---------------------------------------------------------
+     * Reaching 100% no longer ends the run (level.js), so the gauge would
+     * otherwise sit pinned at a dead "100%" for the rest of the run — wasting
+     * the one readout that should be shouting at you. Past the end it becomes
+     * a depth-beyond-the-map counter instead, and the fill goes gold.
+     *
+     * ROUNDED TO 50 m ON PURPOSE — this is the THROTTLE, not a rounding
+     * error. update() runs inside the fixed step, and at 200+ units a second
+     * an exact metre count would rewrite the node on every single step. Fifty-
+     * metre steps land at about four writes a second, and fifty metres is
+     * already finer than anyone can read off a 15px bar. */
+    var over = SM.level.getOvertime ? SM.level.getOvertime() : 0;
+    setClass('progcore', els.progWrap, 'sm-prog-core', over > 0);
+    setText('progtxt', els.progText, over > 0
+      ? ('CORE  +' + fmt(Math.round(over / 50) * 50) + ' m')
+      : (Math.round(p * 100) + '%'));
 
     /* --- overdrive countdown --------------------------------------------- */
     if (overdriveLeft > 0) {
@@ -1058,6 +1456,23 @@ SM.ui = (function () {
       }
     }
 
+    /* --- speed boost countdown -------------------------------------------- *
+     * Driven from the vehicle's own remaining time rather than a local clock,
+     * so a second block collected mid-boost refills the bar instead of letting
+     * it keep draining. */
+    if (boostLeft > 0) {
+      var bl = SM.vehicle.getBoostLeft ? SM.vehicle.getBoostLeft() : (boostLeft - dt);
+      boostLeft = bl;
+      if (bl > boostTotal) boostTotal = bl;      // a top-up re-scales the bar
+      if (bl <= 0) {
+        boostLeft = 0;
+        setClass('bston', els.boostWrap, 'sm-od-on', false);
+      } else {
+        var bfrac = boostTotal > 0 ? bl / boostTotal : 0;
+        setStyle('bstw', els.boostFill, 'width', (bfrac * 100).toFixed(1) + '%');
+      }
+    }
+
     /* --- timed panels ------------------------------------------------------ */
     if (toastTimer > 0) {
       toastTimer -= dt;
@@ -1066,6 +1481,10 @@ SM.ui = (function () {
     if (bannerTimer > 0) {
       bannerTimer -= dt;
       if (bannerTimer <= 0) els.banner.classList.remove('sm-banner-on');
+    }
+    if (splashTimer > 0) {
+      splashTimer -= dt;
+      if (splashTimer <= 0) els.splash.classList.remove('sm-splash-on');
     }
 
     /* --- debug ------------------------------------------------------------- */

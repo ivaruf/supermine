@@ -41,6 +41,12 @@
  *   pulse:fired        {x, y, radius}   explosive pulse detonated
  *   overdrive:start    {duration}
  *   overdrive:end      {}
+ *   boost:start        {duration}      one per BOOST BLOCK, not per fragment:
+ *                                      `duration` is the whole block's worth,
+ *                                      and the HUD prints it, so it is emitted
+ *                                      only after the cloud has stopped
+ *                                      arriving (see BOOST_ANNOUNCE)
+ *   boost:end          null
  * ========================================================================== */
 
 var SM = SM || {};
@@ -99,6 +105,32 @@ SM.vehicle = (function () {
   var OD_SPEED = 1.30;
   var OD_COLLECT = 1.45;
   var OD_RAMP = 6.0;             // how fast the ramp eases in / out
+
+  // --- speed boost (scattered 'boostcell' blocks) ----------------------
+  // Deliberately a LESSER effect than overdrive, in scope rather than in
+  // length: overdrive is the machine's own periodic frenzy and buffs
+  // everything (2.0x power, 1.3x speed, 1.45x collect), a boost block is a
+  // found object that only makes you FAST. Keeping them distinct means the
+  // orange glow always means the same thing even when both are running, and
+  // means catching a block mid-frenzy is a genuine bonus rather than a
+  // rounding error.
+  var BOOST_SPEED = 1.55;        // top speed multiplier at full ramp
+  // Paid per collected fragment. A whole block is ~15 deposits of 5 fragments
+  // (see terrain.js PICKUP_RADIUS), so taking one cleanly is ~6 seconds — the
+  // same order as an overdrive, because a speed-only buff that lasted half as
+  // long as the frenzy would not be worth the detour it costs to reach.
+  var BOOST_PER_PIECE = 0.08;
+  // Cap, so a lucky pair of blocks is not a free run. One clean block is ~6s,
+  // so this is "a block and a bit": a second block caught mid-boost tops you
+  // up rather than doubling you.
+  var BOOST_MAX = 8.0;
+  var BOOST_RAMP = 9.0;          // snappier than overdrive's 6.0 — it's a kick
+  // How long addBoost() waits for the rest of the cloud before announcing.
+  // Same job as level.js TIME_FLUSH and the same reasoning: the splash prints
+  // the duration off this event, so it must not fire while fragments of the
+  // same block are still arriving or it announces a number that is already
+  // wrong by the time it is on screen.
+  var BOOST_ANNOUNCE = 0.22;
 
   // --- rear conveyor ---------------------------------------------------
   var TRAIL_RADIUS = 96;         // auto-collect bubble at conveyor level 1
@@ -292,11 +324,33 @@ SM.vehicle = (function () {
   var odLevel = 0;               // 0..1 smoothed ramp
   var odActive = false;
 
+  /* --- speed boost runtime -------------------------------------------- */
+  var boostRemaining = 0;
+  var boostLevel = 0;            // 0..1 smoothed ramp
+  var boostActive = false;
+  // Fragments of a shattered block arrive over several steps, so the "you got
+  // a boost" event is emitted once per pickup rather than once per fragment.
+  var boostAnnounce = 0;
+  // Run totals for the end card, in BLOCKS and SECONDS. Deliberately not the
+  // fragment count: a boost block is one object you aimed at, and reporting
+  // the ~350 chips it shattered into told the player nothing they did.
+  // boostGap is a second, independent gap detector — boostAnnounce only runs
+  // while the boost is IDLE, so a block caught mid-boost would never be
+  // counted by it, and topping up is exactly when you most want the credit.
+  var boostBlocks = 0;
+  var boostSeconds = 0;
+  var boostGap = 0;
+
+  // Resolved once in init(): comparing an integer on the collection hot path
+  // beats a material-table lookup and a string compare ~30x per step.
+  var MI_BOOST = -1;
+
   /* --- reused event payloads (never stashed) --------------------------- */
   var evTransform = { part: '', width: 0 };
   var evPulse = { x: 0, y: 0, radius: 0 };
   var evOdStart = { duration: 0 };
   var evOdEnd = {};
+  var evBoost = { duration: 0 };
   var appliedOut = { id: '', title: '', description: '', tier: 0, effect: null };
 
   /* =====================================================================
@@ -304,14 +358,43 @@ SM.vehicle = (function () {
    * ================================================================== */
   function init() {
     SM.events.on('resource:collected', onCollected);
+    MI_BOOST = SM.materials ? SM.materials.indexOf('boostcell') : -1;
     reset();
   }
 
-  function onCollected() {
+  function onCollected(p) {
     // Hopper "gulp" — decays in update(). O(1), no allocation: this fires
     // up to ~30x per step.
     hopperPulse += 0.05;
     if (hopperPulse > 1) hopperPulse = 1;
+
+    // A boost block shatters into several fragments and pays per fragment, so
+    // driving cleanly through the whole cloud is worth more than clipping it.
+    if (p && p.matIndex === MI_BOOST) addBoost(BOOST_PER_PIECE);
+  }
+
+  /**
+   * Extend the speed boost. Called once per collected boost fragment.
+   * The announcement is deferred to update() so a block that lands over ~70
+   * fragments and a second of flight still produces exactly one 'boost:start',
+   * carrying the total it actually came to.
+   */
+  function addBoost(seconds) {
+    if (halted) return false;
+    // Count the block on the first fragment after a gap, and bank only the
+    // seconds that actually fit under the cap — the end card should not
+    // promise time the clamp threw away.
+    if (boostGap <= 0) boostBlocks++;
+    boostGap = BOOST_ANNOUNCE;
+    var room = BOOST_MAX - boostRemaining;
+    if (seconds > room) seconds = room > 0 ? room : 0;
+    boostRemaining += seconds;
+    boostSeconds += seconds;
+    // Restart the window on EVERY fragment, not just the first: it is a
+    // gap-in-the-stream detector, so a cloud that trickles in over a second
+    // still announces once, at the end, with the whole amount.
+    if (!boostActive) boostAnnounce = BOOST_ANNOUNCE;
+    return true;
   }
 
   function reset() {
@@ -352,6 +435,14 @@ SM.vehicle = (function () {
     odRemaining = 0;
     odLevel = 0;
     odActive = false;
+
+    boostRemaining = 0;
+    boostLevel = 0;
+    boostActive = false;
+    boostAnnounce = 0;
+    boostBlocks = 0;
+    boostSeconds = 0;
+    boostGap = 0;
 
     gradSig = -1;                // force gradient rebuild
   }
@@ -497,6 +588,50 @@ SM.vehicle = (function () {
   }
 
   /* =====================================================================
+   * SPEED BOOST
+   * ================================================================== */
+  function updateBoost(dt) {
+    if (boostGap > 0) boostGap -= dt;
+    if (halted && boostRemaining > 0) {
+      boostRemaining = 0;
+      boostAnnounce = 0;
+    }
+
+    // One 'boost:start' per block, not per fragment: the announce timer waits
+    // out the rest of the cloud so the reported duration is the real total.
+    if (boostAnnounce > 0) {
+      boostAnnounce -= dt;
+      if (boostAnnounce <= 0 && boostRemaining > 0) {
+        boostActive = true;
+        evBoost.duration = boostRemaining;
+        SM.events.emit('boost:start', evBoost);
+        if (SM.camera) SM.camera.shake(10);
+      }
+    }
+
+    // Only ACTIVE boost burns down. This used to tick unconditionally, which
+    // meant the clock started on the first fragment while the buff itself
+    // waits for the announce (boostLevel only ramps when boostActive) — so
+    // roughly 0.8s of a six-second surge was spent before the machine ever
+    // went faster, and 'boost:start' then reported the smaller leftover as if
+    // it were the whole prize. Measured: 6.0s collected, 5.19s announced.
+    if (boostActive && boostRemaining > 0) {
+      boostRemaining -= dt;
+      if (boostRemaining <= 0) {
+        boostRemaining = 0;
+        boostActive = false;
+        SM.events.emit('boost:end', null);
+      }
+    }
+
+    // Ramp only once the block has been announced, so the surge and its sound
+    // land on the same step.
+    var target = (boostActive && boostRemaining > 0) ? 1 : 0;
+    boostLevel += (target - boostLevel) * (1 - Math.exp(-BOOST_RAMP * dt));
+    if (boostLevel < 0.001) boostLevel = 0;
+  }
+
+  /* =====================================================================
    * EXPLOSIVE PULSE
    * ================================================================== */
   function updatePulse(dt) {
@@ -574,6 +709,7 @@ SM.vehicle = (function () {
 
     /* --- 3. periodic systems ------------------------------------------ */
     updateOverdrive(dt);
+    updateBoost(dt);
     updatePulse(dt);
 
     /* --- 4. CUT ------------------------------------------------------- *
@@ -614,7 +750,11 @@ SM.vehicle = (function () {
       var factor = 1 / (1 + resistance * C.VEHICLE_RESISTANCE_SCALE * RESISTANCE_BOOST);
       if (factor < C.VEHICLE_MIN_SPEED_FACTOR) factor = C.VEHICLE_MIN_SPEED_FACTOR;
       var odSpeed = 1 + (OD_SPEED - 1) * odLevel;
-      var targetSpeed = C.VEHICLE_SPEED * speedMul * odSpeed * factor;
+      // Boost stacks MULTIPLICATIVELY with overdrive. Both at once is rare and
+      // brief, and the point of catching a boost block mid-frenzy should be
+      // that it feels ridiculous.
+      var boostSpeed = 1 + (BOOST_SPEED - 1) * boostLevel;
+      var targetSpeed = C.VEHICLE_SPEED * speedMul * odSpeed * boostSpeed * factor;
       speed += (targetSpeed - speed) * (1 - Math.exp(-8 * dt));
     }
     y -= speed * dt;
@@ -1557,6 +1697,15 @@ SM.vehicle = (function () {
     getOwnedUpgrades: function () { return owned; },
     getUpgradeVersion: function () { return upgradeVersion; },
     halt: halt,
-    isHalted: function () { return halted; }
+    isHalted: function () { return halted; },
+
+    /* --- speed boost (scattered 'boostcell' blocks) -------------------- */
+    addBoost: addBoost,
+    getBoost: function () { return boostLevel; },
+    getBoostLeft: function () { return boostRemaining; },
+    isBoostActive: function () { return boostActive; },
+    // Run totals for the end card, in the units the player experiences.
+    getBoostBlocks: function () { return boostBlocks; },
+    getBoostSeconds: function () { return boostSeconds; }
   };
 })();

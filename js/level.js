@@ -22,7 +22,9 @@
  *   SM.level.init() / update(dt) / reset()
  *   SM.level.getProgress()   0..1 over the whole run
  *   SM.level.getDistance()   world units travelled
- *   SM.level.isComplete()
+ *   SM.level.isComplete()    reached 100% — a MILESTONE, not an ending; the
+ *                            run continues into the core until the clock stops
+ *   SM.level.getOvertime()   world units dug past the end of the map, else 0
  * Phase-2 additions (terrain.js and presentation may use these):
  *   SM.level.getZones() zoneAt(depth) getZone() getZoneIndex()
  *   SM.level.getZoneProgress() getCollected() getLength()
@@ -32,16 +34,27 @@
  *   SM.level.getTimeCap()    ceiling the clock can ever hold (bar scaling)
  *   SM.level.getTimeBonus()  seconds one +time gate is worth
  *   SM.level.isRunOver()
- *   SM.level.addTime(seconds)  -> true if it was banked
+ *   SM.level.addTime(seconds [, source])  -> true if it was banked
+ *   SM.level.getCellBlocks() getCellSeconds()   run totals for TIME CELLS, in
+ *                            blocks and seconds — the units the player
+ *                            experiences, not the fragment count
  *
  * Events emitted
  *   level:started    null
- *   level:complete   {distance}
+ *   level:complete   {distance}       100% reached. A MILESTONE — the run does
+ *                                     NOT end here, it carries on into the
+ *                                     core. Fires exactly once per run.
  *   zone:entered     {name, kind}     kind: opening|rich|barrier|narrow|final
- *   time:granted     {seconds, left}  a +time gate was taken
+ *   time:granted     {seconds, left, source}   seconds went on the clock.
+ *                                     source: 'gate' (a +10 SECONDS arch, the
+ *                                     default) | 'cell' (a shattered time-cell
+ *                                     block, flushed as one grant). The two
+ *                                     get different HUD treatment; see addTime.
  *   time:low         {left}           ONCE per run, first drop below LOW_TIME
- *   run:over         {reason, distance, timeLeft}   reason: 'time' | 'depth'
- *                                     emitted EXACTLY ONCE per run
+ *   run:over         {reason, distance, timeLeft}   emitted EXACTLY ONCE per
+ *                                     run. `reason` is always 'time' now that
+ *                                     the clock is the only exit; the field is
+ *                                     kept because handlers branch on it.
  * ========================================================================== */
 
 var SM = SM || {};
@@ -65,6 +78,38 @@ SM.level = (function () {
   var TIME_BONUS = 10;           // paid by a `time_10` gate
                                  // (mirrored by TIME_REWARDS in upgrades.js)
   var LOW_TIME = 10;             // seconds left when `time:low` fires
+
+  /* --- scattered time cells (terrain 'timecell' blocks) -----------------
+   * These pay PER COLLECTED FRAGMENT. terrain.js seeds a block as a 40-unit
+   * hard-edged disc, which fills with 15 deposits (measured over five blocks:
+   * 13-18, mean 15.4), and materials.js breaks each into 5 fragments: ~77
+   * fragments for a whole block. At 0.070 that is FIVE SECONDS for taking one
+   * cleanly, which is the number the HUD splash announces, so it had better be
+   * the honest typical result rather than a lucky one — hence the fixed block
+   * radius over in terrain.js and the low-drag, high-backBias `prize` break
+   * style in materials.js, which was measured collecting every single fragment
+   * of five separate blocks (65/65, 80/80, 70/70, 65/65, 55/55).
+   *
+   * 0.070 rather than the 0.066 the mean deposit count alone would suggest,
+   * because the displayed number is ROUNDED: it puts the whole 13-16 deposit
+   * band on "+5 SEC" instead of splitting it between +4 and +5, so the figure
+   * the player learns to expect is the figure they usually see. Only a block
+   * that rolled unusually large reads +6, and only a real clip reads less.
+   *
+   * Per FRAGMENT, not per block, because that is the whole skill in them:
+   * clipping the edge of a block at speed breaks a third of it and leaves half
+   * of that behind, and the splash reports the smaller number it actually paid.
+   *
+   * The grants are ACCUMULATED and flushed on a short timer instead of being
+   * emitted per fragment: seventy separate "+0.07s" pops would read as a
+   * stutter where one "+5s" reads as a pickup. The flush window is a
+   * gap-in-the-stream detector, not a fixed delay — every fragment restarts
+   * it — so it has to be longer than the interval between two arrivals of one
+   * cloud (measured ~0.1s) and short enough that the reward still feels like
+   * it belongs to the thing you just hit.
+   * ------------------------------------------------------------------ */
+  var TIME_PER_PIECE = 0.070;    // seconds per collected time-cell fragment
+  var TIME_FLUSH = 0.22;         // seconds to wait for the rest of the cloud
 
   /* =====================================================================
    * THE SECTION MAP
@@ -330,7 +375,17 @@ SM.level = (function () {
   var evComplete = { distance: 0 };
   var evZone = { name: '', kind: '' };
   // Reused like evZone / evGate: emitted several times a run, never stashed.
-  var evTimeGranted = { seconds: 0, left: 0 };
+  var evTimeGranted = { seconds: 0, left: 0, source: '' };
+  var MI_TIME = -1;              // 'timecell' material index, resolved in init()
+  var pendingTime = 0;           // accumulated grants awaiting a flush
+  var timeFlush = 0;             // countdown to that flush
+  // Run totals for the end card. Counted in BLOCKS and SECONDS, never in
+  // fragments: a time cell is a discrete object you aimed at and hit maybe
+  // eight times in a run, so the summary reporting the ~400 collected chips
+  // told the player they picked up four hundred of something. Seconds are
+  // what they were actually buying, and one flush is exactly one block.
+  var cellBlocks = 0;
+  var cellSeconds = 0;
   var evTimeLow = { left: 0 };
   var evRunOver = { reason: '', distance: 0, timeLeft: 0 };
 
@@ -338,12 +393,30 @@ SM.level = (function () {
 
   function init() {
     SM.events.on('resource:collected', onCollected);
+    MI_TIME = SM.materials ? SM.materials.indexOf('timecell') : -1;
     reset();
   }
 
   /** HOT: fires up to ~30x per step. O(1), no allocation, no strings. */
   function onCollected(p) {
     collected += p.value * SM.vehicle.getValueMultiplier();
+    // Time cells are worth 0 currency; their whole payload is the clock.
+    if (p.matIndex === MI_TIME && !runOver) {
+      pendingTime += TIME_PER_PIECE;
+      timeFlush = TIME_FLUSH;
+    }
+  }
+
+  /** Emit one 'time:granted' for a whole block, once its cloud has landed. */
+  function flushPendingTime() {
+    var secs = pendingTime;
+    pendingTime = 0;
+    timeFlush = 0;
+    if (secs <= 0) return;
+    if (addTime(secs, 'cell')) {
+      cellBlocks++;
+      cellSeconds += secs;
+    }
   }
 
   function placeGates() {
@@ -382,6 +455,10 @@ SM.level = (function () {
     zoneIndex = -1;
     timeLeft = TIME_START;
     runOver = false;
+    pendingTime = 0;
+    timeFlush = 0;
+    cellBlocks = 0;
+    cellSeconds = 0;
     lowFired = false;
     for (var i = 0; i < AUTO_PLAN.length; i++) AUTO_PLAN[i].done = false;
 
@@ -394,18 +471,28 @@ SM.level = (function () {
    * ================================================================== */
 
   /**
-   * Bank seconds from a `time_10` gate. Clamped to TIME_CAP so hoarding has
-   * a ceiling, and refused once the run is over — upgrades.update() runs
-   * AFTER level.update(), so the halting machine can still coast across a
-   * gate on the very step the clock expired, and that must not resurrect it.
+   * Bank seconds. Clamped to TIME_CAP so hoarding has a ceiling, and refused
+   * once the run is over — upgrades.update() runs AFTER level.update(), so the
+   * halting machine can still coast across a gate on the very step the clock
+   * expired, and that must not resurrect it.
+   *
+   * @param source  where the seconds came from, and therefore how the HUD is
+   *                allowed to announce them. 'gate' (the default, so the
+   *                existing single-argument call in upgrades.js is unchanged)
+   *                already owns a whole presentation — arch flash, upgrade
+   *                toast, the "+10s" float off the clock — while 'cell' has
+   *                nothing but the splash ui.js puts up for it. Presentation
+   *                cannot tell them apart from the number alone, so it is
+   *                stated here rather than guessed there.
    * @return true if the seconds were actually banked.
    */
-  function addTime(seconds) {
+  function addTime(seconds, source) {
     if (runOver) return false;
     timeLeft += seconds;
     if (timeLeft > TIME_CAP) timeLeft = TIME_CAP;
     evTimeGranted.seconds = seconds;
     evTimeGranted.left = timeLeft;
+    evTimeGranted.source = source || 'gate';
     SM.events.emit('time:granted', evTimeGranted);
     return true;
   }
@@ -460,16 +547,35 @@ SM.level = (function () {
       }
     }
 
-    /* --- reaching the bottom beats the clock --------------------------- *
-     * Checked BEFORE the countdown so that a player who crosses 100% on the
-     * same step the timer would have expired gets the better ending. Both
-     * routes go through endRun(), which is idempotent.
+    /* --- banked time-cell fragments ------------------------------------ *
+     * Flushed BEFORE the expiry check below, so the last block you scraped
+     * together on the final step still counts. */
+    if (timeFlush > 0) {
+      timeFlush -= dt;
+      if (timeFlush <= 0) flushPendingTime();
+    }
+
+    /* --- reaching the bottom is a MILESTONE, not an ending -------------- *
+     * It used to call endRun('depth'), and that was backwards. THE CORE is
+     * where the base rock IS the treasure and the score curve goes vertical,
+     * so ending the run at the moment you arrive took the payoff away as a
+     * reward for earning it. Now 100% fires `level:complete` — fanfare,
+     * banner, camera punch, the gauge flipping to OVERTIME — and the run
+     * carries on into the core until the clock runs out.
+     *
+     * The clock is therefore the ONLY exit. `run:over` still carries a
+     * `reason`, and it is now always 'time'; the field stays because the
+     * summary card and sound.js both branch on it and a silently-removed
+     * field is a worse trap than a field with one value.
+     *
+     * indexAt() clamps past the end of the map ("stay in the final zone"), so
+     * terrain keeps generating core indefinitely, and `progress` is already
+     * clamped to 1 — see getOvertime() for what the HUD shows instead.
      * ------------------------------------------------------------------ */
     if (!runOver && !complete && progress >= 1) {
       complete = true;
       evComplete.distance = distance;
       SM.events.emit('level:complete', evComplete);
-      endRun('depth');
     }
 
     /* --- the countdown ------------------------------------------------- *
@@ -517,6 +623,13 @@ SM.level = (function () {
     getProgress: function () { return progress; },
     getDistance: function () { return distance; },
     isComplete: function () { return complete; },
+    /** World units dug PAST the end of the map, 0 until then. `progress` is
+     *  pinned at 1 in the core, so this is the only thing left that still
+     *  moves — the HUD gauge switches to reporting it. */
+    getOvertime: function () {
+      var o = distance - RUN_LENGTH;
+      return o > 0 ? o : 0;
+    },
 
     /* --- Phase 2 additions -------------------------------------------- */
     getZones: function () { return ZONES; },
@@ -533,6 +646,10 @@ SM.level = (function () {
     getTimeCap: function () { return TIME_CAP; },
     getTimeBonus: function () { return TIME_BONUS; },
     isRunOver: function () { return runOver; },
-    addTime: addTime
+    addTime: addTime,
+
+    /* --- time-cell run totals (the end-card footnote) ------------------ */
+    getCellBlocks: function () { return cellBlocks; },
+    getCellSeconds: function () { return cellSeconds; },
   };
 })();

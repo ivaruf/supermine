@@ -14,7 +14,8 @@
  *   glints              8-point metal star, sells "chrome" moments
  *   streaks             collection trails + overdrive speed lines
  *   smoke               exhaust plume behind the machine
- *   text popups         floating "+value", rapid pickups MERGE into combos
+ *   text popups         floating "+value", ONE COMBO PER MATERIAL, in that
+ *                       material's own colour (see the combo buckets below)
  *   overlays            screen flash + overdrive colour grade (world-space rect)
  *
  * PERFORMANCE CONTRACT — do not weaken any of this
@@ -23,8 +24,9 @@
  *     Overflow is silently dropped — that is the whole point of the budget.
  *   * Event payload objects are REUSED by the engine. Fields are read
  *     immediately; nothing is ever stashed.
- *   * Rapid pickups are ACCUMULATED into a single combo popup instead of
- *     spawning one popup per pickup.
+ *   * Rapid pickups are ACCUMULATED into combo popups instead of spawning one
+ *     popup per pickup — per MATERIAL, so each seam reports itself in its own
+ *     colour, with all spoil merged into one bucket.
  *   * All shake lives in camera.js. effects.js never calls camera.shake().
  *
  * Public API (contract — do not change these signatures)
@@ -80,9 +82,19 @@ SM.effects = (function () {
   var COMBO_MAX_HOLD   = 0.85;  // ...but never hold longer than this
   var POPUP_LIFE       = 1.00;
   var POPUP_RISE       = 66;    // world units/s the popup floats forward
-  var POPUP_FONT       = 20;    // world units at 1x; grows with combo size
-  var POPUP_FONT_MAX   = 40;
   var POPUP_CLEARANCE  = 46;    // world units clear of the rig's flank
+
+  /* Popup size scales with the VALUE of the haul, on a log curve.
+   * The dynamic range here is enormous — a mouthful of dirt is worth ~4 and a
+   * ploughed emerald seam is worth ~30 000 — so a linear map would either
+   * flatten everything at the top or make the small ones invisible. One decade
+   * of value buys POPUP_FONT_PER_DECADE world units of type, which keeps the
+   * whole range legible and still makes a big seam land like a big seam. */
+  var POPUP_VALUE_REF      = 40;   // value that renders at exactly POPUP_FONT
+  var POPUP_FONT           = 20;
+  var POPUP_FONT_PER_DECADE = 8;
+  var POPUP_FONT_MIN       = 14;
+  var POPUP_FONT_MAX       = 52;
 
   var COLLECT_POP_CHANCE = 0.34;
   var COLLECT_STREAK_CHANCE = 0.20;
@@ -148,6 +160,8 @@ SM.effects = (function () {
   var matR = null, matG = null, matB = null;       // highlight colour
   var matBR = null, matBG = null, matBB = null;    // base colour
   var matValue = null, matSparkle = null, matGlow = null;
+  var matBucket = null;                       // matIndex -> combo bucket, -1 = none
+  var popR = null, popG = null, popB = null;  // legible popup ink per material
   var matCount = 0;
 
   /* --- ambient / state ------------------------------------------------ */
@@ -157,9 +171,29 @@ SM.effects = (function () {
   var streakAcc = 0;
   var fireworkTimer = 0;
 
-  var comboValue = 0, comboCount = 0, comboX = 0, comboY = 0;
+  /* --- per-material collection combos ---------------------------------
+   * ONE BUCKET PER MATERIAL, plus a shared bucket for spoil.
+   *
+   * Every ore accumulates independently and pops in its OWN colour the moment
+   * that particular stream dries up — drive through an emerald seam and the
+   * green number lands when the emeralds stop arriving, regardless of the dirt
+   * still flowing in around it.
+   *
+   * Dirt, stone, rubble and granite share the LAST bucket. They are collected
+   * continuously and would otherwise emit a permanent drip of small brown and
+   * grey numbers, drowning the ore payoffs the player actually wants to read.
+   * Merging them mirrors the SPOIL row on the end-of-run card.
+   * Power-ups (`pickup` materials) are skipped entirely: they are worth 0
+   * currency and get their own on-screen splash.
+   * ------------------------------------------------------------------ */
+  var SPOIL_BUCKET = 0;         // set to matCount in buildTextures()
+  var cbValue = null;           // Float64Array(matCount + 1)
+  var cbCount = null;           // Uint32Array
+  var cbTimer = null;           // Float32Array
+  var cbHold = null;            // Float32Array
+  var cbOpen = 0;               // buckets currently accumulating
+  var comboX = 0, comboY = 0;
   var valueMult = 1;            // ORE REFINERY multiplier — popups show the paid value
-  var comboTimer = 0, comboHold = 0;
 
   var overdrive = 0;          // 0..1 sustained intensity
   var overdriveTarget = 0;
@@ -334,6 +368,16 @@ SM.effects = (function () {
     matValue = new Float32Array(matCount);
     matSparkle = new Float32Array(matCount);
     matGlow = new Uint8Array(matCount);
+    matBucket = new Int32Array(matCount);
+    popR = new Uint8Array(matCount); popG = new Uint8Array(matCount); popB = new Uint8Array(matCount);
+
+    // One bucket per material, plus the shared spoil bucket on the end.
+    SPOIL_BUCKET = matCount;
+    cbValue = new Float64Array(matCount + 1);
+    cbCount = new Uint32Array(matCount + 1);
+    cbTimer = new Float32Array(matCount + 1);
+    cbHold = new Float32Array(matCount + 1);
+    cbOpen = 0;
 
     for (var i = 0; i < matCount; i++) {
       var m = list[i];
@@ -344,6 +388,23 @@ SM.effects = (function () {
       matValue[i] = m.value || 0;
       matSparkle[i] = m.sparkle || 0;
       matGlow[i] = m.glow ? 1 : 0;
+
+      // -1 = never popped (power-ups). Ores pop in their own colour; anything
+      // else is spoil and shares one bucket.
+      matBucket[i] = m.pickup ? -1 : (m.ore ? i : matCount);
+
+      /* Popup ink. The base colour IDENTIFIES the material but is often too
+       * dark to read as type over rubble (dirt is #7c5a3a), and the highlight
+       * ramp is too washed out to identify anything. So: take the base hue and
+       * push its brightest channel to full. Emerald stays unmistakably emerald,
+       * dirt becomes a legible warm tan, and every popup clears the background
+       * at the same perceived weight. */
+      var mx = matBR[i] > matBG[i] ? matBR[i] : matBG[i];
+      if (matBB[i] > mx) mx = matBB[i];
+      var gain = mx > 0 ? 255 / mx : 1;
+      popR[i] = Math.min(255, (matBR[i] * gain) | 0);
+      popG[i] = Math.min(255, (matBG[i] * gain) | 0);
+      popB[i] = Math.min(255, (matBB[i] * gain) | 0);
 
       // Dust is a desaturated, lifted version of the base rock colour.
       var dr = Math.min(255, (matBR[i] * 0.55 + 90) | 0);
@@ -641,11 +702,14 @@ SM.effects = (function () {
     var m = p.matIndex;
     if (m >= matCount) m = 0;
 
-    comboValue += p.value * valueMult;
-    comboCount++;
-    comboX = p.x; comboY = p.y;
-    if (comboTimer <= 0) comboHold = 0;
-    comboTimer = COMBO_WINDOW;
+    var b = matBucket[m];
+    if (b >= 0) {
+      if (cbCount[b] === 0) { cbHold[b] = 0; cbOpen++; }
+      cbValue[b] += p.value * valueMult;
+      cbCount[b]++;
+      cbTimer[b] = COMBO_WINDOW;
+      comboX = p.x; comboY = p.y;
+    }
 
     var sp = matSparkle[m];
     // The satisfying "pop" at the exact moment of capture.
@@ -864,37 +928,60 @@ SM.effects = (function () {
     burst(px, py, mat, 0.5 + Math.random() * 0.5, false);
   }
 
+  /**
+   * Walk the open combo buckets and pop each one whose stream has dried up.
+   * O(matCount) only while something is actually being collected.
+   */
   function flushCombo(dt) {
-    if (comboCount === 0) return;
-    comboTimer -= dt;
-    comboHold += dt;
-    if (comboTimer > 0 && comboHold < COMBO_MAX_HOLD) return;
-
-    var v = Math.round(comboValue);
-    if (v > 0) {
-      // Bigger hauls get bigger, hotter text.
-      var mag = v >= 2000 ? 3 : v >= 500 ? 2 : v >= 120 ? 1 : 0;
-      var size = POPUP_FONT + mag * 5 + Math.min(4, comboCount * 0.25);
-      if (size > POPUP_FONT_MAX) size = POPUP_FONT_MAX;
-      var r = 255, g = 210, b = 70;
-      if (mag === 1) { r = 255; g = 226; b = 120; }
-      else if (mag === 2) { r = 190; g = 250; b = 255; }
-      else if (mag === 3) { r = 255; g = 255; b = 255; }
-
-      var vx = SM.vehicle && SM.vehicle.getX ? SM.vehicle.getX() : comboX;
-      var vy = SM.vehicle && SM.vehicle.getY ? SM.vehicle.getY() : comboY;
-      var half = (SM.vehicle && SM.vehicle.getWidth ? SM.vehicle.getWidth() : 140) * 0.5;
-      // Alternate flanks and stay clear of the rig, so a torrent of popups
-      // never sits on top of the machine you are trying to watch.
-      comboSide = -comboSide;
-      var px = vx + comboSide * (half + POPUP_CLEARANCE + size * 1.6);
-      var lim = C.LANE_HALF_WIDTH - 70;
-      if (px > lim) px = vx - (half + POPUP_CLEARANCE);
-      if (px < -lim) px = vx + (half + POPUP_CLEARANCE);
-      popup(px, vy - 10 + (Math.random() - 0.5) * 20, '+' + v, size, r, g, b);
-      if (mag >= 3) glint(vx, vy, 46, 0.24, r, g, b, true);
+    if (cbOpen === 0) return;
+    for (var b = 0; b <= SPOIL_BUCKET; b++) {
+      if (cbCount[b] === 0) continue;
+      cbTimer[b] -= dt;
+      cbHold[b] += dt;
+      // Pop when this material stops arriving, or when it has been streaming
+      // for so long that holding the number back stops reading as one haul.
+      if (cbTimer[b] > 0 && cbHold[b] < COMBO_MAX_HOLD) continue;
+      emitComboPopup(b, Math.round(cbValue[b]));
+      cbValue[b] = 0; cbCount[b] = 0; cbTimer[b] = 0; cbHold[b] = 0;
+      cbOpen--;
     }
-    comboValue = 0; comboCount = 0; comboTimer = 0; comboHold = 0;
+  }
+
+  function emitComboPopup(bucket, v) {
+    if (v <= 0) return;
+
+    /* Size: log-scaled against POPUP_VALUE_REF, so "the higher the score, the
+     * larger the number" holds smoothly across four orders of magnitude. */
+    var size = POPUP_FONT +
+               (Math.log(v / POPUP_VALUE_REF) / Math.LN10) * POPUP_FONT_PER_DECADE;
+    if (size < POPUP_FONT_MIN) size = POPUP_FONT_MIN;
+    if (size > POPUP_FONT_MAX) size = POPUP_FONT_MAX;
+
+    // Ore pops in its own colour; the merged spoil bucket keeps the neutral
+    // gold that used to be every popup's colour.
+    var r, g, bl;
+    var spoil = (bucket === SPOIL_BUCKET);
+    if (spoil) { r = 235; g = 214; bl = 150; }
+    else { r = popR[bucket]; g = popG[bucket]; bl = popB[bucket]; }
+
+    var vx = SM.vehicle && SM.vehicle.getX ? SM.vehicle.getX() : comboX;
+    var vy = SM.vehicle && SM.vehicle.getY ? SM.vehicle.getY() : comboY;
+    var half = (SM.vehicle && SM.vehicle.getWidth ? SM.vehicle.getWidth() : 140) * 0.5;
+    // Alternate flanks and stay clear of the rig, so a torrent of popups
+    // never sits on top of the machine you are trying to watch.
+    comboSide = -comboSide;
+    var px = vx + comboSide * (half + POPUP_CLEARANCE + size * 1.6);
+    var lim = C.LANE_HALF_WIDTH - 70;
+    if (px > lim) px = vx - (half + POPUP_CLEARANCE);
+    if (px < -lim) px = vx + (half + POPUP_CLEARANCE);
+
+    // Stagger the height by bucket so two materials flushing on the same step
+    // never render exactly on top of each other.
+    var dy = -10 + ((bucket * 37) % 60) - 30;
+    popup(px, vy + dy, '+' + v, size, r, g, bl);
+
+    // A really big seam gets a matching flare in its own colour.
+    if (!spoil && v >= 2000) glint(vx, vy, 46, 0.24, r, g, bl, true);
   }
 
   /* =====================================================================
@@ -933,7 +1020,12 @@ SM.effects = (function () {
     clock = 0;
     exhaustAcc = grindAcc = streakAcc = 0;
     fireworkTimer = 0;
-    comboValue = comboCount = comboTimer = comboHold = 0;
+    if (cbValue) {
+      for (var b = 0; b <= SPOIL_BUCKET; b++) {
+        cbValue[b] = 0; cbCount[b] = 0; cbTimer[b] = 0; cbHold[b] = 0;
+      }
+    }
+    cbOpen = 0;
     valueMult = 1;
     overdrive = overdriveTarget = overdriveLeft = 0;
     flashAmt = 0;

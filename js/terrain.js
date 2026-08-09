@@ -22,6 +22,9 @@
  *                  two openings you must steer for — or plough through.
  *   CORRIDORS      ('narrow' zones) a wandering open passage with granite walls.
  *   THE CORE       ('final' zone) no dirt at all; the base rock is treasure.
+ *   POWER-UP BLOCKS a hard-edged disc of time cell / boost cell sitting in an
+ *                  excavated chamber of its own. Rare, big and lit against
+ *                  black so it reads as "go get that" from across the lane.
  *
  *   Upgrade gates carve their own opening (read from SM.upgrades.getGates()).
  *
@@ -61,6 +64,39 @@ SM.terrain = (function () {
   var CORRIDOR_LEAD = 170;
   var CORRIDOR_LIP = 28;         // stone rim between open floor and granite
 
+  // --- scattered power-up blocks (time cells / speed boosts) -----------
+  // Rate is per generation band, and a band is only BAND_HEIGHT (90) units
+  // tall, so this number is small by necessity: 0.045 works out at one block
+  // every ~2000 units, roughly every ten seconds at cruising speed. It used to
+  // be 0.07 (~1300 units) back when a block was a small cluster of ordinary-
+  // looking deposits; now that each one is a five-second event with its own
+  // chamber and its own full-screen splash, they have to be spaced far enough
+  // apart that seeing one is an occasion. Because they are dropped anywhere
+  // across a 1280-wide lane, a good fraction still land off the player's line
+  // — which is the whole point. Raising this much past 0.07 turns the clock
+  // into a free ride and the run stops being a race.
+  // (Rolled per band, and only in bands that are not barrier/narrow — about
+  // 70% of the map — so the number you feel while driving is nearer one per
+  // 2900 units than one per 2000.)
+  var PICKUP_RATE = 0.05;
+  var PICKUP_TIME_SHARE = 0.62;  // rest are boosts; time is the scarcer need
+  // The disc fills with one DEPOSIT per grid cell (SPACING 19, so one per 361
+  // square units), which makes the count pi*r*r/361: at 40 that predicts ~14,
+  // and a five-block sample measured 13-18, mean 15.4, at 65-69 units across.
+  // FIXED, not a range, on purpose — the splash promises "+5 SEC" and a payout
+  // that swung with a rolled radius would make that promise a lie half the
+  // time. 80 units across is a bit over half the starting blade width, so it
+  // is a real object you aim at rather than something you sweep up in passing.
+  var PICKUP_RADIUS = 40;
+  // The block is carved into an excavated CHAMBER. Two jobs: it makes the
+  // glow read against black instead of against dirt, so you spot one from the
+  // far side of the lane; and it leaves the shattered cloud nothing to snag
+  // on, so a clean hit collects cleanly and the advertised number is honest.
+  var PICKUP_CHAMBER = 74;
+  // Keep them off the bedrock walls so one can never be unreachable. Measured
+  // from the CHAMBER edge, not the block, or a chamber could clip the wall.
+  var PICKUP_EDGE_MARGIN = 130;
+
   var C = SM.config;
 
   /* ----- streaming state --------------------------------------------- */
@@ -83,6 +119,33 @@ SM.terrain = (function () {
   var pkRY = new Float32Array(POCKET_MAX);
   var pkMat = new Int32Array(POCKET_MAX);   // -1 = void (no spawn)
   var pkCount = 0;
+
+  /* ----- power-up blocks ----------------------------------------------
+   * A SEPARATE list, consulted before the pockets, and this is not tidiness
+   * — it is a bug fix. Pockets are walked newest-first, and generateBand()
+   * seeds pockets up to POCKET_LOOKAHEAD (560 units, ~6 bands) ahead of the
+   * band it is about to fill. So by the time the band holding a block is
+   * actually filled, half a dozen NEWER ore formations have been pushed on
+   * top of it, and any one of them that overlaps wins. Measured before this
+   * list existed: of three blocks the generator seeded over a 16 000-unit
+   * run, three were partly or completely eaten and zero reached the player
+   * intact. A power-up is a placed object rather than geology, so it stops
+   * competing on age and simply outranks everything.
+   *
+   * Each entry is a block radius inside a chamber radius: inside the block
+   * you get the power-up material, between the two you get nothing at all.
+   * The empty chamber does two jobs — it makes the glow read against black
+   * instead of against dirt, so you spot one from the far side of the lane,
+   * and it leaves the shattered cloud nothing to snag on, so a clean hit
+   * collects cleanly and the "+5 SEC" the HUD promises is honest.
+   * ------------------------------------------------------------------ */
+  var BLOCK_MAX = 8;             // live at once; they are ~2000 units apart
+  var blX = new Float32Array(BLOCK_MAX);
+  var blY = new Float32Array(BLOCK_MAX);
+  var blR2 = new Float32Array(BLOCK_MAX);    // squared block radius
+  var blC2 = new Float32Array(BLOCK_MAX);    // squared chamber radius
+  var blMat = new Int32Array(BLOCK_MAX);
+  var blCount = 0;
 
   /* ----- deterministic RNG (mulberry32) ------------------------------- */
   var rngState = 0x9e3779b9;
@@ -108,6 +171,7 @@ SM.terrain = (function () {
 
   /* ----- cached material indices (resolved on init) -------------------- */
   var M_DIRT = 0, M_STONE = 1, M_RUBBLE = 7, M_GRANITE = 8;
+  var M_TIMECELL = 11, M_BOOSTCELL = 12;   // resolved by id in resolveMaterials()
 
   function resolveMaterials() {
     var mm = SM.materials;
@@ -115,6 +179,8 @@ SM.terrain = (function () {
     M_STONE = mm.indexOf('stone');
     M_RUBBLE = mm.indexOf('rubble');
     M_GRANITE = mm.indexOf('granite');
+    M_TIMECELL = mm.indexOf('timecell');
+    M_BOOSTCELL = mm.indexOf('boostcell');
     resolveZones();
   }
 
@@ -271,6 +337,18 @@ SM.terrain = (function () {
       return pickWeighted(z.$ores);
     }
 
+    /* --- power-up blocks (outrank every pocket; see the list's comment) -- */
+    for (var b = 0; b < blCount; b++) {
+      var bdx = px - blX[b], bdy = py - blY[b];
+      var bd2 = bdx * bdx + bdy * bdy;
+      if (bd2 > blC2[b]) continue;              // outside the chamber
+      // Hard edge on purpose. Ore pockets get a weathered rim below because
+      // they are geology; a manufactured object with a nibbled outline just
+      // looks broken, and the clean disc is most of what makes it read as a
+      // prize rather than as another lump of glowing rock.
+      return bd2 <= blR2[b] ? blMat[b] : -1;
+    }
+
     /* --- pockets (newest first so local ones win) ---------------------- */
     for (var i = pkCount - 1; i >= 0; i--) {
       var dx = (px - pkX[i]) / pkRX[i];
@@ -326,6 +404,30 @@ SM.terrain = (function () {
     }
   }
 
+  /** Place one power-up block and its chamber. Silently skipped if the list
+   *  is full, which can only happen if the rate is raised by an order of
+   *  magnitude — dropping one is far better than evicting a live one. */
+  function pushBlock(x, y, r, chamber, mat) {
+    if (blCount >= BLOCK_MAX) pruneBlocks(y + 700);
+    if (blCount >= BLOCK_MAX) return;
+    blX[blCount] = x; blY[blCount] = y;
+    blR2[blCount] = r * r;
+    blC2[blCount] = chamber * chamber;
+    blMat[blCount] = mat;
+    blCount++;
+  }
+
+  function pruneBlocks(behindY) {
+    for (var i = blCount - 1; i >= 0; i--) {
+      if (blY[i] - PICKUP_CHAMBER > behindY) {
+        var last = --blCount;
+        blX[i] = blX[last]; blY[i] = blY[last];
+        blR2[i] = blR2[last]; blC2[i] = blC2[last];
+        blMat[i] = blMat[last];
+      }
+    }
+  }
+
   function seedPocketsForBand(y0, y1) {
     var lane = C.LANE_HALF_WIDTH;
     var z = SM.level.zoneAt(C.START_Y - y1);
@@ -357,6 +459,27 @@ SM.terrain = (function () {
       }
       pushPocket(x, y, rx, ry, mat);
     }
+
+    seedPickupsForBand(y0, y1, z);
+  }
+
+  /** Scatter the occasional time cell / speed boost. */
+  function seedPickupsForBand(y0, y1, z) {
+    // Barrier slabs and corridor walls are a STRUCTURAL override applied
+    // before pockets are ever consulted (see materialAt), so a block seeded
+    // inside one would simply never be generated. Skipping those zones costs
+    // ~30% of the run's length and avoids silently swallowing power-ups.
+    if (z.kind === 'barrier' || z.kind === 'narrow') return;
+    if (rnd() >= PICKUP_RATE) return;
+
+    var lane = C.LANE_HALF_WIDTH - PICKUP_EDGE_MARGIN;
+    var x = (rnd() * 2 - 1) * lane;
+    var y = y1 + rnd() * (y0 - y1);
+    // A hair of jitter on the block so a row of them down a run does not read
+    // as stamped copies; far too small to move the fragment count.
+    var r = PICKUP_RADIUS + (rnd() * 2 - 1) * 2;
+    pushBlock(x, y, r, PICKUP_CHAMBER,
+              rnd() < PICKUP_TIME_SHARE ? M_TIMECELL : M_BOOSTCELL);
   }
 
   /* =====================================================================
@@ -479,6 +602,7 @@ SM.terrain = (function () {
   function reset() {
     setSeed(0x9e3779b9);
     pkCount = 0;
+    blCount = 0;
     despawnTick = 0;
     nextBandY = C.START_Y + 220;
     pocketY = nextBandY;
@@ -528,6 +652,7 @@ SM.terrain = (function () {
       var line = behindLine(vy);
       SM.particles.despawnBehind(line);
       prunePockets(line + 220);
+      pruneBlocks(line + 220);
     }
   }
 

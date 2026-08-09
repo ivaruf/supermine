@@ -26,7 +26,7 @@
  *   SM.sound.play(name, opts?)   'break' 'hit' 'collect' 'impact' 'gate'
  *                                'upgrade' 'clank' 'sparkle' 'boom' 'riser'
  *                                'complete' 'ui' 'timeplus' 'timelow' 'tick'
- *                                'timeout'
+ *                                'timeout' 'boost'
  *   SM.sound.setMuted(b) / toggleMute() / isMuted()
  * ========================================================================== */
 
@@ -341,7 +341,8 @@ SM.sound = (function () {
     // never be swallowed by a torrent of debris voices.
     var important = (name === 'upgrade' || name === 'boom' || name === 'riser' ||
                      name === 'complete' || name === 'gate' || name === 'ui' ||
-                     name === 'timeplus' || name === 'timeout' || name === 'timelow');
+                     name === 'timeplus' || name === 'timeout' || name === 'timelow' ||
+                     name === 'boost');
     if (!canVoice(important)) return;
 
     var minGap = C.SOUND_MIN_INTERVAL;
@@ -429,6 +430,19 @@ SM.sound = (function () {
         tone(150, 32, 0.55, 0.42, 'sine');
         tone(78, 28, 0.75, 0.30, 'triangle', 0.02);
         break;
+
+      case 'boost': {
+        // The little brother of 'riser'. Same gesture — an upward sweep — in
+        // a third of the time and an octave lower, so when a boost block is
+        // taken during an overdrive the two are still telling you about two
+        // different things. Ends on one bright ping so it lands rather than
+        // trailing off; the sweep alone read as "something is charging up".
+        tone(150, 560, 0.36, 0.20, 'sawtooth');
+        tone(75, 280, 0.42, 0.13, 'square', 0.01);
+        noiseBurst(0.30, 1300, 1.3, 0.20, 'bandpass');
+        tone(932, 1245, 0.13, 0.10, 'triangle', 0.28);
+        break;
+      }
 
       case 'riser': {                  // overdrive spin-up
         if (!actx) break;
@@ -751,6 +765,9 @@ SM.sound = (function () {
       play('riser', { duration: 1.0 });
     });
     SM.events.on('overdrive:end', function () { overdriveTarget = 0; overdriveLeft = 0; });
+    // A boost block gets a voice but NOT the sustained overdrive layer: the
+    // effect is speed only, so the soundtrack should not thicken for it.
+    SM.events.on('boost:start', function () { play('boost'); });
     SM.events.on('zone:entered', function (p) {
       var kind = p && p.kind;
       zoneLevel = kind === 'final' ? 4 : kind === 'narrow' ? 3
@@ -765,9 +782,11 @@ SM.sound = (function () {
     SM.events.on('time:granted', function () { play('timeplus'); });
     SM.events.on('time:low', function () { play('timelow'); });
     SM.events.on('run:over', function (p) {
-      // Everything stops: kill the rhythm bed, then the stinger. A 'depth'
-      // ending already got the 'complete' fanfare from level:complete, so it
-      // does not also get the failure sting.
+      // Everything stops: kill the rhythm bed, then the stinger. The clock is
+      // the only exit now, so the stinger effectively always plays — and it
+      // no longer collides with the 'complete' fanfare, because reaching 100%
+      // is a milestone that happens minutes earlier, mid-run, and is announced
+      // on its own beat. The reason check stays as the guard it always was.
       zoneLevel = 0;
       overdriveTarget = 0; overdriveLeft = 0;
       grindTarget = 0;
