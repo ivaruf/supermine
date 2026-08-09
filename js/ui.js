@@ -67,6 +67,11 @@ SM.ui = (function () {
   var TIME_URGENT     = 10;     // seconds: red, pulsing, one tick per second
   var TIME_DECIMALS   = 10;     // below this, show tenths — the drama is in them
 
+  /* The build stamp shown on the menu. It lives HERE rather than in
+   * config.js because config.js is frozen, and ui.js is the only module that
+   * ever displays it. Bump it by hand when the game meaningfully changes. */
+  var GAME_VERSION    = 'v1.2.0';
+
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
   var NAME_MAX        = 12;
@@ -194,6 +199,7 @@ SM.ui = (function () {
   var multiplier = 1;
   var overdriveLeft = 0, overdriveTotal = 0;
   var boostLeft = 0, boostTotal = 0;
+  var freestyle = false;         // chosen on the menu, survives restarts
   var zoneName = '';
   var summaryOpen = false;
   var started = false;
@@ -432,6 +438,13 @@ SM.ui = (function () {
     els.clockFill = el('div', 'sm-clock-fill', clockBar);
     els.clockGain = el('div', 'sm-clock-gain', clockWrap, '+10s');
 
+    // update() only runs inside the fixed step, which main.js pins until the
+    // first gesture — so without seeding it here the clock sits behind the
+    // menu reading a dead 0:00 until the run actually starts.
+    if (SM.level && SM.level.getTimeStart) {
+      els.clockDigits.textContent = fmtTime(SM.level.getTimeStart());
+    }
+
     // If the timed-run API is not present, hide the clock rather than show a
     // dead 0:00, and let the progress gauge take the top slot back.
     if (!(SM.level && SM.level.getTimeLeft)) {
@@ -611,25 +624,59 @@ SM.ui = (function () {
       els.sumBtn.blur();
     });
 
-    /* --- start overlay ---------------------------------------------------- */
-    // The player has to know this is a race before the clock starts running.
+    /* --- start overlay / MAIN MENU ----------------------------------------
+     * The overlay used to dismiss on a click ANYWHERE, which cannot survive a
+     * mode choice — the whole panel is a hit target, so a stray tap would pick
+     * a mode for you. The gesture now lives on the two mode cards only, and
+     * they are what unlock audio.
+     * ------------------------------------------------------------------ */
     var t0 = (SM.level && SM.level.getTimeStart) ? SM.level.getTimeStart() : 0;
-    var timedCopy = (t0 > 0)
-      ? ('TIME ATTACK  ·  ' + Math.round(t0) + ' SECONDS ON THE CLOCK')
-      : 'TIME ATTACK  ·  BEAT THE CLOCK';
 
     els.start = el('div', 'sm-start', root);
     var sc = el('div', 'sm-start-inner', els.start);
-    el('div', 'sm-start-logo', sc, 'SUPERMINE');
-    el('div', 'sm-start-sub', sc, 'DRIVE. DESTROY. BEAT THE CLOCK.');
-    el('div', 'sm-start-timed', sc, timedCopy);
-    el('div', 'sm-start-cta', sc, 'CLICK OR TAP TO START');
-    el('div', 'sm-start-rules', sc,
-      'YOUR HAUL WHEN THE CLOCK HITS ZERO IS YOUR SCORE.  ' +
-      'SOME GATES GIVE +10 SECONDS INSTEAD OF AN UPGRADE — TRADE POWER FOR TIME.');
-    el('div', 'sm-start-keys', sc, 'A / D or ARROWS or DRAG to steer  ·  R restart  ·  M mute');
+
+    var head = el('div', 'sm-start-head', sc);
+    el('div', 'sm-start-logo', head, 'SUPERMINE');
+    el('div', 'sm-start-sub', head, 'DRIVE. DESTROY. DIG DEEPER.');
+
+    el('div', 'sm-start-pick', sc, 'CHOOSE YOUR RUN');
+
+    var modes = el('div', 'sm-modes', sc);
+    els.modeTime = modeCard(modes, 'time', 'TIME ATTACK',
+      (t0 > 0 ? Math.round(t0) + ' SECONDS ON THE CLOCK' : 'BEAT THE CLOCK'),
+      'Your haul when the clock hits zero is your score. Some gates pay ' +
+      '+10 SECONDS instead of an upgrade — trade power for time.',
+      'RANKED');
+    els.modeFree = modeCard(modes, 'freestyle', 'FREESTYLE',
+      'NO CLOCK · NO LIMIT',
+      'Dig as far as you like. Nothing is timed and nothing ends the run — ' +
+      'every gate pays an upgrade instead of seconds.',
+      'SANDBOX');
+
+    el('div', 'sm-start-keys', sc,
+      'A / D  ·  ARROWS  ·  DRAG  to steer      R  restart      M  mute');
+
+    /* --- opt-in update, shown only when a new build is parked and waiting --- */
+    els.update = el('button', 'sm-update', sc, 'UPDATE READY — TAP TO INSTALL');
+    els.update.setAttribute('type', 'button');
+    els.update.style.display = 'none';
+    els.update.addEventListener('click', function (e) {
+      e.preventDefault();
+      applyUpdate();
+    });
+
+    // Version, welded to the bottom of the menu panel. Replaced at runtime by
+    // the version the SERVICE WORKER reports, which is the build actually
+    // serving this session — GAME_VERSION is only the fallback for a plain
+    // file:// or first-visit load where no worker is controlling yet.
+    els.version = el('div', 'sm-start-version', els.start, GAME_VERSION);
 
     /* --- hint + debug ------------------------------------------------------ */
+    // The menu owns the whole screen until a mode is picked. Without this the
+    // in-game hint line sits at the bottom centre repeating the menu's own key
+    // list and colliding with the version stamp.
+    root.classList.add('sm-menu');
+
     els.hint = el('div', 'sm-hint', root, 'A / D  •  ARROWS  •  DRAG   —   R restart, M mute');
     els.debug = el('div', 'sm-debug', root, '');
     if (!C.DEBUG_STATS) els.debug.style.display = 'none';
@@ -639,6 +686,23 @@ SM.ui = (function () {
     els.hsNote.style.display = 'none';
 
     applyCompact();
+  }
+
+  /**
+   * One selectable mode card. Returns the node; the click handler is attached
+   * in init() alongside the rest of the gesture plumbing.
+   */
+  function modeCard(parent, mode, title, tag, blurb, badge) {
+    var card = el('button', 'sm-mode sm-mode-' + mode, parent);
+    card.setAttribute('type', 'button');
+    card.setAttribute('data-mode', mode);
+    el('div', 'sm-stripe', card);
+    el('div', 'sm-mode-badge', card, badge);
+    el('div', 'sm-mode-title', card, title);
+    el('div', 'sm-mode-tag', card, tag);
+    el('div', 'sm-mode-blurb', card, blurb);
+    el('div', 'sm-mode-go', card, 'START ▸');
+    return card;
   }
 
   function statCell(parent, label, value) {
@@ -1211,8 +1275,41 @@ SM.ui = (function () {
   function onFirstGesture() {
     if (started) return;
     started = true;
+    if (root) root.classList.remove('sm-menu');
     if (els.start) els.start.classList.add('sm-start-off');
     if (els.hint) els.hint.classList.add('sm-hint-fade');
+  }
+
+  /**
+   * Leave the menu in the chosen mode.
+   *
+   * The mode has to be set BEFORE anything regenerates, because level.js
+   * swaps the +10s gates for upgrades and terrain.js stops seeding time cells
+   * — both of which are decided while the world is being built. main.restart()
+   * re-runs that build in the documented order, so we set the mode and then
+   * restart rather than trying to patch a half-built time-attack world.
+   */
+  function startRun(e, mode) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (started) return;
+    SM.sound.play('ui');
+
+    if (SM.level.setMode) SM.level.setMode(mode);
+    freestyle = !!(SM.level.isFreestyle && SM.level.isFreestyle());
+    applyModeChrome();
+    SM.main.restart();
+
+    // Route through the canonical gesture path so 'input:firstgesture' fires
+    // for everyone (sim start gate, audio unlock), not just the UI.
+    SM.input.noteGesture();
+    onFirstGesture();
+  }
+
+  /** Freestyle has no clock, so the countdown panel goes and the gauge rises. */
+  function applyModeChrome() {
+    if (!root) return;
+    if (freestyle) root.classList.add('sm-notimer');
+    else root.classList.remove('sm-notimer');
   }
 
   function toast(title, sub, seconds) {
@@ -1250,20 +1347,14 @@ SM.ui = (function () {
       window.addEventListener('resize', onResize, false);
       window.addEventListener('orientationchange', onResize, false);
     }
-    // The overlay itself unlocks audio: pointer-events are on until dismissed.
-    if (els.start) {
-      var go = function (e) {
-        if (e && e.preventDefault) e.preventDefault();
-        SM.sound.play('ui');
-        // Route through the canonical gesture path so 'input:firstgesture'
-        // fires for everyone (sim start gate, audio unlock), not just the UI.
-        SM.input.noteGesture();
-        onFirstGesture();
-      };
-      els.start.addEventListener('pointerdown', go);
-      els.start.addEventListener('click', go);
-    }
+    /* The mode cards are the only way out of the menu, and they double as the
+     * audio-unlock gesture. Bound on CLICK only: a pointerdown+click pair on
+     * the same element fired twice, and the second one started the run again
+     * after reset had already re-armed the overlay. */
+    if (els.modeTime) els.modeTime.addEventListener('click', function (e) { startRun(e, 'time'); });
+    if (els.modeFree) els.modeFree.addEventListener('click', function (e) { startRun(e, 'freestyle'); });
     refreshMute();
+    initPWA();
   }
 
   function reset() {
@@ -1320,6 +1411,10 @@ SM.ui = (function () {
     if (els.clockInner) els.clockInner.classList.remove('sm-clock-kick');
     if (els.clockGain) els.clockGain.classList.remove('sm-clock-gain-on');
 
+    // The MODE is not run state — it is the player's menu choice, and RESTART
+    // repeats it. Re-assert its chrome, since reset() runs on every restart.
+    applyModeChrome();
+
     // Haul buckets and every tally row go back to zero / hidden.
     resetTally();
     if (els.haul) els.haul.innerHTML = '';
@@ -1371,7 +1466,7 @@ SM.ui = (function () {
      * Every state here is DERIVED from the value rather than latched by an
      * event, so a restart (or a +10s that lifts you back over the wire)
      * re-arms the warning states for free. */
-    if (els.clockWrap && SM.level.getTimeLeft) {
+    if (els.clockWrap && SM.level.getTimeLeft && !freestyle) {
       var left = SM.level.getTimeLeft();
       if (!(left >= 0)) left = 0;
       var cap = SM.level.getTimeCap ? SM.level.getTimeCap() : 0;
@@ -1498,6 +1593,105 @@ SM.ui = (function () {
   }
 
   function getCurrency() { return currency; }
+
+  /* =====================================================================
+   * PWA — install, offline play, and OPT-IN updates
+   * ---------------------------------------------------------------------
+   * sw.js precaches the whole build under one versioned cache. Registering
+   * with { updateViaCache: 'none' } plus reg.update() on load means a bumped
+   * sw.js VERSION is noticed at launch and precached in the background — but
+   * the new worker then WAITS. It only takes over when the player taps UPDATE
+   * READY on the menu, and the reload that follows happens ONLY from the menu.
+   *
+   * That restraint is the whole point. SUPERMINE is a 60-second score attack
+   * with a local leaderboard; a worker that swapped itself in mid-run would
+   * throw away an attempt, and reloading a half-finished run to install a
+   * patch is a genuinely hostile thing to do to someone chasing a high score.
+   *
+   * Everything here is best-effort. The game must keep working when there is
+   * no service worker at all — which is exactly the case when index.html is
+   * opened straight off the disk over file://, where registration throws.
+   * ================================================================== */
+  var swReg = null;
+
+  /** Ask a worker which build it is. Resolves null if it does not answer. */
+  function swVersion(worker) {
+    return new Promise(function (resolve) {
+      if (!worker || typeof MessageChannel !== 'function') { resolve(null); return; }
+      var ch = new MessageChannel();
+      var bail = setTimeout(function () { resolve(null); }, 1500);
+      ch.port1.onmessage = function (ev) {
+        clearTimeout(bail);
+        resolve((ev.data && ev.data.version) || null);
+      };
+      try { worker.postMessage({ type: 'GET_VERSION' }, [ch.port2]); }
+      catch (e) { clearTimeout(bail); resolve(null); }
+    });
+  }
+
+  function setVersionTag(v) {
+    if (v && els.version) setText('ver', els.version, v);
+  }
+
+  function offerUpdate(version) {
+    if (!els.update) return;
+    els.update.textContent = (version ? version + ' READY' : 'UPDATE READY') +
+                             ' — TAP TO INSTALL';
+    els.update.style.display = '';
+    els.update.classList.add('sm-update-on');
+  }
+
+  function applyUpdate() {
+    if (!swReg || !swReg.waiting) return;
+    SM.sound.play('ui');
+    els.update.textContent = 'INSTALLING…';
+    els.update.disabled = true;
+    swReg.waiting.postMessage({ type: 'SKIP_WAITING' });
+  }
+
+  /**
+   * A FIRST install activates immediately and must never prompt — there is
+   * nothing to upgrade from. Only offer when something already controls the
+   * page, which is exactly the "this is an update" case.
+   */
+  function offerIfWaiting() {
+    if (!swReg || !swReg.waiting || !navigator.serviceWorker.controller) return;
+    swVersion(swReg.waiting).then(offerUpdate);
+  }
+
+  function initPWA() {
+    if (!('serviceWorker' in navigator)) return;
+    var hadController = !!navigator.serviceWorker.controller;
+
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(function (reg) {
+        swReg = reg;
+        reg.update()['catch'](function () {});
+        offerIfWaiting();              // one may be parked from a past launch
+        reg.addEventListener('updatefound', function () {
+          var w = reg.installing;
+          if (!w) return;
+          w.addEventListener('statechange', function () {
+            if (w.state === 'installed') offerIfWaiting();
+          });
+        });
+      })['catch'](function () { /* file:// or unsupported — the game is fine */ });
+
+    // Show the build that is really serving us. On a first visit nothing
+    // controls the page yet, so read the version straight out of sw.js.
+    swVersion(navigator.serviceWorker.controller).then(function (v) {
+      if (v) { setVersionTag(v); return; }
+      fetch('sw.js').then(function (r) { return r.text(); }).then(function (t) {
+        var m = t.match(/VERSION = '([^']+)'/);
+        if (m) setVersionTag(m[1]);
+      })['catch'](function () {});
+    });
+
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      // `started` is false only while the menu is up. Never reload mid-run.
+      if (hadController && !started) location.reload();
+    });
+  }
 
   return {
     init: init,

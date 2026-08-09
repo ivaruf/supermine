@@ -1100,8 +1100,212 @@ SM.effects = (function () {
    * main.js calls this INSIDE the camera transform, so everything below is
    * world space (including the two full-view overlay rects).
    * ================================================================== */
+  /* =====================================================================
+   * POWER-UP ITEMS
+   * ---------------------------------------------------------------------
+   * A time cell and a boost cell are, underneath, just clusters of deposits
+   * — and particles.js bakes every sprite from three rock silhouettes and is
+   * frozen, so no amount of recolouring stops them reading as "differently
+   * coloured gems". So we draw a real OBJECT over the top of each block: a
+   * fuel canister for time, a turbo bottle for speed. Vector, world-space,
+   * no textures, at most BLOCK_MAX (8) of them alive.
+   *
+   * THE FADE IS LOAD-BEARING. effects.js renders last, after the vehicle, so
+   * a canister drawn while the rig is on top of it would paint over the
+   * machine. Fading it out as the blade closes in solves the layering AND
+   * reads as the casing splitting open to expose the glowing core you are
+   * about to hoover up — which is exactly what is happening.
+   * ================================================================== */
+  var ITEM_FADE_NEAR = 1.15;    // fade starts at this multiple of block radius
+  var ITEM_FADE_FAR  = 2.60;    // fully solid beyond this
+  var ITEM_BOB       = 3.4;     // world units of hover
+  // Item height as a multiple of the block RADIUS, so at 1.8 the canister is
+  // ~90% of the block's diameter and covers the deposits it belongs to. The
+  // first pass used 1.32 and the object floated small in the middle of its own
+  // glow — and the camera pulls back to z~0.77 once the rig is upgraded, which
+  // is exactly when it needs to read most.
+  var ITEM_SCALE     = 1.80;
+  // Drawn slightly translucent so the item sits IN the ground rather than on
+  // top of it. Together with the much weaker halo this is the "semi-hidden"
+  // brief: you have to be looking for these, not merely facing them.
+  var ITEM_OPACITY   = 0.82;
+
+  function itemAlpha(bx, by, r) {
+    var vx = SM.vehicle.getX(), vy = SM.vehicle.getY();
+    var dx = bx - vx, dy = by - vy;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    var near = r * ITEM_FADE_NEAR, far = r * ITEM_FADE_FAR;
+    if (d <= near) return 0;
+    if (d >= far) return 1;
+    return (d - near) / (far - near);
+  }
+
+  /** Pocket-watch clock: bezel, face, four ticks, two hands, winding crown. */
+  function drawClock(ctx, s, hot, t) {
+    var r = s * 0.46;
+
+    // face
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, TAU);
+    ctx.fillStyle = '#101c1a';
+    ctx.fill();
+
+    // crown, so it reads as an OBJECT rather than a gauge painted on the floor
+    ctx.fillStyle = hot;
+    roundRect(ctx, -s * 0.07, -r - s * 0.15, s * 0.14, s * 0.16, s * 0.04);
+    ctx.fill();
+
+    // bezel
+    ctx.lineWidth = s * 0.10;
+    ctx.strokeStyle = hot;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, TAU);
+    ctx.stroke();
+
+    // quarter ticks
+    ctx.lineWidth = s * 0.055;
+    ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+    for (var k = 0; k < 4; k++) {
+      var a = k * (TAU / 4);
+      var ca = Math.cos(a), sa = Math.sin(a);
+      ctx.beginPath();
+      ctx.moveTo(ca * r * 0.74, sa * r * 0.74);
+      ctx.lineTo(ca * r * 0.92, sa * r * 0.92);
+      ctx.stroke();
+    }
+
+    // hands — the minute hand sweeps, which is what sells "clock" in motion
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = hot;
+    ctx.lineWidth = s * 0.075;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.sin(t * 1.5) * r * 0.60, -Math.cos(t * 1.5) * r * 0.60);
+    ctx.stroke();
+    ctx.lineWidth = s * 0.060;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.sin(t * 0.42 + 1.1) * r * 0.40, -Math.cos(t * 0.42 + 1.1) * r * 0.40);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+
+    ctx.fillStyle = hot;
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 0.05, 0, TAU);
+    ctx.fill();
+  }
+
+  /** Dynamite stick: banded charge, curling fuse, live spark at the tip. */
+  function drawDynamite(ctx, s, hot, t) {
+    var w = s * 0.40, h = s * 0.86;
+
+    // stick
+    roundRect(ctx, -w * 0.5, -h * 0.34, w, h, w * 0.22);
+    ctx.fillStyle = '#8f2410';
+    ctx.fill();
+    ctx.lineWidth = s * 0.075;
+    ctx.strokeStyle = hot;
+    ctx.stroke();
+
+    // wrapper bands
+    ctx.lineWidth = s * 0.052;
+    ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+    for (var k = 0; k < 2; k++) {
+      var by = -h * 0.10 + k * h * 0.28;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.42, by);
+      ctx.lineTo(w * 0.42, by);
+      ctx.stroke();
+    }
+
+    // fuse, curling away from the cap
+    var fx0 = 0, fy0 = -h * 0.34;
+    ctx.lineWidth = s * 0.055;
+    ctx.strokeStyle = 'rgba(228,206,170,0.85)';
+    ctx.beginPath();
+    ctx.moveTo(fx0, fy0);
+    ctx.quadraticCurveTo(w * 0.55, fy0 - s * 0.14, w * 0.30, fy0 - s * 0.34);
+    ctx.stroke();
+
+    // spark — the one intentionally lively detail on the item
+    var flick = 0.55 + 0.45 * Math.sin(t * 17);
+    ctx.fillStyle = 'rgba(255,214,140,' + flick.toFixed(2) + ')';
+    ctx.beginPath();
+    ctx.arc(w * 0.30, fy0 - s * 0.34, s * 0.075 * (0.8 + flick * 0.5), 0, TAU);
+    ctx.fill();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    if (r > w * 0.5) r = w * 0.5;
+    if (r > h * 0.5) r = h * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawPickupItems(ctx) {
+    if (!SM.terrain || !SM.terrain.getBlockCount) return;
+    var n = SM.terrain.getBlockCount();
+    if (!n) return;
+
+    var view = SM.camera.getViewBounds();
+    for (var i = 0; i < n; i++) {
+      // Latched by terrain.js the moment the cutter arrives. Without this the
+      // distance-based fade would bring the item back as the rig drove away,
+      // which reads as "you missed it" right after you ate it.
+      if (SM.terrain.isBlockLive && !SM.terrain.isBlockLive(i)) continue;
+
+      var by = SM.terrain.getBlockY(i);
+      if (by < view.minY - 200 || by > view.maxY + 200) continue;
+      var bx = SM.terrain.getBlockX(i);
+      var r = SM.terrain.getBlockRadius(i);
+
+      var alpha = itemAlpha(bx, by, r) * ITEM_OPACITY;
+      if (alpha <= 0.01) continue;
+
+      var mi = SM.terrain.getBlockMaterial(i);
+      var isTime = (SM.materials.get(mi).pickup === 'time');
+      var hot = isTime ? '#63d9b4' : '#e08a52';
+      var glow = isTime ? '19,184,145' : '226,83,12';
+
+      var s = r * ITEM_SCALE;
+      var bob = Math.sin(clock * 2.1 + i * 1.7) * ITEM_BOB;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      /* A SINGLE tight halo, and a weak one. These used to sit in a big
+       * pulsing colour pool with a beacon ring, which lit them up from across
+       * the lane and turned "spot the pickup" into "follow the lighthouse".
+       * They are meant to be half-buried treasure: enough lift to separate the
+       * object from the chamber floor, not enough to find it for you. */
+      ctx.globalCompositeOperation = 'lighter';
+      var g = ctx.createRadialGradient(bx, by, r * 0.10, bx, by, r * 1.15);
+      g.addColorStop(0, 'rgba(' + glow + ',0.20)');
+      g.addColorStop(1, 'rgba(' + glow + ',0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(bx - r * 1.2, by - r * 1.2, r * 2.4, r * 2.4);
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.translate(bx, by + bob);
+      if (isTime) drawClock(ctx, s, hot, clock);
+      else drawDynamite(ctx, s, hot, clock);
+
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
   function render(ctx) {
     var i, k, a, s, img;
+
+    // Under every particle effect, over the terrain and the deposits.
+    drawPickupItems(ctx);
 
     if (actCount) {
       /* ---- pass 1: smoke + dust (normal blend, softest first) -------- */

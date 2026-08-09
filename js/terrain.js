@@ -145,6 +145,12 @@ SM.terrain = (function () {
   var blR2 = new Float32Array(BLOCK_MAX);    // squared block radius
   var blC2 = new Float32Array(BLOCK_MAX);    // squared chamber radius
   var blMat = new Int32Array(BLOCK_MAX);
+  // 1 once the cutter has reached the block's depth. The presentation layer
+  // draws an item over each live block and hides it as the rig closes in; that
+  // fade is distance-based, so without a LATCH the item would swell back into
+  // view once the machine drove past and the distance grew again — reading as
+  // "you missed it" when the player had in fact just eaten it.
+  var blSpent = new Uint8Array(BLOCK_MAX);
   var blCount = 0;
 
   /* ----- deterministic RNG (mulberry32) ------------------------------- */
@@ -414,7 +420,22 @@ SM.terrain = (function () {
     blR2[blCount] = r * r;
     blC2[blCount] = chamber * chamber;
     blMat[blCount] = mat;
+    blSpent[blCount] = 0;
     blCount++;
+  }
+
+  /**
+   * Latch every block the cutter has now reached. Forward is -y, so the blade
+   * front dropping to or below a block's y means the machine has arrived at it.
+   * Once set this never clears, which is the whole point: the item graphic must
+   * not come back after the rig has driven through it.
+   * At most BLOCK_MAX (8) iterations per step.
+   */
+  function markSpentBlocks() {
+    var frontY = SM.vehicle.getBladeFrontY();
+    for (var i = 0; i < blCount; i++) {
+      if (!blSpent[i] && frontY <= blY[i]) blSpent[i] = 1;
+    }
   }
 
   function pruneBlocks(behindY) {
@@ -424,6 +445,7 @@ SM.terrain = (function () {
         blX[i] = blX[last]; blY[i] = blY[last];
         blR2[i] = blR2[last]; blC2[i] = blC2[last];
         blMat[i] = blMat[last];
+        blSpent[i] = blSpent[last];
       }
     }
   }
@@ -478,8 +500,14 @@ SM.terrain = (function () {
     // A hair of jitter on the block so a row of them down a run does not read
     // as stamped copies; far too small to move the fragment count.
     var r = PICKUP_RADIUS + (rnd() * 2 - 1) * 2;
-    pushBlock(x, y, r, PICKUP_CHAMBER,
-              rnd() < PICKUP_TIME_SHARE ? M_TIMECELL : M_BOOSTCELL);
+    // Always burn the roll, mode or not, so the two modes stay on the same
+    // deterministic RNG stream and a freestyle run generates the same terrain
+    // as a time run — only the pickup KIND differs.
+    var wantTime = rnd() < PICKUP_TIME_SHARE;
+    // Freestyle has no clock, so a time cell there is a pickup that pays into
+    // nothing. Every block becomes a boost instead.
+    if (SM.level.isFreestyle && SM.level.isFreestyle()) wantTime = false;
+    pushBlock(x, y, r, PICKUP_CHAMBER, wantTime ? M_TIMECELL : M_BOOSTCELL);
   }
 
   /* =====================================================================
@@ -644,6 +672,7 @@ SM.terrain = (function () {
   function update(dt) {
     var vy = SM.vehicle.getY();
     fillAhead(vy);
+    markSpentBlocks();
 
     // Recycling is a full sweep of the active list, so do it periodically
     // rather than every step. STREAM_BEHIND has enough slack to absorb it.
@@ -815,6 +844,22 @@ SM.terrain = (function () {
     update: update,
     render: render,
     getGeneratedTo: getGeneratedTo,
-    setSeed: setSeed
+    setSeed: setSeed,
+
+    /* --- power-up blocks, READ-ONLY -------------------------------------
+     * particles.js bakes its sprite atlas from three silhouette families
+     * (round / chunk / shard) and is frozen, so a power-up deposit can never
+     * look like anything but a rock through the material table alone. The
+     * presentation layer therefore draws a real ITEM over each block, and
+     * needs to know where they are. Never more than BLOCK_MAX (8) live.
+     * Indices are only valid within the current frame — pruneBlocks() does a
+     * swap-remove, so nothing outside may hold on to one. */
+    getBlockCount: function () { return blCount; },
+    getBlockX: function (i) { return blX[i]; },
+    getBlockY: function (i) { return blY[i]; },
+    getBlockRadius: function (i) { return Math.sqrt(blR2[i]); },
+    getBlockMaterial: function (i) { return blMat[i]; },
+    /** false once the cutter has reached it — stop drawing its item. */
+    isBlockLive: function (i) { return blSpent[i] === 0; }
   };
 })();

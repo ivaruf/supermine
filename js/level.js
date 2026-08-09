@@ -111,6 +111,30 @@ SM.level = (function () {
   var TIME_PER_PIECE = 0.070;    // seconds per collected time-cell fragment
   var TIME_FLUSH = 0.22;         // seconds to wait for the rest of the cloud
 
+  /* ----- RUN MODES ------------------------------------------------------
+   *   'time'      the default. A countdown, and the haul when it hits zero.
+   *   'freestyle' no clock at all, no ending. Dig until you have had enough.
+   *
+   * Freestyle is NOT merely "the countdown switched off". Half the design
+   * hangs off the clock, so everything that pays in SECONDS becomes dead
+   * weight the moment there is no clock to pay into:
+   *   - every paired gate offers an upgrade against +10 SECONDS, which in
+   *     freestyle would be a choice between something and nothing.
+   *     placeGates() substitutes a real upgrade on the time side.
+   *   - terrain.js stops seeding time cells and seeds only boost blocks.
+   * The mode SURVIVES reset(), so RESTART re-runs the mode you chose instead
+   * of dropping you back at the menu between attempts.
+   * ------------------------------------------------------------------ */
+  var MODE_TIME = 'time';
+  var MODE_FREESTYLE = 'freestyle';
+  var mode = MODE_TIME;
+
+  // Rotated through wherever a `time_10` gate would have stood. Deliberately
+  // the cheaper utility upgrades — freestyle already has unlimited runway, so
+  // handing out the big multipliers here too would flatten it.
+  var FREESTYLE_SUBS = ['magnet', 'speed_up', 'rear_conveyor', 'side_grinders',
+                        'drill_heads', 'wider_blade'];
+
   /* =====================================================================
    * THE SECTION MAP
    * ---------------------------------------------------------------------
@@ -419,8 +443,15 @@ SM.level = (function () {
     }
   }
 
+  /** In freestyle a `time_10` reward is worthless — hand out an upgrade. */
+  function rewardFor(upgradeId, subIndex) {
+    if (mode !== MODE_FREESTYLE || upgradeId !== 'time_10') return upgradeId;
+    return FREESTYLE_SUBS[subIndex % FREESTYLE_SUBS.length];
+  }
+
   function placeGates() {
     SM.upgrades.clearGates();
+    var sub = 0;
     for (var i = 0; i < GATE_PLAN.length; i++) {
       var g = GATE_PLAN[i];
       var y = C.START_Y - g.at;
@@ -435,12 +466,16 @@ SM.level = (function () {
       } else {
         var off = g.at >= PAIR_LATE_FROM ? PAIR_X_LATE : PAIR_X;
         var pid = 'pair_' + g.at;
+        var left = rewardFor(g.left, sub);
+        if (left !== g.left) sub++;
+        var right = rewardFor(g.right, sub);
+        if (right !== g.right) sub++;
         SM.upgrades.addGate({
-          id: pid + '_L', upgradeId: g.left, pairId: pid, tone: 'safe',
+          id: pid + '_L', upgradeId: left, pairId: pid, tone: 'safe',
           x: -off, y: y
         });
         SM.upgrades.addGate({
-          id: pid + '_R', upgradeId: g.right, pairId: pid, tone: 'risk',
+          id: pid + '_R', upgradeId: right, pairId: pid, tone: 'risk',
           x: off, y: y
         });
       }
@@ -583,7 +618,7 @@ SM.level = (function () {
      * accumulator at zero until `input:firstgesture` — so the clock cannot
      * tick behind the start overlay and no extra "armed" flag is needed here.
      * ------------------------------------------------------------------ */
-    if (!runOver) {
+    if (!runOver && mode !== MODE_FREESTYLE) {
       timeLeft -= dt;
       if (!lowFired && timeLeft < LOW_TIME) {
         lowFired = true;
@@ -647,6 +682,16 @@ SM.level = (function () {
     getTimeBonus: function () { return TIME_BONUS; },
     isRunOver: function () { return runOver; },
     addTime: addTime,
+
+    /* --- run mode ------------------------------------------------------
+     * Set from the menu BEFORE the first reset that should honour it. It is
+     * deliberately not cleared by reset(), so RESTART repeats the same mode. */
+    setMode: function (m) {
+      mode = (m === MODE_FREESTYLE) ? MODE_FREESTYLE : MODE_TIME;
+      return mode;
+    },
+    getMode: function () { return mode; },
+    isFreestyle: function () { return mode === MODE_FREESTYLE; },
 
     /* --- time-cell run totals (the end-card footnote) ------------------ */
     getCellBlocks: function () { return cellBlocks; },
