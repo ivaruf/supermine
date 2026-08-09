@@ -25,7 +25,8 @@
  *   SM.sound.init() / update(dt) / reset()
  *   SM.sound.play(name, opts?)   'break' 'hit' 'collect' 'impact' 'gate'
  *                                'upgrade' 'clank' 'sparkle' 'boom' 'riser'
- *                                'complete' 'ui'
+ *                                'complete' 'ui' 'timeplus' 'timelow' 'tick'
+ *                                'timeout'
  *   SM.sound.setMuted(b) / toggleMute() / isMuted()
  * ========================================================================== */
 
@@ -56,6 +57,7 @@ SM.sound = (function () {
   var ARP_NOTE_GAP     = 0.055;  // spacing of the staggered ladder in update()
 
   var BREAK_MIN_GAP    = 0.05;
+  var TICK_MIN_GAP     = 0.30;   // ui.js fires one tick per second under 10s
   var CRUNCH_MIN_GAP   = 0.16;
   var CRUNCH_THRESHOLD = 26;     // destroys per step that counts as a collapse
 
@@ -335,12 +337,16 @@ SM.sound = (function () {
   function play(name, opts) {
     if (muted || !unlocked || !actx) return;
 
+    // The clock outranks the excavation: a +10s or a run-over stinger must
+    // never be swallowed by a torrent of debris voices.
     var important = (name === 'upgrade' || name === 'boom' || name === 'riser' ||
-                     name === 'complete' || name === 'gate' || name === 'ui');
+                     name === 'complete' || name === 'gate' || name === 'ui' ||
+                     name === 'timeplus' || name === 'timeout' || name === 'timelow');
     if (!canVoice(important)) return;
 
     var minGap = C.SOUND_MIN_INTERVAL;
-    if (name === 'break') minGap = BREAK_MIN_GAP;
+    if (name === 'tick') minGap = TICK_MIN_GAP;
+    else if (name === 'break') minGap = BREAK_MIN_GAP;
     else if (name === 'collect') minGap = ARP_MIN_GAP;
     else if (name === 'hit') minGap = 0.09;
     else if (name === 'crunch') minGap = CRUNCH_MIN_GAP;
@@ -458,6 +464,37 @@ SM.sound = (function () {
         noiseBurst(1.4, 500, 0.5, 0.28, 'lowpass');
         break;
       }
+
+      /* --- the clock ------------------------------------------------- */
+      case 'timeplus': {
+        // Bright rising fifth + octave shimmer: unmistakably a REWARD, and
+        // pitched well above the engine drone so it cuts through the grind.
+        var tb = 523.25;                       // C5
+        tone(tb, tb, 0.14, 0.17, 'triangle');
+        tone(tb * 1.5, tb * 1.5, 0.16, 0.13, 'triangle', 0.07);
+        tone(tb * 2, tb * 2.01, 0.34, 0.10, 'sine', 0.15);
+        tone(tb * 0.5, tb * 0.75, 0.38, 0.11, 'sawtooth', 0.02);
+        noiseBurst(0.12, 5400, 8, 0.09, 'bandpass', 0.14);
+        break;
+      }
+
+      case 'timelow':                  // one-shot alarm as the wire is crossed
+        tone(880, 880, 0.11, 0.17, 'square');
+        tone(880, 660, 0.15, 0.15, 'square', 0.16);
+        noiseBurst(0.08, 2600, 4, 0.10, 'bandpass');
+        break;
+
+      case 'tick':                     // per-second pip inside the last 10s
+        tone(1500, 1400, 0.028, 0.075, 'square');
+        noiseBurst(0.026, 2400, 7, 0.10);
+        break;
+
+      case 'timeout':                  // the machine stops
+        tone(392, 62, 1.15, 0.26, 'sawtooth');
+        tone(196, 40, 1.35, 0.20, 'square', 0.05);
+        tone(110, 33, 0.95, 0.28, 'sine', 0.10);
+        noiseBurst(0.95, 250, 0.6, 0.44, 'lowpass');
+        break;
 
       case 'ui':
         tone(660, 880, 0.06, 0.10, 'square');
@@ -722,6 +759,21 @@ SM.sound = (function () {
       if (zoneLevel >= 4) play('riser', { duration: 1.6 });
     });
     SM.events.on('level:complete', function () { zoneLevel = 0; play('complete'); });
+
+    // The countdown. ui.js owns the per-second 'tick' because it is the module
+    // that already derives the danger window from the value.
+    SM.events.on('time:granted', function () { play('timeplus'); });
+    SM.events.on('time:low', function () { play('timelow'); });
+    SM.events.on('run:over', function (p) {
+      // Everything stops: kill the rhythm bed, then the stinger. A 'depth'
+      // ending already got the 'complete' fanfare from level:complete, so it
+      // does not also get the failure sting.
+      zoneLevel = 0;
+      overdriveTarget = 0; overdriveLeft = 0;
+      grindTarget = 0;
+      if (!p || p.reason !== 'depth') play('timeout');
+    });
+
     SM.events.on('input:mutetoggle', function () { toggleMute(); });
   }
 

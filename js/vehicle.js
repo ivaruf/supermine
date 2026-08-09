@@ -28,6 +28,13 @@
  * Phase-2 additions (safe to call, not required by main.js):
  *   SM.vehicle.getValueMultiplier() getPartLevel(name) getOverdrive()
  *   SM.vehicle.startOverdrive(seconds)
+ * Time-attack additions (the HUD is built against exactly these):
+ *   SM.vehicle.getOwnedUpgrades()   LIVE, READ-ONLY [{id,title,level}, ...] in
+ *                                   acquisition order; rebuilt only when an
+ *                                   upgrade is applied, never per frame
+ *   SM.vehicle.getUpgradeVersion()  bumps on every applyUpgrade() — cheap
+ *                                   change detection for the HUD
+ *   SM.vehicle.halt() / isHalted()  the "time is up" stop
  *
  * Events emitted
  *   vehicle:transform  {part, width}    a part was added / enlarged
@@ -96,6 +103,14 @@ SM.vehicle = (function () {
   // --- rear conveyor ---------------------------------------------------
   var TRAIL_RADIUS = 96;         // auto-collect bubble at conveyor level 1
   var TRAIL_RADIUS_STEP = 54;
+
+  // --- halt ("time is up") ---------------------------------------------
+  // The camera is glued to the machine with CAM_FOLLOW stiffness, so snapping
+  // the speed to zero would whip the whole world. An exponential decay at 4.5
+  // leaves ~1% of the entry speed after one second: it reads as brakes, not
+  // as a freeze, and the camera settles on its own with no lurch.
+  var HALT_DECAY = 4.5;          // e-folds per second of forward speed
+  var HALT_SNAP = 1.5;           // below this, call it stopped (units/sec)
 
   // Extra bite on top of config's VEHICLE_RESISTANCE_SCALE. Measured over a
   // full run, the raw scale left a granite barrier only ~9% slower than open
@@ -256,6 +271,20 @@ SM.vehicle = (function () {
   var upgradeCount = 0;
   var bank = 0;
 
+  /* --- owned-upgrade manifest -------------------------------------------
+   * {id, title, level} in ACQUISITION order, rebuilt only inside
+   * applyUpgrade(). The HUD reads this array every step, so it must never
+   * be rebuilt or re-sorted per frame — repeat purchases bump `level` in
+   * place instead of appending. Treat the array as READ-ONLY from outside.
+   * `upgradeVersion` is the cheap change-detector: compare it against the
+   * value you saw last frame instead of diffing the array.
+   * ------------------------------------------------------------------- */
+  var owned = [];
+  var upgradeVersion = 0;
+
+  /* --- halt state ------------------------------------------------------ */
+  var halted = false;
+
   /* --- explosive pulse / overdrive runtime ---------------------------- */
   var pulseTimer = 0;
   var odCooldown = 0;
@@ -307,6 +336,9 @@ SM.vehicle = (function () {
     loadSmoothed = 0;
     upgradeCount = 0;
     bank = 0;
+    owned.length = 0;            // same array object — the HUD may hold it
+    upgradeVersion = 0;
+    halted = false;
 
     for (var i = 0; i < PART_KEYS.length; i++) {
       parts[PART_KEYS[i]] = 0;
@@ -389,6 +421,19 @@ SM.vehicle = (function () {
     morphActive = true;
     upgradeCount++;
 
+    /* --- owned manifest ------------------------------------------------
+     * The only place `owned` is ever touched. Repeat purchases raise the
+     * level of the existing entry so the machine's history stays in the
+     * order it was actually built, not in purchase-count order.
+     * ---------------------------------------------------------------- */
+    var slot = null;
+    for (var oi = 0; oi < owned.length; oi++) {
+      if (owned[oi].id === id) { slot = owned[oi]; break; }
+    }
+    if (slot) slot.level = tier + 1;
+    else owned.push({ id: id, title: e.title || id, level: 1 });
+    upgradeVersion++;
+
     appliedOut.id = id;
     appliedOut.tier = tier;
     appliedOut.effect = e;
@@ -410,7 +455,7 @@ SM.vehicle = (function () {
    * OVERDRIVE
    * ================================================================== */
   function startOverdrive(duration) {
-    if (parts.overdrive <= 0) return false;
+    if (halted || parts.overdrive <= 0) return false;
     var d = duration || (OD_DURATION + (parts.overdrive - 1) * OD_DURATION_STEP);
     odRemaining = d;
     if (!odActive) {
@@ -423,7 +468,16 @@ SM.vehicle = (function () {
   }
 
   function updateOverdrive(dt) {
-    if (parts.overdrive > 0) {
+    // Halted: end any running frenzy and stop the cooldown from arming a new
+    // one. odLevel still ramps below, so the glow and the engine note fade
+    // out over the same second the machine takes to stop.
+    if (halted) {
+      if (odActive) {
+        odActive = false;
+        odRemaining = 0;
+        SM.events.emit('overdrive:end', evOdEnd);
+      }
+    } else if (parts.overdrive > 0) {
       if (odActive) {
         odRemaining -= dt;
         if (odRemaining <= 0) {
@@ -446,7 +500,7 @@ SM.vehicle = (function () {
    * EXPLOSIVE PULSE
    * ================================================================== */
   function updatePulse(dt) {
-    if (parts.pulse <= 0) return;
+    if (halted || parts.pulse <= 0) return;   // the world goes quiet
     pulseTimer -= dt * (odActive ? 2.0 : 1);
     if (pulseTimer > 0) return;
 
@@ -474,8 +528,12 @@ SM.vehicle = (function () {
    * UPDATE
    * ================================================================== */
   function update(dt) {
-    /* --- 1. steering ------------------------------------------------- */
-    var steer = SM.input.getSteer();
+    /* --- 1. steering ------------------------------------------------- *
+     * Once halted the stick is dead: the run is scored, so a player still
+     * holding a key must not be able to nudge the wreck into one more ore
+     * pocket while it coasts.
+     * ------------------------------------------------------------------ */
+    var steer = halted ? 0 : SM.input.getSteer();
     vx += steer * C.VEHICLE_STEER_ACCEL * dt;
     if (steer > -0.02 && steer < 0.02) {
       vx *= Math.exp(-C.VEHICLE_STEER_DRAG * dt);
@@ -525,15 +583,23 @@ SM.vehicle = (function () {
      * ------------------------------------------------------------------ */
     var frontY = getBladeFrontY();
     var halfBlade = bladeWidth * 0.5;
-    var power = getMiningPower();
-    var res = SM.particles.damageSolidInRect(
-      x - halfBlade, frontY - C.VEHICLE_BLADE_DEPTH,
-      x + halfBlade, frontY + 8,
-      power * dt,
-      x, frontY - C.VEHICLE_BLADE_DEPTH - 26
-    );
-
-    resistance += (res.resistance - resistance) * (1 - Math.exp(-12 * dt));
+    var damaged = 0;
+    // Halted: the blade stops removing hardness entirely. Without this the
+    // rig would keep chewing the same rock it stopped against, spraying
+    // debris and firing material:destroyed long after the buzzer.
+    if (!halted) {
+      var power = getMiningPower();
+      var res = SM.particles.damageSolidInRect(
+        x - halfBlade, frontY - C.VEHICLE_BLADE_DEPTH,
+        x + halfBlade, frontY + 8,
+        power * dt,
+        x, frontY - C.VEHICLE_BLADE_DEPTH - 26
+      );
+      damaged = res.damaged;
+      resistance += (res.resistance - resistance) * (1 - Math.exp(-12 * dt));
+    } else {
+      resistance -= resistance * (1 - Math.exp(-12 * dt));
+    }
 
     /* --- 5. forward motion -------------------------------------------- *
      * Resistance is the summed hardness of everything the blade FAILED to
@@ -541,11 +607,16 @@ SM.vehicle = (function () {
      * faster — you have to keep the power curve up with it. That is the
      * self-balancing "risk of slowing down" lever from the spec.
      * ------------------------------------------------------------------ */
-    var factor = 1 / (1 + resistance * C.VEHICLE_RESISTANCE_SCALE * RESISTANCE_BOOST);
-    if (factor < C.VEHICLE_MIN_SPEED_FACTOR) factor = C.VEHICLE_MIN_SPEED_FACTOR;
-    var odSpeed = 1 + (OD_SPEED - 1) * odLevel;
-    var targetSpeed = C.VEHICLE_SPEED * speedMul * odSpeed * factor;
-    speed += (targetSpeed - speed) * (1 - Math.exp(-8 * dt));
+    if (halted) {
+      speed *= Math.exp(-HALT_DECAY * dt);
+      if (speed < HALT_SNAP) speed = 0;
+    } else {
+      var factor = 1 / (1 + resistance * C.VEHICLE_RESISTANCE_SCALE * RESISTANCE_BOOST);
+      if (factor < C.VEHICLE_MIN_SPEED_FACTOR) factor = C.VEHICLE_MIN_SPEED_FACTOR;
+      var odSpeed = 1 + (OD_SPEED - 1) * odLevel;
+      var targetSpeed = C.VEHICLE_SPEED * speedMul * odSpeed * factor;
+      speed += (targetSpeed - speed) * (1 - Math.exp(-8 * dt));
+    }
     y -= speed * dt;
 
     /* --- 6. hand our state to the particle system --------------------- */
@@ -560,13 +631,16 @@ SM.vehicle = (function () {
 
     // Rear conveyor: a second, smaller collection bubble dragged behind the
     // machine that sweeps up the settled trail we just ploughed through.
-    if (parts.conveyor > 0) {
+    // Stops with everything else on halt — but the MAIN collector above is
+    // deliberately left running, so ore already in flight when the buzzer
+    // went still lands in the hopper instead of being orphaned mid-air.
+    if (!halted && parts.conveyor > 0) {
       var tr = TRAIL_RADIUS + (parts.conveyor - 1) * TRAIL_RADIUS_STEP;
       SM.particles.collectInRadius(x, y + rearEdge() + tr * 0.35, tr);
     }
 
     /* --- 7. machinery animation --------------------------------------- */
-    var load = res.damaged / 30;
+    var load = damaged / 30;
     if (load > 1) load = 1;
     loadSmoothed += (load - loadSmoothed) * (1 - Math.exp(-8 * dt));
     var rev = 1 + odLevel * 1.4;
@@ -1419,6 +1493,20 @@ SM.vehicle = (function () {
     return r > MAX_COLLECT * 1.6 ? MAX_COLLECT * 1.6 : r;
   }
 
+  /* =====================================================================
+   * HALT — "time is up"
+   * ---------------------------------------------------------------------
+   * Begins the stop; it does NOT teleport anything. From here update() bleeds
+   * the forward speed away over about a second, ignores steering, and shuts
+   * down mining, the explosive pulse and overdrive so the world goes quiet.
+   * Only reset() clears it, so a halt cannot be undone mid-run.
+   * ================================================================== */
+  function halt() {
+    if (halted) return false;
+    halted = true;
+    return true;
+  }
+
   function getStat(name) {
     switch (name) {
       case 'power': return getMiningPower();
@@ -1461,6 +1549,14 @@ SM.vehicle = (function () {
     getPartLevel: function (name) { return parts[name] || 0; },
     getOverdrive: function () { return odLevel; },
     isOverdriveActive: function () { return odActive; },
-    startOverdrive: startOverdrive
+    startOverdrive: startOverdrive,
+
+    /* --- TIME ATTACK (the HUD contract) ------------------------------- */
+    // LIVE array, rebuilt only inside applyUpgrade(). Read-only: sorting or
+    // splicing it from outside corrupts the machine's build history.
+    getOwnedUpgrades: function () { return owned; },
+    getUpgradeVersion: function () { return upgradeVersion; },
+    halt: halt,
+    isHalted: function () { return halted; }
   };
 })();

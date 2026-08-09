@@ -1,16 +1,21 @@
 /* =============================================================================
  * SUPERMINE — js/level.js                          [OWNER: Agent 2 — gameplay]
  * -----------------------------------------------------------------------------
- * THE RUN DIRECTOR. Owns three things:
+ * THE RUN DIRECTOR. Owns four things:
  *
- *   1. THE SECTION MAP — an ordered list of zones with the generation knobs
- *      terrain.js reads through SM.level.zoneAt(depth). This is the whole
- *      3-5 minute shape of the run: easy opening -> resource lanes -> granite
- *      barriers -> narrow passages -> crystal caverns -> the final core.
- *   2. THE GATE PLAN — where every paired route gate and upgrade station sits.
+ *   1. THE COUNTDOWN — SUPERMINE is a TIME ATTACK. A clock runs from the first
+ *      gesture to zero; when it expires the machine halts and whatever is in
+ *      the hopper is the score. Some gates pay +10 SECONDS instead of an
+ *      upgrade, which is the central tension of the whole game: more time in
+ *      the mine, or a machine that digs faster while you are down there.
+ *   2. THE SECTION MAP — an ordered list of zones with the generation knobs
+ *      terrain.js reads through SM.level.zoneAt(depth): easy opening ->
+ *      resource lanes -> granite barriers -> narrow passages -> crystal
+ *      caverns -> the final core.
+ *   3. THE GATE PLAN — where every paired route gate and upgrade station sits.
  *      Gates must exist BEFORE terrain generates their band, which is why
  *      main.js calls level.init() before terrain.init().
- *   3. THRESHOLD TRANSFORMS — "you have banked N -> the machine grows",
+ *   4. THRESHOLD TRANSFORMS — "you have banked N -> the machine grows",
  *      applied with no gate and no interruption.
  *
  * Public API
@@ -21,11 +26,22 @@
  * Phase-2 additions (terrain.js and presentation may use these):
  *   SM.level.getZones() zoneAt(depth) getZone() getZoneIndex()
  *   SM.level.getZoneProgress() getCollected() getLength()
+ * Time-attack additions (the HUD is built against exactly these):
+ *   SM.level.getTimeLeft()   seconds remaining, always >= 0
+ *   SM.level.getTimeStart()  seconds the run begins with
+ *   SM.level.getTimeCap()    ceiling the clock can ever hold (bar scaling)
+ *   SM.level.getTimeBonus()  seconds one +time gate is worth
+ *   SM.level.isRunOver()
+ *   SM.level.addTime(seconds)  -> true if it was banked
  *
  * Events emitted
  *   level:started    null
  *   level:complete   {distance}
  *   zone:entered     {name, kind}     kind: opening|rich|barrier|narrow|final
+ *   time:granted     {seconds, left}  a +time gate was taken
+ *   time:low         {left}           ONCE per run, first drop below LOW_TIME
+ *   run:over         {reason, distance, timeLeft}   reason: 'time' | 'depth'
+ *                                     emitted EXACTLY ONCE per run
  * ========================================================================== */
 
 var SM = SM || {};
@@ -34,6 +50,21 @@ SM.level = (function () {
   'use strict';
 
   var C = SM.config;
+
+  /* ----- Agent-2 tunables ---------------------------------------------
+   * TIME_START is the whole design budget. 60s is short enough that the very
+   * first paired gate is already a real decision (you can feel the clock),
+   * and long enough to reach the first barrier without any bonuses at all.
+   * TIME_CAP exists so hoarding time has a ceiling: a player who takes every
+   * single +10 SECONDS gate cannot bank an unbounded reserve and simply
+   * out-wait the level. It also gives the HUD a fixed denominator for a bar.
+   * LOW_TIME is the panic threshold — one warning, once, near the end.
+   * ------------------------------------------------------------------ */
+  var TIME_START = 60;           // seconds the run begins with
+  var TIME_CAP = 120;            // clock ceiling; 2x start = "one full refill"
+  var TIME_BONUS = 10;           // paid by a `time_10` gate
+                                 // (mirrored by TIME_REWARDS in upgrades.js)
+  var LOW_TIME = 10;             // seconds left when `time:low` fires
 
   /* =====================================================================
    * THE SECTION MAP
@@ -55,38 +86,53 @@ SM.level = (function () {
    *   wallMat    optional material for barrier slabs / corridor walls
    *              (default 'granite')
    *   corridorHalf/Wave/Drift  ('narrow' only) passage geometry
+   *
+   * >>> LENGTHS ARE TIME-ATTACK SCALED (~0.68x the original 3.5-minute map).
+   * The measured Phase-1 run covered 49 600 units in 282 seconds — an average
+   * of ~176 units/sec once barriers, corridors and resistance are paid for.
+   * A time attack tops out around 140 seconds of driving, so the old map put
+   * everything past GEM HOLLOWS permanently out of reach. Rescaled, the whole
+   * 33 500-unit map reads like this:
+   *
+   *   60s, no bonuses (10-13.5k u)   SURFACE CUT -> GEM HOLLOWS     5-6 zones
+   *   ~100s, some bonuses (18-22k)   into CRYSTAL CAVERNS           8 zones
+   *   ~130s+, a great run (26-33.5k) THE CORE, and 100% is possible all 11
+   *
+   * Only `len` changed. The generation knobs are untouched, so every zone
+   * still reads with exactly the character it was tuned for — the run is
+   * denser, not different. <<<
    * ================================================================== */
   var ZONES = [
     {
-      name: 'SURFACE CUT', kind: 'opening', len: 2600,
+      name: 'SURFACE CUT', kind: 'opening', len: 1800,
       stoneW: 0.12, graniteW: 0, pocketRate: 0.75,
       ores: [['iron', 5], ['gold', 2]],
       bigChance: 0, voidChance: 0.14, rubble: 0.10,
       veins: 0, veinOre: 'iron', veinWidth: 0
     },
     {
-      name: 'IRON LANES', kind: 'rich', len: 4200,
+      name: 'IRON LANES', kind: 'rich', len: 2900,
       stoneW: 0.34, graniteW: 0, pocketRate: 1.15,
       ores: [['iron', 6], ['gold', 3], ['stone', 2]],
       bigChance: 0.05, voidChance: 0.10, rubble: 0.12,
       veins: 2, veinOre: 'iron', veinWidth: 78
     },
     {
-      name: 'THE GRANITE WALL', kind: 'barrier', len: 3200,
+      name: 'THE GRANITE WALL', kind: 'barrier', len: 2100,
       stoneW: 0.58, graniteW: 0.22, pocketRate: 0.85,
       ores: [['gold', 4], ['iron', 3], ['gem', 2]],
       bigChance: 0.06, voidChance: 0.08, rubble: 0.18,
       veins: 0, veinOre: 'gold', veinWidth: 0
     },
     {
-      name: 'GOLDFIELDS', kind: 'rich', len: 4600,
+      name: 'GOLDFIELDS', kind: 'rich', len: 3100,
       stoneW: 0.40, graniteW: 0, pocketRate: 1.45,
       ores: [['gold', 7], ['iron', 3], ['gem', 3]],
       bigChance: 0.14, voidChance: 0.10, rubble: 0.12,
       veins: 2, veinOre: 'gold', veinWidth: 88
     },
     {
-      name: 'THE THROAT', kind: 'narrow', len: 2600,
+      name: 'THE THROAT', kind: 'narrow', len: 1700,
       stoneW: 0.55, graniteW: 0.30, pocketRate: 0.6,
       ores: [['gem', 4], ['gold', 3], ['crystal', 2]],
       bigChance: 0.05, voidChance: 0.05, rubble: 0.30,
@@ -96,14 +142,14 @@ SM.level = (function () {
       corridorHalf: 300, corridorWave: 70, corridorDrift: 190
     },
     {
-      name: 'GEM HOLLOWS', kind: 'rich', len: 5000,
+      name: 'GEM HOLLOWS', kind: 'rich', len: 3300,
       stoneW: 0.42, graniteW: 0.05, pocketRate: 1.55,
       ores: [['gem', 6], ['gold', 3], ['crystal', 3], ['iron', 2]],
       bigChance: 0.18, voidChance: 0.18, rubble: 0.14,
       veins: 2, veinOre: 'gem', veinWidth: 84
     },
     {
-      name: 'DEEP BARRIER', kind: 'barrier', len: 3400,
+      name: 'DEEP BARRIER', kind: 'barrier', len: 2300,
       stoneW: 0.50, graniteW: 0.34, pocketRate: 0.95,
       ores: [['crystal', 4], ['gem', 3], ['rare', 1]],
       bigChance: 0.10, voidChance: 0.07, rubble: 0.20,
@@ -113,14 +159,14 @@ SM.level = (function () {
       wallMat: 'obsidian'
     },
     {
-      name: 'CRYSTAL CAVERNS', kind: 'rich', len: 6000,
+      name: 'CRYSTAL CAVERNS', kind: 'rich', len: 3900,
       stoneW: 0.35, graniteW: 0.04, pocketRate: 1.75,
       ores: [['crystal', 8], ['gem', 4], ['rare', 2], ['gold', 2]],
       bigChance: 0.34, voidChance: 0.18, rubble: 0.16,
       veins: 1, veinOre: 'crystal', veinWidth: 100
     },
     {
-      name: 'PRESSURE LOCK', kind: 'narrow', len: 2400,
+      name: 'PRESSURE LOCK', kind: 'narrow', len: 1600,
       stoneW: 0.45, graniteW: 0.40, pocketRate: 0.7,
       ores: [['crystal', 4], ['rare', 2], ['gem', 2]],
       bigChance: 0.06, voidChance: 0.04, rubble: 0.34,
@@ -129,7 +175,7 @@ SM.level = (function () {
       wallMat: 'obsidian'
     },
     {
-      name: 'THE MOTHERLODE', kind: 'rich', len: 6600,
+      name: 'THE MOTHERLODE', kind: 'rich', len: 4400,
       stoneW: 0.28, graniteW: 0.03, pocketRate: 2.0,
       ores: [['crystal', 6], ['gem', 5], ['gold', 5], ['rare', 4]],
       bigChance: 0.30, voidChance: 0.09, rubble: 0.12,
@@ -139,7 +185,7 @@ SM.level = (function () {
       // THE FINAL SPECTACLE. No dirt at all: the base rock IS treasure, and
       // starcore formations are stacked on top of it. A maxed machine deletes
       // a wall of this per second.
-      name: 'THE CORE', kind: 'final', len: 9000,
+      name: 'THE CORE', kind: 'final', len: 6400,
       stoneW: 0, graniteW: 0, pocketRate: 2.4,
       baseOres: [['gold', 3], ['gem', 3], ['crystal', 4], ['rare', 2]],
       ores: [['starcore', 6], ['rare', 6], ['crystal', 5], ['gem', 3]],
@@ -149,49 +195,115 @@ SM.level = (function () {
   ];
 
   /* =====================================================================
-   * THE GATE PLAN
+   * THE GATE PLAN  —  a time attack is a chain of decisions
    * ---------------------------------------------------------------------
-   * pair    -> two arches at the same depth. left is the SAFE route, right is
-   *            the HARD route (denser rock on that side, stronger upgrade).
-   * station -> full-lane gantry, cannot be missed. These carry the guaranteed
-   *            beats of the power curve so a run can never stall out.
-   * Distances are deliberately placed OUTSIDE barrier and narrow sections so
-   * the terrain carve never punches a hole in a structural wall.
+   * pair    -> two arches at the same depth. ONE SIDE IS ALWAYS `time_10`
+   *            (+10 SECONDS), the other is a machine upgrade. That is the
+   *            whole game: buy time in the mine, or buy the machine that
+   *            makes the time you already have worth more.
+   * station -> full-lane gantry, cannot be missed. Stations are UPGRADES
+   *            ONLY — they are the guaranteed power curve, so a player who
+   *            takes time at every single pair still ends up with a machine
+   *            and a run that never stalls out.
+   *
+   * SPACING / PACING
+   *   Pairs sit 2 100-3 600 units apart inside a region, and up to ~5 000
+   *   when a granite barrier sits between two of them. At the realistic
+   *   175-280 units/sec of a mid run that is a decision every 9-20 seconds.
+   *   That is THE number to get right: +10 SECONDS must cost roughly the
+   *   time it takes to reach the NEXT +10 SECONDS, or the clock either
+   *   collapses (decisions stop mattering) or turns into a perpetual-motion
+   *   machine — a greedy player banking time faster than they spend it, and
+   *   a run that never ends. At this spacing pure greed is break-even at
+   *   best, and the punishment compounds: skipping every upgrade leaves the
+   *   rig crawling at the VEHICLE_MIN_SPEED_FACTOR floor through THE GRANITE
+   *   WALL and THE THROAT, so the next gate takes twice as long to reach.
+   *   A station is dropped BETWEEN pairs, so *some* gate arrives every
+   *   900-1 400 units (roughly 5 seconds) and the run never feels empty.
+   *
+   * WHICH SIDE CARRIES THE TIME
+   *   R L R L L R R L R R L — deliberately NOT alternating. If time were
+   *   always on one side, or strictly alternating, it would be memorised
+   *   after two runs and the arch would stop being read. You have to look.
+   *
+   * SAFETY RULE (unchanged): distances stay OUTSIDE every barrier and narrow
+   * section. GATE_CARVE_DEPTH is 140, so a gate carves +-70 units of y; punch
+   * that through a granite slab or a corridor wall and the structure that the
+   * whole zone exists for gets a free door in it. Every entry below keeps at
+   * least ~200 units of clearance from a structural zone boundary.
    * ================================================================== */
   var GATE_PLAN = [
-    /* zone boundaries: 2600 | 6800 | 10000 | 14600 | 17200 | 22200 | 25600 |
-     *                  31600 | 34000 | 40600 | 49600                        */
-    { at: 1000,  kind: 'pair',    left: 'wider_blade',   right: 'drill_heads' },
-    { at: 3100,  kind: 'pair',    left: 'magnet',        right: 'mining_power' },
-    { at: 5000,  kind: 'station', up: 'speed_up' },
-    { at: 6400,  kind: 'pair',    left: 'side_grinders', right: 'multiplier' },
-    { at: 10200, kind: 'station', up: 'wider_blade' },
-    { at: 12000, kind: 'pair',    left: 'explosive_pulse', right: 'rear_conveyor' },
-    { at: 14100, kind: 'station', up: 'mining_power' },
-    { at: 17600, kind: 'pair',    left: 'magnet',        right: 'drill_heads' },
-    { at: 20000, kind: 'station', up: 'speed_up' },
-    { at: 21700, kind: 'pair',    left: 'multiplier',    right: 'side_grinders' },
-    { at: 25900, kind: 'station', up: 'wider_blade' },
-    { at: 28500, kind: 'pair',    left: 'overdrive',     right: 'explosive_pulse' },
-    // Pulse lives on a STATION as well as on pair gates, so even a player who
-    // never steers still gets the explosive toy before the final stretch.
-    { at: 31100, kind: 'station', up: 'explosive_pulse' },
-    { at: 34600, kind: 'pair',    left: 'rear_conveyor', right: 'magnet' },
-    { at: 37600, kind: 'station', up: 'overdrive' },
-    { at: 40100, kind: 'station', up: 'final_overhaul' }
+    /* zone boundaries: 1800 | 4700 | 6800 | 9900 | 11600 | 14900 | 17200 |
+     *                  21100 | 22700 | 27100 | 33500
+     * NO-GATE spans (barrier / narrow):
+     *   4700-6800   THE GRANITE WALL      9900-11600  THE THROAT
+     *   14900-17200 DEEP BARRIER         21100-22700  PRESSURE LOCK       */
+
+    /* --- SURFACE CUT + IRON LANES  (0-4700) --------------------------- *
+     * The first pair lands at 900, about 5 seconds in. Teaching the choice
+     * before the player has any upgrades at all is the point: with 60s on
+     * the clock and nothing on the rig, both sides are genuinely tempting. */
+    { at: 900,   kind: 'pair',    left: 'wider_blade',   right: 'time_10' },
+    { at: 2000,  kind: 'station', up: 'speed_up' },
+    { at: 3100,  kind: 'pair',    left: 'time_10',       right: 'drill_heads' },
+    // Power before the granite: a rig that skipped every upgrade so far still
+    // gets REINFORCED CUTTERS handed to it right before the wall.
+    { at: 4200,  kind: 'station', up: 'mining_power' },
+
+    /* --- GOLDFIELDS  (6800-9900) -------------------------------------- */
+    { at: 7200,  kind: 'station', up: 'magnet' },
+    { at: 8400,  kind: 'pair',    left: 'multiplier',    right: 'time_10' },
+    // Pulse on a STATION as well as on pair gates, so even a player who never
+    // steers still owns the explosive toy before THE THROAT.
+    { at: 9500,  kind: 'station', up: 'explosive_pulse' },
+
+    /* --- GEM HOLLOWS  (11600-14900) ----------------------------------- *
+     * Two pairs back to back either side of a station: this is where a run
+     * commits to being a "long run" or a "strong run". */
+    { at: 12000, kind: 'pair',    left: 'time_10',       right: 'side_grinders' },
+    { at: 13200, kind: 'station', up: 'wider_blade' },
+    { at: 14400, kind: 'pair',    left: 'time_10',       right: 'rear_conveyor' },
+
+    /* --- CRYSTAL CAVERNS  (17200-21100) ------------------------------- */
+    { at: 17500, kind: 'station', up: 'mining_power' },
+    { at: 18600, kind: 'pair',    left: 'magnet',        right: 'time_10' },
+    { at: 19800, kind: 'station', up: 'multiplier' },
+    { at: 20700, kind: 'pair',    left: 'overdrive',     right: 'time_10' },
+
+    /* --- THE MOTHERLODE  (22700-27100) -------------------------------- *
+     * Only reachable past ~110 seconds of driving. The final overhaul sits
+     * just before the core so anyone who gets this far arrives armed. */
+    { at: 23100, kind: 'station', up: 'side_grinders' },
+    { at: 24300, kind: 'pair',    left: 'time_10',       right: 'explosive_pulse' },
+    { at: 25600, kind: 'station', up: 'speed_up' },
+    { at: 26500, kind: 'station', up: 'final_overhaul' },
+
+    /* --- THE CORE  (27100+) ------------------------------------------- *
+     * Kept fully populated even though almost nobody sees it: an excellent
+     * run must never out-drive the plan and coast through empty world. */
+    { at: 27900, kind: 'pair',    left: 'drill_heads',   right: 'time_10' },
+    { at: 29200, kind: 'station', up: 'wider_blade' },
+    { at: 30400, kind: 'pair',    left: 'mining_power',  right: 'time_10' },
+    { at: 31700, kind: 'station', up: 'overdrive' },
+    { at: 32900, kind: 'pair',    left: 'time_10',       right: 'multiplier' }
   ];
 
   var PAIR_X = 320;              // lateral offset of each half of a pair
   var PAIR_X_LATE = 250;         // pairs get closer to the centre once the
-  var PAIR_LATE_FROM = 20000;    // machine is too wide to swing far sideways
+  var PAIR_LATE_FROM = 12500;    // machine is too wide to swing far sideways
+                                 // (~37% into the rescaled map, same fraction
+                                 //  of the run as the old 20000-of-49600)
 
   /* --- automatic threshold transformations ----------------------------
    * Trigger on banked value, so a greedy player transforms sooner. Both are
    * guaranteed by a distance fallback so no run can miss them entirely.
+   * The fallbacks are rescaled with the map (7500 -> 5000, 23000 -> 15500)
+   * so they sit at the same fraction of the run as before — otherwise a
+   * 60-second run would never see either transform.
    * ------------------------------------------------------------------ */
   var AUTO_PLAN = [
-    { id: 'auto_hopper', value: 12000,   byDistance: 7500,  done: false },
-    { id: 'mega_treads', value: 260000,  byDistance: 23000, done: false }
+    { id: 'auto_hopper', value: 12000,   byDistance: 5000,  done: false },
+    { id: 'mega_treads', value: 260000,  byDistance: 15500, done: false }
   ];
 
   /* ----- state --------------------------------------------------------- */
@@ -210,8 +322,17 @@ SM.level = (function () {
   var collected = 0;
   var zoneIndex = -1;
 
+  /* --- the clock ------------------------------------------------------ */
+  var timeLeft = TIME_START;
+  var runOver = false;
+  var lowFired = false;          // `time:low` is once per run, not once per dip
+
   var evComplete = { distance: 0 };
   var evZone = { name: '', kind: '' };
+  // Reused like evZone / evGate: emitted several times a run, never stashed.
+  var evTimeGranted = { seconds: 0, left: 0 };
+  var evTimeLow = { left: 0 };
+  var evRunOver = { reason: '', distance: 0, timeLeft: 0 };
 
   /* ------------------------------------------------------------------ */
 
@@ -259,10 +380,47 @@ SM.level = (function () {
     complete = false;
     collected = 0;
     zoneIndex = -1;
+    timeLeft = TIME_START;
+    runOver = false;
+    lowFired = false;
     for (var i = 0; i < AUTO_PLAN.length; i++) AUTO_PLAN[i].done = false;
 
     placeGates();
     SM.events.emit('level:started', null);
+  }
+
+  /* =====================================================================
+   * THE CLOCK
+   * ================================================================== */
+
+  /**
+   * Bank seconds from a `time_10` gate. Clamped to TIME_CAP so hoarding has
+   * a ceiling, and refused once the run is over — upgrades.update() runs
+   * AFTER level.update(), so the halting machine can still coast across a
+   * gate on the very step the clock expired, and that must not resurrect it.
+   * @return true if the seconds were actually banked.
+   */
+  function addTime(seconds) {
+    if (runOver) return false;
+    timeLeft += seconds;
+    if (timeLeft > TIME_CAP) timeLeft = TIME_CAP;
+    evTimeGranted.seconds = seconds;
+    evTimeGranted.left = timeLeft;
+    SM.events.emit('time:granted', evTimeGranted);
+    return true;
+  }
+
+  /** The single door out of a run. Guarded so `run:over` can only ever
+   *  fire once — reset() is the only thing that reopens it. */
+  function endRun(reason) {
+    if (runOver) return;
+    runOver = true;
+    if (timeLeft < 0) timeLeft = 0;
+    if (SM.vehicle && SM.vehicle.halt) SM.vehicle.halt();
+    evRunOver.reason = reason;
+    evRunOver.distance = distance;
+    evRunOver.timeLeft = timeLeft;
+    SM.events.emit('run:over', evRunOver);
   }
 
   function update(dt) {
@@ -271,34 +429,65 @@ SM.level = (function () {
     progress = distance / RUN_LENGTH;
     if (progress > 1) progress = 1;
 
-    /* --- zone transitions --------------------------------------------- */
-    var zi2 = indexAt(distance);
-    if (zi2 !== zoneIndex) {
-      zoneIndex = zi2;
-      var z = ZONES[zi2];
-      evZone.name = z.name;
-      evZone.kind = z.kind;
-      SM.events.emit('zone:entered', evZone);
-      // Entering the final zone kicks the machine into a long frenzy — the
-      // whole point of the section is to watch it eat the field.
-      if (z.kind === 'final') SM.vehicle.startOverdrive(14);
-      if (SM.camera) SM.camera.shake(z.kind === 'final' ? 20 : 8);
-    }
+    /* --- zone transitions --------------------------------------------- *
+     * Frozen once the run is over: the machine is still coasting to a stop
+     * and must not trip a fresh zone fanfare (or an overdrive frenzy) on the
+     * way down. terrain.js reads zoneAt(depth) directly, so streaming is
+     * unaffected.
+     * ------------------------------------------------------------------ */
+    if (!runOver) {
+      var zi2 = indexAt(distance);
+      if (zi2 !== zoneIndex) {
+        zoneIndex = zi2;
+        var z = ZONES[zi2];
+        evZone.name = z.name;
+        evZone.kind = z.kind;
+        SM.events.emit('zone:entered', evZone);
+        // Entering the final zone kicks the machine into a long frenzy — the
+        // whole point of the section is to watch it eat the field.
+        if (z.kind === 'final') SM.vehicle.startOverdrive(14);
+        if (SM.camera) SM.camera.shake(z.kind === 'final' ? 20 : 8);
+      }
 
-    /* --- automatic threshold transformations --------------------------- */
-    for (var i = 0; i < AUTO_PLAN.length; i++) {
-      var a = AUTO_PLAN[i];
-      if (a.done) continue;
-      if (collected >= a.value || distance >= a.byDistance) {
-        a.done = true;
-        SM.upgrades.trigger(a.id);
+      /* --- automatic threshold transformations ------------------------- */
+      for (var i = 0; i < AUTO_PLAN.length; i++) {
+        var a = AUTO_PLAN[i];
+        if (a.done) continue;
+        if (collected >= a.value || distance >= a.byDistance) {
+          a.done = true;
+          SM.upgrades.trigger(a.id);
+        }
       }
     }
 
-    if (!complete && progress >= 1) {
+    /* --- reaching the bottom beats the clock --------------------------- *
+     * Checked BEFORE the countdown so that a player who crosses 100% on the
+     * same step the timer would have expired gets the better ending. Both
+     * routes go through endRun(), which is idempotent.
+     * ------------------------------------------------------------------ */
+    if (!runOver && !complete && progress >= 1) {
       complete = true;
       evComplete.distance = distance;
       SM.events.emit('level:complete', evComplete);
+      endRun('depth');
+    }
+
+    /* --- the countdown ------------------------------------------------- *
+     * update() runs inside main.js's fixed step, and main.js pins the step
+     * accumulator at zero until `input:firstgesture` — so the clock cannot
+     * tick behind the start overlay and no extra "armed" flag is needed here.
+     * ------------------------------------------------------------------ */
+    if (!runOver) {
+      timeLeft -= dt;
+      if (!lowFired && timeLeft < LOW_TIME) {
+        lowFired = true;
+        evTimeLow.left = timeLeft < 0 ? 0 : timeLeft;
+        SM.events.emit('time:low', evTimeLow);
+      }
+      if (timeLeft <= 0) {
+        timeLeft = 0;
+        endRun('time');
+      }
     }
   }
 
@@ -336,6 +525,14 @@ SM.level = (function () {
     getZoneIndex: function () { return zoneIndex < 0 ? 0 : zoneIndex; },
     getZoneProgress: getZoneProgress,
     getCollected: function () { return collected; },
-    getLength: function () { return RUN_LENGTH; }
+    getLength: function () { return RUN_LENGTH; },
+
+    /* --- TIME ATTACK (the HUD contract) -------------------------------- */
+    getTimeLeft: function () { return timeLeft < 0 ? 0 : timeLeft; },
+    getTimeStart: function () { return TIME_START; },
+    getTimeCap: function () { return TIME_CAP; },
+    getTimeBonus: function () { return TIME_BONUS; },
+    isRunOver: function () { return runOver; },
+    addTime: addTime
   };
 })();

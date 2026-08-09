@@ -4,12 +4,20 @@
  * Upgrade delivery. Three flavours, all placed in the world by level.js so the
  * action is never interrupted:
  *
- *   1. PAIRED GATES   two arches at the same depth, left and right, each
- *                     offering a different upgrade. Drive through one; the
- *                     other slams shut. This is the route choice.
- *   2. STATIONS       a gantry spanning the whole lane. Unmissable, used for
- *                     the guaranteed beats of the progression curve.
+ *   1. PAIRED GATES   two arches at the same depth, left and right. In the
+ *                     TIME ATTACK one side is always a `time_10` gate
+ *                     (+10 SECONDS on the clock) and the other is a machine
+ *                     upgrade. Drive through one; the other slams shut.
+ *   2. STATIONS       a gantry spanning the whole lane. Unmissable, upgrades
+ *                     only — the guaranteed beats of the progression curve.
  *   3. AUTO TRANSFORMS level.js calls trigger() on a collection threshold.
+ *
+ * >>> TIME GATES <<<
+ * `time_10` is a PSEUDO-upgrade. It is not in vehicle.js's UPGRADE_EFFECTS,
+ * so SM.vehicle.applyUpgrade('time_10') returns null and it can never show up
+ * in getOwnedUpgrades() or getUpgradeCount(). trigger() routes it to
+ * SM.level.addTime() and then emits the ordinary `upgrade:applied` event, so
+ * the toast / sound / flash keep working with no special-casing downstream.
  *
  * >>> CAMERA AUTHORITY <<<
  * This module NO LONGER touches SM.camera.setZoomTarget(). Zoom is derived by
@@ -46,6 +54,28 @@ SM.upgrades = (function () {
   var GATE_SHAKE = 14;           // small: camera trauma saturates fast
   var STATION_SHAKE = 20;
 
+  /* --- TIME REWARDS ----------------------------------------------------
+   * A `time_10` gate is NOT a machine upgrade. It never reaches vehicle.js:
+   * it does not exist in UPGRADE_EFFECTS, so it can never appear in
+   * getOwnedUpgrades() nor move getUpgradeCount(). It pays the clock instead,
+   * and only borrows the `upgrade:applied` event so the existing toast works.
+   *
+   * `seconds` mirrors TIME_BONUS in level.js — keep the two in step.
+   * ------------------------------------------------------------------ */
+  var TIME_REWARDS = {
+    time_10: {
+      seconds: 10,
+      title: '+10 SECONDS',
+      description: 'Ten more seconds in the mine.',
+      label: '+10 SEC'
+    }
+  };
+  // Time gates read as a CLOCK, not as power. Green is the only hue not
+  // already spoken for (amber = station, cyan = safe route, red = hard route)
+  // and it is the universal "you just bought more time" colour.
+  var TIME_TONE = '90,255,150';
+  var TIME_CLOCK_R = 11;         // radius of the clock glyph over the arch
+
   var C = SM.config;
   var TAU = Math.PI * 2;
 
@@ -80,18 +110,26 @@ SM.upgrades = (function () {
    */
   function addGate(spec) {
     var eff = SM.vehicle.getUpgradeEffect(spec.upgradeId);
+    // getUpgradeEffect() returns null for a time id, so without this the arch
+    // would fall through to the generic 'UPGRADE' label and lie to the player.
+    var tr = TIME_REWARDS[spec.upgradeId] || null;
     var station = spec.kind === 'station';
     gates.push({
       id: spec.id,
       upgradeId: spec.upgradeId,
       kind: station ? 'station' : 'gate',
       pairId: spec.pairId || '',
+      // `tone` still records which SIDE of the pair this is (level.js sets it,
+      // and the terrain really is harder on the right); `isTime` overrides how
+      // it is drawn, so a +time gate looks identical on either side.
       tone: spec.tone || (station ? 'station' : 'safe'),
+      isTime: !!tr,
       x: spec.x || 0,
       y: spec.y,
       width: spec.width || (station ? C.LANE_HALF_WIDTH * 2 - 24 : C.GATE_WIDTH),
-      label: spec.label || (eff && eff.title) || 'UPGRADE',
-      description: spec.description || (eff && eff.description) || '',
+      label: spec.label || (tr && tr.label) || (eff && eff.title) || 'UPGRADE',
+      description: spec.description ||
+                   (tr && tr.description) || (eff && eff.description) || '',
       passed: false,
       missed: false,
       rejected: false,           // sibling of a chosen pair
@@ -103,8 +141,30 @@ SM.upgrades = (function () {
 
   function getGates() { return gates; }
 
+  /**
+   * Bank a time reward. Routes to the clock instead of the machine, but still
+   * emits `upgrade:applied` so the toast, the sound and the flash all work
+   * with no special-casing anywhere in presentation.
+   */
+  function grantTime(id, tr) {
+    if (!SM.level || !SM.level.addTime) return false;
+    // Refused when the run is already over (the halting rig can still coast
+    // through a gate on the step the clock hit zero) — no ghost toast then.
+    if (!SM.level.addTime(tr.seconds)) return false;
+
+    evUpgrade.id = id;
+    evUpgrade.title = tr.title;
+    evUpgrade.description = tr.description;
+    SM.events.emit('upgrade:applied', evUpgrade);
+    if (SM.camera) SM.camera.shake(GATE_SHAKE);
+    return true;
+  }
+
   /** Apply an upgrade with no gate involved (auto-transform, debug, ...). */
   function trigger(upgradeId) {
+    var tr = TIME_REWARDS[upgradeId];
+    if (tr) return grantTime(upgradeId, tr);
+
     var eff = SM.vehicle.applyUpgrade(upgradeId);
     if (!eff) return false;
     evUpgrade.id = upgradeId;
@@ -215,8 +275,29 @@ SM.upgrades = (function () {
    * RENDER (world space, drawn between the particles and the vehicle)
    * ================================================================== */
   function toneColor(g) {
+    // Time first: the reward, not the side of the lane, is what has to read
+    // from 700 units away while you are still deciding which arch to aim at.
+    if (g.isTime) return TIME_TONE;
     if (g.kind === 'station') return '255,190,60';
     return g.tone === 'risk' ? '255,120,90' : '120,230,255';
+  }
+
+  /** Clock face over the arch. Two arcs and two hands — the cheapest shape
+   *  that says "time" without a font the player has to stop and read. */
+  function drawClock(ctx, cx, cy, col, spin) {
+    ctx.strokeStyle = 'rgba(' + col + ',0.95)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(cx, cy, TIME_CLOCK_R, 0, TAU);
+    ctx.stroke();
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx, cy - TIME_CLOCK_R * 0.62);
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.sin(spin) * TIME_CLOCK_R * 0.78,
+               cy - Math.cos(spin) * TIME_CLOCK_R * 0.78);
+    ctx.stroke();
   }
 
   function render(ctx) {
@@ -322,31 +403,39 @@ SM.upgrades = (function () {
 
       /* --- arch + label ------------------------------------------------ */
       var archY = g.y - PILLAR_H * 0.5 - ARCH_H - 6;
-      ctx.fillStyle = station ? '#31281c' : '#262b31';
+      ctx.fillStyle = g.isTime ? '#1b2a22' : station ? '#31281c' : '#262b31';
       ctx.fillRect(g.x - half - PILLAR_W * 0.5, archY, g.width + PILLAR_W, ARCH_H);
       ctx.strokeStyle = '#12151a';
       ctx.lineWidth = 3;
       ctx.strokeRect(g.x - half - PILLAR_W * 0.5, archY, g.width + PILLAR_W, ARCH_H);
 
       var text;
-      if (g.passed) text = 'INSTALLED';
+      if (g.passed) text = g.isTime ? '+10 SEC' : 'INSTALLED';
       else if (g.rejected) text = 'CLOSED';
       else if (g.missed) text = 'MISSED';
       else text = g.label;
 
       ctx.fillStyle = g.passed ? 'rgba(150,255,190,0.95)'
         : (g.rejected || g.missed) ? 'rgba(180,180,190,0.7)'
+        : g.isTime ? 'rgba(' + TIME_TONE + ',0.98)'
         : 'rgba(255,225,120,0.95)';
       ctx.font = 'bold 17px ui-sans-serif, system-ui, Arial, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(text, g.x, archY + ARCH_H * 0.5);
 
-      // Risk-route tag, so the choice reads before you commit to a side.
+      // Route tag, so the choice reads before you commit to a side. A time
+      // gate says TIME instead: which half of the lane it happens to sit on
+      // is irrelevant once you know it pays the clock.
       if (!g.passed && !g.rejected && !g.missed && g.pairId) {
         ctx.font = 'bold 12px ui-sans-serif, system-ui, Arial, sans-serif';
         ctx.fillStyle = 'rgba(' + col + ',0.8)';
-        ctx.fillText(g.tone === 'risk' ? 'HARD ROUTE' : 'SAFE ROUTE', g.x, archY - 12);
+        ctx.fillText(
+          g.isTime ? 'TIME' : (g.tone === 'risk' ? 'HARD ROUTE' : 'SAFE ROUTE'),
+          g.x, archY - 12);
+        if (g.isTime) {
+          drawClock(ctx, g.x, archY - 34, col, animTime * 2.4);
+        }
       }
 
       /* --- pass shockwave ---------------------------------------------- */
