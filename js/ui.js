@@ -656,6 +656,10 @@ SM.ui = (function () {
     el('div', 'sm-start-keys', sc,
       'A / D  ·  ARROWS  ·  DRAG  to steer      R  restart      M  mute');
 
+    // Only rendered on a portrait phone — see applyCompact().
+    els.rotate = el('div', 'sm-rotate', sc,
+      '↻   TURN YOUR DEVICE SIDEWAYS TO SEE THE WHOLE MINE');
+
     /* --- opt-in update, shown only when a new build is parked and waiting --- */
     els.update = el('button', 'sm-update', sc, 'UPDATE READY — TAP TO INSTALL');
     els.update.setAttribute('type', 'button');
@@ -1048,6 +1052,15 @@ SM.ui = (function () {
     else root.classList.remove('sm-compact');
     if (w < 420) root.classList.add('sm-tiny');
     else root.classList.remove('sm-tiny');
+
+    /* Portrait on a phone is the one shape where the whole lane genuinely
+     * cannot be shown. camera.js already zooms out as far as the particle
+     * budget allows (~55% of the lane, up from 34%), but the full field needs
+     * landscape — where it measures 147%. Tablets clear ~88% and are left
+     * alone; nagging them would be noise. */
+    var portraitPhone = (h > w) && (w < 560);
+    if (portraitPhone) root.classList.add('sm-rotate-hint');
+    else root.classList.remove('sm-rotate-hint');
   }
 
   var resizePending = false;
@@ -1661,6 +1674,12 @@ SM.ui = (function () {
 
   function initPWA() {
     if (!('serviceWorker' in navigator)) return;
+    // Opened straight off the disk. Service workers need a secure context, so
+    // registration would reject AND the sw.js version fetch would be blocked by
+    // CORS — two red console errors for something that was never going to work.
+    // Bail early and let the menu show the compiled-in GAME_VERSION instead.
+    if (location.protocol === 'file:') return;
+
     var hadController = !!navigator.serviceWorker.controller;
 
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })

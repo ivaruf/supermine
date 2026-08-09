@@ -1504,6 +1504,26 @@ html, body {
 /* While the menu is up it is the only thing on screen. */
 .sm-menu .sm-hint { display: none; }
 
+/* Portrait phone only (toggled by applyCompact). The lane is 1280 world units
+   wide and the camera can only zoom out so far before terrain streaming runs
+   past the particle pool, so portrait tops out near half the field — landscape
+   shows all of it. Advertised on the menu, where rotating is free. */
+.sm-rotate { display: none; }
+.sm-rotate-hint .sm-rotate {
+  display: block;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.8px;
+  line-height: 1.5;
+  color: #ffe2a8;
+  background: rgba(255, 194, 31, 0.10);
+  border: 1px solid rgba(255, 194, 31, 0.42);
+  border-radius: 4px;
+  padding: 9px 14px;
+  text-shadow: 0 0 12px rgba(255, 194, 31, 0.5);
+}
+
 /* --- opt-in update button (menu only) ---------------------------------
    Hidden unless a new build is precached and waiting. Deliberately reads as
    an offer rather than an alarm: nothing is broken, there is simply a newer
@@ -1677,6 +1697,10 @@ html, body {
 .sm-compact .sm-hs { margin-top: 12px; padding-top: 10px; }
 .sm-compact .sm-hs-row { font-size: 11px; padding: 4px 7px; gap: 7px; }
 .sm-compact .sm-score { padding: 8px 11px 9px; }
+
+/* At 390px the tagline's 6px tracking pushes it onto a second line, orphaning
+   "DEEPER." under the centre. Tighten it just enough to stay on one. */
+.sm-tiny .sm-start-sub { font-size: 9.5px; letter-spacing: 3px; text-indent: 3px; }
 
 .sm-tiny .sm-statrow { gap: 4px; }
 .sm-tiny .sm-progwrap { width: 40vw; }

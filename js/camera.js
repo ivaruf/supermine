@@ -53,6 +53,30 @@ SM.camera = (function () {
   // of game between them.
   var MAX_WALL_VISIBLE = 300;
 
+  /* --- LANE FIT (the portrait/mobile problem) ---------------------------
+   * `scale` is normalised on HEIGHT alone, which is fine on any landscape
+   * screen and quietly disastrous on a portrait one: measured at 390x844 only
+   * 34% of the 1280-unit lane was on screen, so both halves of a paired gate
+   * could not be seen at once and the walls never appeared at all.
+   *
+   * LANE_FIT_MARGIN caps the scale so the whole lane (plus a sliver of wall)
+   * fits across the viewport.
+   *
+   * MAX_VIEW_HEIGHT is what stops that cure being worse than the disease.
+   * Fitting 1280 units into a 390px-wide screen means showing ~2900 units of
+   * world HEIGHT — and terrain.js streams the FULL visible height at SPACING
+   * 19, which works out at ~11 600 deposits against a 7500 particle pool.
+   * Streaming would run dry and the world would generate full of holes. So the
+   * fit is bounded by the tallest view the particle budget can actually fill:
+   *   rows = (H + 2*STREAM_VIEW_MARGIN) / SPACING, cols = 1280 / SPACING = 67
+   *   1500 -> ~97 rows -> ~6500 solids, leaving ~1000 for live debris.
+   * A portrait phone therefore lands around half the lane rather than a third,
+   * and only LANDSCAPE shows the whole field — which is what the rotate hint
+   * in ui.js is for.
+   * ------------------------------------------------------------------ */
+  var LANE_FIT_MARGIN = 40;      // world units of wall to keep beside the lane
+  var MAX_VIEW_HEIGHT = 1500;    // tallest world view the pool can fill
+
   // Width -> zoom-out. zoomFactor = (baseWidth / currentWidth) ^ WIDTH_EXP.
   // Deliberately gentle: the lane is fixed, so aggressive pull-back just shows
   // more wall. 0.26 takes a 140->520 wide rig from 0.95 down to ~0.68.
@@ -208,6 +232,19 @@ SM.camera = (function () {
     // Lane-fill floor: never show more world width than lane + 2*MAX_WALL_VISIBLE.
     var minScale = vpW / (C.LANE_HALF_WIDTH * 2 + MAX_WALL_VISIBLE * 2);
     if (scale < minScale) scale = minScale;
+
+    /* Lane-fit ceiling: never so zoomed IN that the lane runs off the sides.
+     * Bounded by MAX_VIEW_HEIGHT so a narrow screen cannot ask for more
+     * terrain than the particle pool can generate — see the notes up top.
+     * Only ever REDUCES scale: `affordable` may exceed the current scale on a
+     * short landscape window, and zooming further in is the opposite of the
+     * problem being solved here. */
+    var fit = vpW / (C.LANE_HALF_WIDTH * 2 + LANE_FIT_MARGIN * 2);
+    if (scale > fit) {
+      var affordable = vpH / MAX_VIEW_HEIGHT;
+      var target = fit > affordable ? fit : affordable;
+      if (target < scale) scale = target;
+    }
     if (scale < 0.05) scale = 0.05;
   }
 
