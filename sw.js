@@ -24,7 +24,11 @@
  * subpath like /supermine/ as well as from a domain root.
  * ========================================================================== */
 
-const VERSION = 'v1.2.0';
+// Bump on EVERY deploy — this string is the whole update mechanism. Clients
+// that already have a cache only notice a new build when VERSION changes.
+// v1.3.0  PWA + service worker, FREESTYLE mode, rebuilt main menu
+// v1.4.0  mobile/portrait camera fit (the lane no longer runs off the sides)
+const VERSION = 'v1.4.0';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [
