@@ -28,7 +28,11 @@
 // that already have a cache only notice a new build when VERSION changes.
 // v1.3.0  PWA + service worker, FREESTYLE mode, rebuilt main menu
 // v1.4.0  mobile/portrait camera fit (the lane no longer runs off the sides)
-const VERSION = 'v1.4.0';
+// v1.5.0  mobile HUD rebuild: full-width score row, centred clock, icon
+//         buttons, pause menu, on-screen steering pads, progress gauge gone;
+//         portrait now frames the WHOLE lane by solving the terrain grid
+//         pitch against the particle pool instead of capping the zoom
+const VERSION = 'v1.5.0';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

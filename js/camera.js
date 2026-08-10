@@ -479,6 +479,26 @@ SM.camera = (function () {
       var lat = SM.vehicle.getLateralSpeed ? SM.vehicle.getLateralSpeed() : 0;
       tx = SM.vehicle.getX() * C.CAM_LATERAL_LEAD + lat * STEER_LEAD;
 
+      /* NEVER TRADE LANE FOR WALL.
+       * The lateral lead is worth 0.55 of the vehicle's x — up to 352 units at
+       * the lane edge — and the whole point of the lane fit above is that the
+       * viewport is only about 40 units wider than the lane. Unclamped, the
+       * lead therefore slides a third of the lane off one side of a portrait
+       * phone and replaces it with bedrock: the fit measures 106% of the lane
+       * VISIBLE but the player still cannot see both walls at once, which is
+       * the exact complaint the fit was supposed to answer.
+       *
+       * So the camera may lead laterally only as far as the SLACK it has —
+       * how much wider than the lane the view is. On a portrait phone that is
+       * ~40 units and the framing is effectively locked; on a desktop it is
+       * ~120 and the lead still reads. It is applied to the TARGET rather
+       * than to the smoothed position so the camera eases into the limit
+       * instead of hitting a wall. */
+      var laneSlack = (vpW * 0.5) / scale - C.LANE_HALF_WIDTH;
+      if (laneSlack < 0) laneSlack = 0;
+      if (tx > laneSlack) tx = laneSlack;
+      else if (tx < -laneSlack) tx = -laneSlack;
+
       // Base lead tracks the visible half-height, so the rig keeps its screen
       // position through every zoom change. On top of that, lead a little
       // further when going fast and while a route choice is coming up.

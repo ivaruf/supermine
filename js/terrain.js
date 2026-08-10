@@ -62,6 +62,31 @@ SM.terrain = (function () {
   var SPACING = 19.0;
   var SPACING_AUTHORED = 19.0;   // what the pickup sizes below were tuned at
   var DESPAWN_INTERVAL = 6;      // run the recycle sweep every N steps
+
+  /* DEPOSIT RADIUS vs GRID PITCH.
+   * At the authored pitch a deposit is ~9 units in radius against a 19-unit
+   * cell, so neighbours touch and overlap and the ground reads as PACKED
+   * rock. Widen the cell to 24.5 and leave the radius alone and the same
+   * material comes out as gravel scattered on soil — verified on a portrait
+   * screenshot, and it is the one genuinely ugly side-effect of the coarser
+   * grid.
+   *
+   * spawnSolid() takes a radius override, so we ask for radii scaled by the
+   * pitch: the deposits get chunkier in step with their spacing and the
+   * ground closes back up. It cannot close completely — particles.js
+   * quantises radius onto its baked sprite buckets and the top bucket is
+   * SPRITE_MAX_RADIUS (11), frozen because GRID_CELL is 23 and a diameter
+   * over that would break the 3x3 contact scan. So at pitch 24.5 the mean
+   * radius lands at ~10.8 instead of the 12.25 that would have deposits
+   * actually touching: coverage goes from 73% of the pitch back to 88%,
+   * against 95% on desktop. Chunky rather than packed, which is a fair
+   * description of what a coarse grid IS.
+   *
+   * The override deliberately draws from Math.random(), exactly as
+   * spawnSolid() does internally when you leave it off, so the generator's
+   * own deterministic stream is untouched and a desktop world (gain 1) comes
+   * out bit-identical to before this existed. */
+  var radMin = null, radSpan = null;   // per material, gain already applied
   var BG_TILE = 128;             // background noise tile size (px)
   var DEBRIS_RESERVE = 700;      // pool slots always kept free for live debris
 
@@ -643,7 +668,8 @@ SM.terrain = (function () {
 
         var mat = materialAt(px, py, depth, z);
         if (mat < 0) continue;
-        if (SM.particles.spawnSolid(px, py, mat) < 0) return true;  // pool empty
+        var rad = radMin[mat] + Math.random() * radSpan[mat];
+        if (SM.particles.spawnSolid(px, py, mat, rad) < 0) return true;  // pool empty
       }
     }
     return true;
@@ -678,6 +704,17 @@ SM.terrain = (function () {
     var k = sp / SPACING_AUTHORED;
     pickupRadius = PICKUP_RADIUS * k;
     pickupChamber = PICKUP_CHAMBER * k;
+
+    // Deposits grow with the cell they sit in — see the note by radMin.
+    var list = SM.materials.list;
+    if (!radMin || radMin.length !== list.length) {
+      radMin = new Float32Array(list.length);
+      radSpan = new Float32Array(list.length);
+    }
+    for (var i = 0; i < list.length; i++) {
+      radMin[i] = list[i].radius[0] * k;
+      radSpan[i] = (list[i].radius[1] - list[i].radius[0]) * k;
+    }
   }
 
   function init() {

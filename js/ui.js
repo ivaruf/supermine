@@ -98,7 +98,7 @@ SM.ui = (function () {
   /* The build stamp shown on the menu. It lives HERE rather than in
    * config.js because config.js is frozen, and ui.js is the only module that
    * ever displays it. Bump it by hand when the game meaningfully changes. */
-  var GAME_VERSION    = 'v1.4.0';
+  var GAME_VERSION    = 'v1.5.0';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -229,6 +229,13 @@ SM.ui = (function () {
     // riding the end of the sweep, so the direction of travel is unambiguous.
     restart: '<path d="M6.8 6.8A7.4 7.4 0 1 1 4.6 12"/>' +
              '<path d="M1.9 14.8 4.6 12.1 7.3 14.8"/>',
+
+    // Pit head rather than a house: this menu is where you pick a run, and a
+    // gabled roof next to a mining rig reads as somebody's cottage.
+    home: '<path d="M3.4 20.4h17.2"/>' +
+          '<path d="M12 3.6v7.2"/>' +
+          '<path d="M6.6 10.8h10.8v9.6H6.6z"/>' +
+          '<path d="m7.4 3.6 9.2 7.2M16.6 3.6 7.4 10.8"/>',
 
     sound_on: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
               '<path d="M15.7 9.2a3.9 3.9 0 0 1 0 5.6"/>' +
@@ -624,6 +631,12 @@ SM.ui = (function () {
       SM.sound.play('ui');
       SM.events.emit('input:restart', null);
     });
+    els.pauseMenuBtn = menuButton(pcard, '', UI_ICONS.home, 'MAIN MENU');
+    els.pauseMenuBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      els.pauseMenuBtn.blur();
+      returnToMenu();
+    });
 
     /* --- POWER-UP SPLASH (mid screen, above the machine) -----------------
      * The one thing on the HUD that is allowed into the middle of the screen,
@@ -1004,6 +1017,43 @@ SM.ui = (function () {
     if (SM.main.setPaused) SM.main.setPaused(false);
     if (els.pauseMenu) els.pauseMenu.classList.remove('sm-pause-on');
     if (root) root.classList.remove('sm-paused');
+  }
+
+  /**
+   * Pause menu -> the mode picker.
+   *
+   * The world is rebuilt first and then HELD, rather than left running behind
+   * the overlay: `started` is ui.js's own gate and main.js's `started` latches
+   * true on the very first gesture and never clears, so without the hold the
+   * fresh run would quietly drive off while the player was still choosing a
+   * mode. startRun() clears the hold for us, because it goes through
+   * SM.main.restart(), which unpauses on the way in.
+   */
+  function returnToMenu() {
+    if (!started) return;
+
+    // Close the card WITHOUT resuming — closePause() would unpause, and the
+    // run must stay frozen from here until a mode is picked.
+    pauseOpen = false;
+    padsRelease();                 // never leave the menu with a key held
+    if (els.pauseMenu) els.pauseMenu.classList.remove('sm-pause-on');
+    if (root) root.classList.remove('sm-paused');
+    SM.sound.play('ui');
+
+    // Rebuild the run so the menu sits over a fresh mine rather than the
+    // half-dug one that was just abandoned. This also clears the pause, which
+    // is why the hold below has to come after it.
+    SM.main.restart();
+
+    started = false;
+    if (root) root.classList.add('sm-menu');
+    if (els.start) els.start.classList.remove('sm-start-off');
+    if (els.hint) els.hint.classList.remove('sm-hint-fade');
+
+    // main.js only refuses a pause before the first gesture or after run:over,
+    // and neither applies here, so this is accepted. Rendering continues, so
+    // the fresh mine is still drawn behind the menu.
+    if (SM.main.setPaused) SM.main.setPaused(true);
   }
 
   function togglePause() {
