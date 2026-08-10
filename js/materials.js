@@ -52,6 +52,17 @@
  *                         economic one — obsidian is worth more per deposit than
  *                         gold, but you meet it as a wall to be survived rather
  *                         than a seam to be hunted, so it counts as spoil.
+ *
+ * !! `hardness` AND `value` ARE NOT WHAT YOU TYPED, ON EVERY DEVICE !!
+ *   camera.js may put the terrain generator on a coarser grid so a portrait
+ *   phone can show the whole lane (see its "LANE FIT vs TERRAIN DENSITY"
+ *   note). Fewer deposits per square unit have to be worth and weigh more, so
+ *   applyWorldDensity() rewrites both fields at load. The literals below are
+ *   preserved as `baseValue` / `baseHardness` and are the single source of
+ *   truth — AUTHOR against those, and expect `value` and `hardness` to read
+ *   back up to ~1.7x and ~1.3x higher on a phone. Everything downstream
+ *   (particles.js's flat cache, the haul tally, the events) sees the rewritten
+ *   numbers and needs no knowledge of any of this.
  * ========================================================================== */
 
 var SM = SM || {};

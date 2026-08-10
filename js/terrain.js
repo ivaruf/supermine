@@ -87,6 +87,7 @@ SM.terrain = (function () {
    * own deterministic stream is untouched and a desktop world (gain 1) comes
    * out bit-identical to before this existed. */
   var radMin = null, radSpan = null;   // per material, gain already applied
+
   var BG_TILE = 128;             // background noise tile size (px)
   var DEBRIS_RESERVE = 700;      // pool slots always kept free for live debris
 
@@ -133,8 +134,9 @@ SM.terrain = (function () {
   // is TIME_PER_PIECE seconds per collected FRAGMENT, so what has to be held
   // constant is the fragment count, and that is pi*r*r/SPACING^2. So the
   // radius scales with the pitch (syncDensity below) rather than the value:
-  // on a portrait phone the block is ~52 units across instead of 40, made of
+  // on a portrait phone the block is ~103 units across instead of 80, made of
   // the same ~15 chunkier deposits, and still pays the +5 SEC it advertises.
+  // It is a bigger thing to aim at on the screen that most needs it.
   var PICKUP_RADIUS = 40;
   // The block is carved into an excavated CHAMBER. Two jobs: it makes the
   // glow read against black instead of against dirt, so you spot one from the
