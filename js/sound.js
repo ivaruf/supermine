@@ -28,6 +28,12 @@
  *                                'complete' 'ui' 'timeplus' 'timelow' 'tick'
  *                                'timeout' 'boost'
  *   SM.sound.setMuted(b) / toggleMute() / isMuted()
+ *
+ * PAUSE
+ *   Subscribes to `game:paused` and ducks the engine and grinder BUSES to
+ *   zero, then back on resume. Those two are the only nodes in here that keep
+ *   sounding without update() feeding them, so that single hook is the whole
+ *   of it — see setPaused() for why it is not master that gets ducked.
  * ========================================================================== */
 
 var SM = SM || {};
@@ -76,6 +82,7 @@ SM.sound = (function () {
   var dead = false;              // audio permanently unavailable
 
   var muted = false;
+  var paused = false;
   var unlocked = false;
   var voices = 0;
 
@@ -707,6 +714,40 @@ SM.sound = (function () {
   function toggleMute() { setMuted(!muted); }
   function isMuted() { return muted; }
 
+  function rampBus(bus, value) {
+    if (!bus || !actx) return;
+    try { bus.gain.setTargetAtTime(value, actx.currentTime, 0.025); }
+    catch (e) { bus.gain.value = value; }
+  }
+
+  /**
+   * PAUSE — duck the SUSTAINED layers, leave the one-shots alone.
+   *
+   * The engine drone, the grinder and the overdrive layer are permanently
+   * running nodes whose gain is only ever moved by update() — and update()
+   * stops being called the instant main.js holds the step. Left alone they
+   * would hang on one frozen note under the pause menu, which is the loudest
+   * possible way to tell a player that nothing is really paused.
+   *
+   * Ducking the two BUSES instead of master is what keeps the menu audible:
+   * its own 'ui' blips still go out through sfxBus. odGain feeds engineBus, so
+   * the overdrive layer ducks along with the engine for free, and the rhythm
+   * grid needs nothing at all — it is one-shots fired from update(), so it
+   * simply stops arriving. Ramped rather than jumped for the same reason
+   * setMuted() ramps: a step change on a running graph clicks.
+   *
+   * The gains are not restored from update() on resume, so the ramp back has
+   * to happen here — which also means a resume works while muted (the beds
+   * come back to full on a master that is still at zero).
+   */
+  function setPaused(p) {
+    p = !!p;
+    if (p === paused) return;      // main.js emits on change, but say it here too
+    paused = p;
+    rampBus(engineBus, paused ? 0 : 1);
+    rampBus(grindBus, paused ? 0 : 1);
+  }
+
   function reset() {
     clock = 0;
     for (var k in lastPlayed) delete lastPlayed[k];
@@ -794,6 +835,7 @@ SM.sound = (function () {
     });
 
     SM.events.on('input:mutetoggle', function () { toggleMute(); });
+    SM.events.on('game:paused', function (p) { setPaused(p && p.paused); });
   }
 
   return {
@@ -804,6 +846,12 @@ SM.sound = (function () {
     toggleMute: toggleMute,
     isMuted: isMuted,
     reset: reset,
-    isReady: function () { return unlocked && !!actx; }
+    isReady: function () { return unlocked && !!actx; },
+    /** Introspection: the ducked bus levels, so "the beds actually stop" is a
+     *  measurement rather than a claim. -1 when there is no audio graph. */
+    getBedLevel: function () {
+      if (!engineBus || !grindBus) return -1;
+      return Math.max(engineBus.gain.value, grindBus.gain.value);
+    }
   };
 })();

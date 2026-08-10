@@ -11,25 +11,38 @@
  *   * chunky monospace numerals (tabular) so counters never reflow
  *   * THE CENTRE OF THE SCREEN STAYS EMPTY. Everything is pinned to an edge
  *     except the upgrade announcement (upper third) and the end-of-run card.
+ *     This matters more in portrait than it ever did in landscape: the camera
+ *     frames the whole 1280-unit lane, so the machine is small and the strip
+ *     of rock you are aiming at is the middle of the screen.
  *
- * TOP-EDGE BUDGET (this is a time attack — the clock outranks everything)
- *   left    stat panel        ~220px
- *   centre  COUNTDOWN         <=280px, then the progress gauge beneath it
- *   right   button cluster    ~170px
- *   The progress gauge is pushed down to y=96 so it sits UNDER the clock
- *   instead of fighting it for the centre.
- * LEFT EDGE
- *   the upgrade rail owns x=10..48; the zone banner is offset to x=58 so the
- *   two can never overlap, in any layout.
+ * THE TOP OF THE SCREEN, IN ORDER (portrait first — this is a phone game)
+ *   row 1   THE SCORE, one line, FULL WIDTH. It is the point of the game and
+ *           it reaches seven figures, so it gets the whole width instead of a
+ *           corner, and it SHRINKS rather than wrapping — see --sm-cur-len.
+ *   row 2   the COUNTDOWN, centred, with the zone name beneath it; and the
+ *           two icon buttons (sound, pause) pinned to the right of that row.
+ *   Both rows are placed off --sm-top-y / --sm-top-h, so re-tuning the strip
+ *   height on a breakpoint moves everything below it in one edit.
+ *
+ * SCREEN EDGES
+ *   left    upgrade rail (x=10..48), then the haul tally, bottom-anchored and
+ *           lifted clear of the steering pads' thumb zone
+ *   right   zone banner, icon buttons
+ *   bottom  the two meters (overdrive / speed boost), centred and narrow
+ *   left+right, full height: THE STEERING PADS. Transparent, and the only
+ *           thing besides the buttons and the overlays that takes a tap.
  *
  * #ui-root is pointer-events:none so drags pass through to the canvas; only
- * buttons and the start overlay opt back in.
+ * the buttons, the steering pads and the overlays opt back in. Anything that
+ * takes a tap is created AFTER the pads so it paints — and hit-tests — above.
  *
  * Class prefix convention: every UI class starts with `sm-`.
- * Layout switches: `.sm-compact` (<900px wide or <520px tall) and `.sm-tiny`
- * (<420px) are toggled from ui.js on resize — no JS-driven pixel maths.
- * In compact the progress gauge moves from the top centre to the bottom edge,
- * because the stat panel and the button cluster leave no room across the top.
+ * Layout switches, all toggled from ui.js on resize, no JS pixel maths:
+ *   `.sm-compact`  <900px wide or <520px tall
+ *   `.sm-tiny`     <420px wide
+ *   `.sm-portrait` taller than it is wide — NOT a synonym for compact: a
+ *                  tablet upright is portrait but roomy, a phone on its side
+ *                  is compact but has no vertical room at all.
  * ========================================================================== */
 
 :root {
@@ -65,6 +78,27 @@
       #f0b31b 0 8px,
       #171512 8px 16px
   );
+
+  /* --- LAYOUT METRICS ---------------------------------------------------
+   * The whole top of the HUD is placed off these two, so a breakpoint that
+   * wants a shorter score strip moves the clock, the buttons and the upgrade
+   * rail with one declaration instead of five.
+   *
+   * They are declared on :root rather than on #ui-root deliberately — the
+   * layout classes (.sm-compact etc.) live ON #ui-root, and a class selector
+   * cannot outrank an #id one. Defaults up here, overrides on the class.
+   * ------------------------------------------------------------------- */
+  --sm-top-y:      8px;      /* inset of the score strip from the top edge */
+  --sm-top-h:     48px;      /* its height — ONE LINE, never two */
+  --sm-gutter:    10px;      /* side inset shared by the strip and buttons  */
+  --sm-btn-size:  42px;      /* icon button plate, 44px touch box in CSS    */
+
+  /* Score shrink-to-fit. ui.js publishes only --sm-cur-len (the character
+     count); the arithmetic is here. --sm-cur-chrome is the width the strip's
+     own furniture eats (padding, the ◆, the multiplier chip). */
+  --sm-cur-max:    36px;
+  --sm-cur-vw:      5vw;
+  --sm-cur-chrome: 300px;
 }
 
 * { box-sizing: border-box; }
@@ -136,33 +170,84 @@ html, body {
 }
 
 /* ===========================================================================
- * STATS (top-left)
+ * TOP STRIP — THE SCORE, one line, full width
+ * ---------------------------------------------------------------------------
+ * This used to be a 208px panel in the top-left corner with the score, three
+ * stat chips and the multiplier stacked inside it. On a phone that put the
+ * one number the game is about in the smallest box on the screen, and a
+ * seven-figure haul broke onto a second line.
+ *
+ * Now it is a single full-width plate exactly one line tall. The score is
+ * absolutely centred inside it so the chips at either end can appear and
+ * disappear per breakpoint without ever shifting the number.
  * ======================================================================== */
-.sm-stats {
+.sm-topbar {
   position: absolute;
-  top: 12px;
-  left: 12px;
-  padding: 12px 14px 11px;
-  min-width: 208px;
+  top: var(--sm-top-y);
+  left: var(--sm-gutter);
+  right: var(--sm-gutter);
+  height: var(--sm-top-h);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  /* No backdrop blur here. The plate is now as wide as the screen, and
+     blurring a full-width strip at DPR 3 is real fill rate spent on an effect
+     nobody can see against dark rock. The gradient carries the metal alone. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  /* ABOVE the clock column (6). The "+10 s" float flies UP out of the clock
+     and, now that the score sits where it used to fly into, would land on top
+     of the one number that must always be readable. Putting the plate over it
+     turns that collision into the right gesture: the reward rises and slides
+     away UNDER the deck plate. */
+  z-index: 7;
 }
 
+/* The slot centres; the group inside it is what the payout pop scales. Two
+   elements, so the animation's transform can never fight the centring one. */
+.sm-currency-slot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 24px);
+}
 .sm-currency {
   display: flex;
-  align-items: baseline;
-  gap: 9px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28em;
   line-height: 1;
-  transform-origin: left center;
+  white-space: nowrap;
+  transform-origin: center center;
+  /* SHRINK-TO-FIT, NO MEASURING.
+     ui.js writes the character count into --sm-cur-len on this element (about
+     ten times in a run — once per digit gained). The width available is the
+     viewport minus the strip's own furniture; dividing it by the character
+     count, plus two characters' worth of slack for the ◆ and its gap, is the
+     largest size that is guaranteed to fit on ONE line. The plain declaration
+     above it is the fallback for engines that will not divide by a var() —
+     its vw terms are already safe past fifteen characters.
+     The size lives on the GROUP, not on the digits, so the ◆ can be sized in
+     `em` and ride the number instead of being pinned to the root font. */
+  font-size: min(var(--sm-cur-max), var(--sm-cur-vw));
+  font-size: min(var(--sm-cur-max), var(--sm-cur-vw),
+                 calc((100vw - var(--sm-cur-chrome)) /
+                      ((var(--sm-cur-len, 9) + 2) * 0.62)));
 }
 .sm-ico {
   color: var(--sm-gold);
-  font-size: 19px;
+  font-size: 0.58em;                 /* rides the score, whatever size it is */
   text-shadow: 0 0 14px rgba(255, 194, 31, 0.8);
 }
 .sm-currency-val {
   font-family: var(--sm-mono);
-  font-size: 32px;
+  font-size: 1em;
   font-weight: 800;
+  line-height: 1;
   letter-spacing: -0.5px;
+  white-space: nowrap;
   color: var(--sm-gold);
   text-shadow:
     0 0 22px rgba(255, 194, 31, 0.45),
@@ -180,10 +265,12 @@ html, body {
 
 .sm-statrow {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  margin-top: 10px;
 }
+/* Pinned to the right END of the strip, not to the chips: compact hides the
+   chips entirely and the multiplier must not slide left when it does. */
+.sm-stat-mult { margin-left: auto; }
 .sm-stat {
   font-family: var(--sm-mono);
   font-size: 11px;
@@ -214,19 +301,41 @@ html, body {
 .sm-flash { animation: sm-flash-kf 0.42s ease-out; }
 
 /* ===========================================================================
- * COUNTDOWN (top-centre) — the thing the player watches
- * The wrapper is the positioned element so the "+10s" float can escape the
- * panel, which clips its overflow. The alarm animation lives on .sm-clock and
- * the gain kick on .sm-clock-inner, so the two never fight over `transform`.
+ * CENTRED COLUMN — countdown, then the zone line
+ * ---------------------------------------------------------------------------
+ * A flex column rather than two absolutely-placed blocks, because FREESTYLE
+ * deletes the clock entirely (.sm-notimer). In a column the zone line simply
+ * rises into the gap; with fixed offsets there would be a hole where the
+ * countdown used to be, on the one mode that never has a countdown.
  * ======================================================================== */
-.sm-clockwrap {
+.sm-center {
   position: absolute;
-  top: 8px;
+  top: calc(var(--sm-top-y) + var(--sm-top-h) + 7px);
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
-  max-width: min(280px, 34vw);
+  /* NEVER wide enough to reach the button cluster on either side. The column
+     is centred and the buttons are pinned right, so the widest it may ever be
+     is the viewport less TWO button clusters — measured off the same
+     variables the buttons themselves use, so it cannot drift out of step.
+     What makes this necessary is the zone line: "THE MOTHERLODE  CORE
+     +1 250 m" is 219px of text, which on a 360px phone ran straight into the
+     sound button. Bounded here, it wraps onto a second line instead. */
+  max-width: calc(100vw - 2 * (var(--sm-gutter) + var(--sm-btn-size) * 2 + 14px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
   z-index: 6;
+  pointer-events: none;
+}
+
+/* The wrapper is the positioned element so the "+10s" float can escape the
+   panel, which clips its overflow. The alarm animation lives on .sm-clock and
+   the gain kick on .sm-clock-inner, so the two never fight over `transform`. */
+.sm-clockwrap {
+  position: relative;
+  width: max-content;
   pointer-events: none;
 }
 
@@ -351,129 +460,87 @@ html, body {
 }
 
 /* ===========================================================================
- * PROGRESS (top-centre, under the clock)
+ * ZONE LINE (under the clock) — all that is left of the progress gauge
+ * ---------------------------------------------------------------------------
+ * The gauge itself is gone: a percentage through the map is not a decision
+ * anybody makes at speed, and on a phone it was the widest element on screen.
+ * Two things in it were worth keeping and both live on this one 13px line —
+ * the zone NAME, which is the only persistent "where am I" the HUD has, and
+ * the CORE counter, which past 100% is where the score is actually earned.
  * ======================================================================== */
-.sm-progwrap {
-  position: absolute;
-  top: 98px;                   /* clears the clock panel + its alarm scale */
-  left: 50%;
-  transform: translateX(-50%);
-  /* Width is derived from the space LEFT OVER by the stat panel (~300px) and
-     the button cluster (~190px) so the three top elements can never collide
-     on a narrow desktop window. Below `.sm-compact` the bar moves to the
-     bottom edge instead, where there is always room. */
-  width: clamp(200px, calc(100vw - 700px), 420px);
+/* Wraps rather than overflows: on a narrow phone in the core the name and the
+   CORE counter are two lines, not one line halfway under the pause button.
+   min-height keeps the 13px slot reserved so nothing twitches when a zone
+   name arrives. */
+.sm-zoneline {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px 9px;
+  min-height: 13px;
+  max-width: 100%;
+  white-space: nowrap;
 }
-
-/* No countdown module loaded: ui.js hides the clock and the gauge moves back
-   up. Declared BEFORE the compact block so compact still wins. */
-.sm-notimer .sm-progwrap { top: 14px; }
-
 .sm-zonelabel {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--sm-mono);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 2.4px;
   color: var(--sm-cyan);
   text-shadow: 0 0 12px rgba(102, 226, 255, 0.55), 0 1px 2px #000;
-  height: 12px;
-  white-space: nowrap;
-}
-
-.sm-progress {
-  position: relative;
-  width: 100%;
-  height: 15px;
-  background: linear-gradient(180deg, #05070a, #10141a);
-  border: 1px solid var(--sm-border);
-  border-radius: 3px;
-  overflow: hidden;
-  box-shadow:
-    inset 0 2px 4px rgba(0,0,0,0.9),
-    0 1px 0 rgba(255,255,255,0.07);
-}
-.sm-progress-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(180deg, #b8f6ff 0%, var(--sm-cyan) 38%, #1e93c9 100%);
-  box-shadow: 0 0 16px rgba(102, 226, 255, 0.75);
-  transition: width 0.12s linear;
-}
-/* rivet ticks so the bar reads as a machined gauge */
-.sm-progress-notches {
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-      90deg,
-      rgba(0,0,0,0) 0 calc(10% - 1px),
-      rgba(0,0,0,0.55) calc(10% - 1px) 10%
-  );
-  pointer-events: none;
-}
-.sm-progress-text {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--sm-mono);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 1.4px;
-  color: rgba(255, 255, 255, 0.95);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
-  font-variant-numeric: tabular-nums;
-}
-
-.sm-depth {
-  font-family: var(--sm-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.6px;
-  color: var(--sm-dimmer);
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 2px #000;
 }
 
 /* --- OVERTIME: past 100%, still digging ---------------------------------
- * The map is finished but the run is not, so the gauge stops being a
- * progress bar and becomes a trophy: full, gold, breathing. Cyan is the
- * colour of "how far through are you", and that question no longer has an
+ * Cyan is the colour of "how far through are you", and that question has no
  * answer down here — gold is the colour of "this is worth money", which is
- * the only thing the core is about. */
-.sm-prog-core .sm-progress {
-  border-color: rgba(255, 194, 31, 0.55);
-  box-shadow:
-    inset 0 2px 4px rgba(0,0,0,0.9),
-    0 0 16px rgba(255, 194, 31, 0.35);
-}
-.sm-prog-core .sm-progress-fill {
-  background: linear-gradient(180deg, var(--sm-gold-hot) 0%, var(--sm-gold) 42%, #b87a06 100%);
-  box-shadow: 0 0 20px rgba(255, 194, 31, 0.9);
+ * the only thing the core is about. Hidden until there IS overtime, so the
+ * line is just the zone name for the first three minutes of a run. */
+.sm-zonecore {
+  display: none;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  color: var(--sm-gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 14px rgba(255, 194, 31, 0.7), 0 1px 2px #000;
   animation: sm-core-breathe 1.6s ease-in-out infinite;
 }
-.sm-prog-core .sm-progress-text {
-  color: #1a1206;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
-}
-.sm-prog-core .sm-zonelabel {
+.sm-zone-core .sm-zonecore { display: block; }
+.sm-zone-core .sm-zonelabel {
   color: var(--sm-gold);
   text-shadow: 0 0 12px rgba(255, 194, 31, 0.6), 0 1px 2px #000;
 }
 @keyframes sm-core-breathe { 50% { filter: brightness(1.35); } }
 
 /* ===========================================================================
- * OVERDRIVE BAR (under the progress bar, hidden by default)
+ * METERS (bottom centre) — overdrive + speed boost, hidden by default
+ * ---------------------------------------------------------------------------
+ * These used to hang off the bottom of the progress gauge. They cannot follow
+ * the zone line under the clock: on a phone in landscape the top cluster is
+ * already a third of the screen, and two more bars would push the upgrade
+ * announcement into the middle of it. They are countdowns on a state you can
+ * already SEE (effects.js grades the whole screen for overdrive), so the
+ * bottom edge is the honest place for them — narrow, centred, between the
+ * two steering pads, and invisible unless something is actually running.
  * ======================================================================== */
+.sm-meters {
+  position: absolute;
+  left: 50%;
+  bottom: max(12px, 2.4vh);
+  transform: translateX(-50%);
+  width: min(230px, 52vw);
+  pointer-events: none;
+}
 .sm-od {
   width: 100%;
   margin-top: 3px;
   opacity: 0;
-  transform: translateY(-6px);
+  transform: translateY(6px);
   transition: opacity 0.18s ease, transform 0.18s ease;
   pointer-events: none;
 }
@@ -506,17 +573,27 @@ html, body {
 }
 
 /* ===========================================================================
- * BUTTONS (top-right)
+ * BUTTONS
+ * ---------------------------------------------------------------------------
+ * The in-game pair sits on the same row as the countdown, at the right end,
+ * and they are ICONS now. Two reasons: a word needs ~74px of plate on a
+ * screen that is 360px wide, and RESTART-as-a-word was one mis-tap away from
+ * throwing a run in the bin. Restart now lives inside the pause menu, which
+ * is a far better place to be asked than a confirm dialog would be.
  * ======================================================================== */
 .sm-buttons {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: calc(var(--sm-top-y) + var(--sm-top-h) + 7px);
+  right: var(--sm-gutter);
   display: flex;
   gap: 8px;
   pointer-events: auto;
+  /* Above the steering pads, which are full height and pass under here. The
+     topmost hit target wins, so a tap on a button is never a steer. */
+  z-index: 8;
 }
 .sm-btn {
+  position: relative;
   font-family: var(--sm-mono);
   font-size: 11px;
   font-weight: 800;
@@ -549,11 +626,6 @@ html, body {
   border-color: rgba(196, 246, 255, 0.5);
   text-shadow: 0 1px 0 rgba(255,255,255,0.35);
 }
-.sm-btn-off { color: var(--sm-dimmer); }
-.sm-btn-off::after {
-  content: '';
-  position: absolute;
-}
 .sm-btn-big {
   font-size: 14px;
   letter-spacing: 2.4px;
@@ -563,14 +635,195 @@ html, body {
   width: 100%;
 }
 
+/* --- the icon plate ---------------------------------------------------
+ * Square, gold-on-dark, with the same hazard sliver the panels wear welded
+ * to its top edge — that stripe is what says "machinery" everywhere else in
+ * the game, and it is what keeps a 42px button from reading as a generic
+ * mobile chrome control. */
+.sm-iconbtn {
+  width: var(--sm-btn-size);
+  height: var(--sm-btn-size);
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  overflow: hidden;
+  color: var(--sm-gold);
+}
+.sm-iconbtn::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--sm-hazard);
+  opacity: 0.8;
+}
+.sm-btn-svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  filter: drop-shadow(0 0 7px rgba(255, 194, 31, 0.5));
+}
+/* Muted: the same speaker, greyed and unlit. The glyph itself changes too
+   (ui.js swaps in the crossed-out one) — colour alone is not a state. */
+.sm-iconbtn.sm-btn-off { color: var(--sm-dimmer); }
+.sm-iconbtn.sm-btn-off .sm-btn-svg { filter: none; }
+.sm-iconbtn.sm-btn-off::before { opacity: 0.35; }
+
+/* ===========================================================================
+ * PAUSE MENU
+ * ---------------------------------------------------------------------------
+ * Deliberately small and quick. It is not a settings screen; it is the two
+ * things you can do with a run that is currently stopped.
+ * ======================================================================== */
+.sm-pause {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(4,6,9,0.55), rgba(2,3,5,0.9));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  /* Above the summary (15) so a pause can never open behind an end screen,
+     below the start overlay (20) which owns the screen outright. */
+  z-index: 16;
+}
+.sm-pause-on { opacity: 1; pointer-events: auto; }
+
+.sm-pause-card {
+  width: min(320px, 82vw);
+  padding: 22px 22px 20px;
+  text-align: center;
+  transform: translateY(14px) scale(0.97);
+  transition: transform 0.3s cubic-bezier(0.16, 1.5, 0.35, 1);
+}
+.sm-pause-on .sm-pause-card { transform: none; }
+
+.sm-pause-kicker {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 5px;
+  text-indent: 5px;
+  color: var(--sm-dimmer);
+}
+.sm-pause-title {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  text-indent: 6px;
+  line-height: 1.1;
+  margin-bottom: 16px;
+  color: #fff;
+  text-shadow: 0 0 26px rgba(255, 194, 31, 0.4), 0 3px 0 rgba(0, 0, 0, 0.6);
+}
+/* NO `pointer-events: auto` HERE, and this is not an oversight.
+   The overlay is inset:0 and only opacity-0 while closed, so a child that
+   opts back into hit-testing on its own is a full-size invisible button
+   sitting in the dead centre of the screen — which is exactly where a
+   desktop player puts the mouse down to drag-steer. Interactivity is
+   inherited from .sm-pause-on instead, so it exists only while the menu
+   does. (Same trap caught the high-score field below.) */
+.sm-pause-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  margin-top: 9px;
+}
+.sm-pause-ico { display: block; width: 17px; height: 17px; }
+.sm-pause-ico .sm-btn-svg { width: 100%; height: 100%; filter: none; }
+.sm-pause-label { line-height: 1; }
+
+/* A frozen run must LOOK frozen. main.js holds the fixed step but CSS
+   animations are not part of it, so without this the clock keeps throbbing
+   red and the OVERDRIVE label keeps blinking behind the menu — which reads
+   as "the timer is still running", the one thing a pause has to disprove. */
+.sm-paused .sm-clock-urgent,
+.sm-paused .sm-od-label,
+.sm-paused .sm-zonecore,
+.sm-paused .sm-banner-final .sm-banner-text { animation: none; }
+
+/* ===========================================================================
+ * STEERING PADS (left + right, full height, transparent)
+ * ---------------------------------------------------------------------------
+ * Drag-steering is a laptop gesture. Held one-handed, a drag puts your thumb
+ * in the middle of the screen — over the rock you are steering through — and
+ * has no resting position. Two edge pads have both: your thumb is already
+ * there, and the middle stays clear.
+ *
+ * They are TRANSPARENT on purpose. The chevrons are the only paint, they sit
+ * low where the thumb is, and they light up while held so the control still
+ * confirms itself. A solid button here would cover a fifth of the mine.
+ *
+ * Enabled by LAYOUT, not by sniffing: any compact viewport, anything taller
+ * than it is wide, and anything with a coarse pointer. A mouse desktop never
+ * gets them, so full-screen drag-steering there is completely untouched.
+ * ======================================================================== */
+.sm-pads {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+}
+.sm-compact .sm-pads,
+.sm-portrait .sm-pads { display: block; }
+@media (hover: none) and (pointer: coarse) {
+  .sm-pads { display: block; }
+}
+
+.sm-pad {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: clamp(76px, 27vw, 230px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.17);
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.sm-pad-left  { left: 0; }
+.sm-pad-right { right: 0; }
+.sm-pad-svg {
+  display: block;
+  width: 30px;
+  height: 30px;
+  /* Low, in the thumb zone, and clear of the haul tally above it. */
+  margin-bottom: max(16px, 3.6vh);
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.9));
+}
+.sm-pad-on { color: var(--sm-cyan-hot); }
+.sm-pad-left.sm-pad-on {
+  background: linear-gradient(90deg, rgba(102, 226, 255, 0.17), rgba(102, 226, 255, 0) 78%);
+}
+.sm-pad-right.sm-pad-on {
+  background: linear-gradient(270deg, rgba(102, 226, 255, 0.17), rgba(102, 226, 255, 0) 78%);
+}
+
 /* ===========================================================================
  * UPGRADE ANNOUNCEMENT (upper third — never the dead centre)
  * ======================================================================== */
 .sm-toast {
   position: absolute;
-  /* The top cluster is taller now (clock + gauge ~168px). On a short desktop
-     window a flat 21% would land the announcement on top of the gauge. */
-  top: max(21%, 186px);
+  /* Below the whole top cluster (strip + clock + zone line ~= 190px). On a
+     short desktop window a flat percentage would land it on the clock. */
+  top: max(21%, 200px);
   left: 50%;
   width: min(760px, 88vw);
   transform: translate(-50%, -18px) scale(0.9);
@@ -737,7 +990,8 @@ html, body {
 .sm-rail {
   position: absolute;
   left: 10px;
-  top: 116px;
+  /* Clears the score strip, and moves with it when a breakpoint shortens it. */
+  top: calc(var(--sm-top-y) + var(--sm-top-h) + 14px);
   /* Reserves the bottom of the left edge for the haul tally (11 rows of 18px
      + head + its 46px bottom offset ~= 268px). A long run wraps into a second
      column instead of running down into the tally. */
@@ -962,6 +1216,12 @@ html, body {
   width: min(560px, 92vw);
   max-height: 92vh;
   overflow: auto;
+  /* <body> sets touch-action:none so a drag steers instead of scrolling the
+     page. That also killed touch scrolling INSIDE this card — which on a
+     phone put RUN IT AGAIN below the fold with no way to reach it. Re-arming
+     vertical panning here is scoped to the card and cannot leak back out to
+     the canvas. */
+  touch-action: pan-y;
   padding: 26px 28px 24px;
   background: var(--sm-panel);
   border: 1px solid var(--sm-border);
@@ -1212,9 +1472,6 @@ html, body {
 .sm-hs-input {
   flex: 1 1 auto;
   min-width: 0;
-  /* The overlay opts back into pointer events, but be explicit: this is the
-     one text field in the whole game and it must never be un-clickable. */
-  pointer-events: auto;
   -webkit-user-select: text;
   user-select: text;
   font-family: var(--sm-mono);
@@ -1237,10 +1494,19 @@ html, body {
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 0 2px rgba(255, 194, 31, 0.28);
 }
 .sm-hs-save {
-  pointer-events: auto;
   min-width: 88px;
   margin: 0;
 }
+
+/* This is the one text field in the whole game and it must never be
+   un-clickable — but ONLY while the card it lives on is up. Scoped, because
+   .sm-summary is inset:0 and merely opacity-0 when closed: an unscoped
+   `pointer-events: auto` in here is an invisible input field parked in the
+   middle of the mine, swallowing the mouse-down that starts a drag-steer.
+   That was a real bug; it cost desktop drag-steering the centre of the
+   screen and nothing about it was visible. */
+.sm-summary-on .sm-hs-input,
+.sm-summary-on .sm-hs-save { pointer-events: auto; }
 
 .sm-hs-rows {
   margin-top: 10px;
@@ -1320,6 +1586,7 @@ html, body {
   padding: 30px 26px;
   text-align: center;
   overflow: auto;
+  touch-action: pan-y;          /* see .sm-card — same trap, same fix */
 }
 /* A flex column with a max-height SHRINKS its children when the content is
    too tall — on a 390x740 phone that squashed the mode cards to 30px instead
@@ -1391,7 +1658,10 @@ html, body {
     inset 0 -3px 0 var(--sm-edge-lo),
     0 14px 34px rgba(0,0,0,0.7);
   cursor: pointer;
-  pointer-events: auto;
+  /* Interactivity inherits from .sm-start and stops with .sm-start-off — see
+     the note on .sm-pause-btn. A dismissed menu is opacity-0, not gone, so an
+     unscoped `pointer-events: auto` here leaves two invisible mode cards
+     parked over the middle of the mine for the rest of the session. */
   overflow: hidden;
   transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
@@ -1475,11 +1745,24 @@ html, body {
   border-color: rgba(182, 255, 226, 0.6);
 }
 
+/* Two control lines, one shown at a time: a phone player has no keyboard to
+   be told about, and a desktop player has no steering pads to find. The swap
+   follows the same rule the pads themselves use. */
 .sm-start-keys {
   font-family: var(--sm-mono);
   font-size: 10px;
+  line-height: 1.6;
   letter-spacing: 1.6px;
   color: var(--sm-dimmer);
+}
+.sm-keys-touch { display: none; }
+.sm-compact .sm-keys-desk,
+.sm-portrait .sm-keys-desk { display: none; }
+.sm-compact .sm-keys-touch,
+.sm-portrait .sm-keys-touch { display: block; }
+@media (hover: none) and (pointer: coarse) {
+  .sm-keys-desk  { display: none; }
+  .sm-keys-touch { display: block; }
 }
 
 /* Build stamp, pinned to the overlay rather than the panel so it cannot be
@@ -1498,31 +1781,16 @@ html, body {
   color: rgba(255,255,255,0.22);
 }
 
-/* Freestyle: no countdown panel at all, and the gauge takes the top slot. */
+/* Freestyle: no countdown panel at all. The centred column closes the gap by
+   itself — that is the whole reason it is a flex column. */
 .sm-notimer .sm-clockwrap { display: none; }
 
 /* While the menu is up it is the only thing on screen. */
 .sm-menu .sm-hint { display: none; }
-
-/* Portrait phone only (toggled by applyCompact). The lane is 1280 world units
-   wide and the camera can only zoom out so far before terrain streaming runs
-   past the particle pool, so portrait tops out near half the field — landscape
-   shows all of it. Advertised on the menu, where rotating is free. */
-.sm-rotate { display: none; }
-.sm-rotate-hint .sm-rotate {
-  display: block;
-  font-family: var(--sm-mono);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 1.8px;
-  line-height: 1.5;
-  color: #ffe2a8;
-  background: rgba(255, 194, 31, 0.10);
-  border: 1px solid rgba(255, 194, 31, 0.42);
-  border-radius: 4px;
-  padding: 9px 14px;
-  text-shadow: 0 0 12px rgba(255, 194, 31, 0.5);
-}
+/* ...and the steering pads must not eat the mode cards' taps behind it. The
+   overlay is pointer-events:auto and paints above them, so this is belt and
+   braces — but a pad that swallowed a START tap would be unplayable. */
+.sm-menu .sm-pads { display: none; }
 
 /* --- opt-in update button (menu only) ---------------------------------
    Hidden unless a new build is precached and waiting. Deliberately reads as
@@ -1541,7 +1809,7 @@ html, body {
   border: 1px solid rgba(182, 255, 226, 0.7);
   border-radius: 4px;
   cursor: pointer;
-  pointer-events: auto;
+  /* Inherits from .sm-start; see .sm-mode. */
   box-shadow: 0 0 22px rgba(88, 224, 138, 0.45), inset 0 1px 0 rgba(255,255,255,0.4);
   transition: transform 0.15s ease, filter 0.15s ease;
 }
@@ -1603,17 +1871,24 @@ html, body {
 }
 
 /* ===========================================================================
- * COMPACT / TINY LAYOUTS — toggled from ui.js, no pixel maths in JS
+ * COMPACT / TINY / PORTRAIT LAYOUTS — toggled from ui.js, no pixel maths in JS
+ * Order matters: compact first, portrait after it (a phone is both, and the
+ * portrait rules are the more specific intent), tiny last.
  * ======================================================================== */
-.sm-compact .sm-stats { min-width: 0; padding: 9px 10px 8px; top: 8px; left: 8px; max-width: 40vw; }
-.sm-compact .sm-currency-val { font-size: 23px; }
-.sm-compact .sm-ico { font-size: 15px; }
+.sm-compact {
+  --sm-top-y: 6px;
+  --sm-top-h: 38px;
+  --sm-gutter: 7px;
+  --sm-btn-size: 38px;
+  --sm-cur-max: 30px;
+  --sm-cur-vw: 7.6vw;
+  --sm-cur-chrome: 130px;
+}
 /* THE TOP-STRIP BUDGET IS THE WHOLE ARGUMENT HERE.
-   At 500px wide there is room for exactly three things across the top:
-   the haul, the CLOCK and the buttons. The PWR / CUT / MAG chips are what
-   gives, because the upgrade rail down the left edge now says what is
-   installed far better than three numbers did. The multiplier chip stays —
-   nothing else reports it. */
+   The strip is one line tall and the score owns the middle of it. The
+   PWR / CUT / MAG chips are what gives, because the upgrade rail down the
+   left edge says what is installed far better than three numbers did. The
+   multiplier chip stays — nothing else reports it. */
 .sm-compact .sm-stat { display: none; }
 .sm-compact .sm-stat-mult {
   display: block;
@@ -1621,16 +1896,7 @@ html, body {
   padding: 3px 5px;
   letter-spacing: 0.3px;
 }
-/* No room across the top on a small screen: dock the gauge to the bottom.
-   The CLOCK stays at the top centre in every layout — it is the one readout
-   that must never move, and the top strip between the two shrunken corner
-   clusters is the only place guaranteed to be free. */
-.sm-compact .sm-progwrap {
-  top: auto;
-  bottom: 12px;
-  width: clamp(200px, 74vw, 380px);
-}
-.sm-compact .sm-clockwrap { top: 6px; max-width: 32vw; }
+.sm-compact .sm-topbar { padding: 0 9px; }
 .sm-compact .sm-clock { padding: 5px 12px 7px; min-width: 114px; }
 .sm-compact .sm-clock-label { font-size: 8px; letter-spacing: 3px; text-indent: 3px; }
 .sm-compact .sm-clock-digits { font-size: 27px; height: 29px; line-height: 29px; }
@@ -1638,25 +1904,26 @@ html, body {
 .sm-compact .sm-clock-bar { margin-top: 5px; height: 4px; }
 .sm-compact .sm-clock-gain { font-size: 21px; }
 
-/* The rail starts below the shrunken stat panel AND below the debug line
-   (which compact moves to top:96), and uses smaller tiles. */
+/* The rail starts below the score strip and uses smaller tiles. Its ceiling
+   has to leave room for the haul tally underneath it — otherwise a long run
+   wraps a second column straight down into the tally. */
 .sm-compact .sm-rail {
   left: 7px;
-  top: 114px;
   gap: 5px;
-  /* Compact docks the progress gauge to the bottom edge AND keeps the haul
-     tally above it, so the rail has to stop short of both — otherwise a long
-     run wraps a column straight down into them. */
-  max-height: calc(100vh - 330px);
+  max-height: calc(100vh - 300px);
 }
 
-/* Compact lifts the tally clear of the bottom-docked progress gauge, narrows
-   it, and shows ORES ONLY. On a short screen eleven rows is most of the left
-   edge, and dirt/stone/rubble are the lines nobody is reading mid-run.
+/* THE TALLY IS LIFTED OFF THE BOTTOM EDGE, and this is what "move HAUL up to
+   make room for the buttons" means: the steering pads are full height, so the
+   bottom-left corner now belongs to the left pad's chevron. The tally sits
+   above it — it is pointer-events:none either way, so this is purely about
+   not printing the haul on top of a control.
+   It also narrows and shows ORES ONLY: on a short screen eleven rows is most
+   of the left edge, and dirt/stone/rubble are the lines nobody reads mid-run.
    !important because updateTally() clears the inline display on reveal. */
 .sm-compact .sm-tally {
   left: 7px;
-  bottom: 78px;
+  bottom: max(96px, 15vh);
   width: 96px;
   gap: 1px;
 }
@@ -1671,13 +1938,20 @@ html, body {
 .sm-compact .sm-rail-lv {
   min-width: 13px; height: 13px; line-height: 13px; font-size: 9px; right: -3px; bottom: -3px;
 }
-.sm-compact .sm-debug { bottom: auto; top: 96px; }
-.sm-compact .sm-progress { height: 12px; }
-.sm-compact .sm-zonelabel { font-size: 9px; letter-spacing: 1.6px; }
-.sm-compact .sm-buttons { top: 8px; right: 8px; gap: 6px; }
-.sm-compact .sm-btn { min-width: 62px; padding: 9px 10px; font-size: 10px; letter-spacing: 1px; }
+/* fps and particle counts printed across the middle of a phone screen is a
+   development readout on a device with no keyboard to turn it off. */
+.sm-compact .sm-debug { display: none; }
+.sm-compact .sm-zonelabel,
+.sm-compact .sm-zonecore { font-size: 9px; letter-spacing: 1.6px; }
+.sm-compact .sm-buttons { gap: 6px; }
+/* :not() because an icon plate is sized by --sm-btn-size, and a min-width
+   meant for a word would stretch it into a rectangle. */
+.sm-compact .sm-btn:not(.sm-iconbtn) { min-width: 62px; padding: 9px 10px; font-size: 10px; letter-spacing: 1px; }
+.sm-compact .sm-btn-svg { width: 18px; height: 18px; }
 .sm-compact .sm-hint { display: none; }
-.sm-compact .sm-toast { top: 25%; }
+/* The whole top cluster is ~135px on a phone in landscape, so the percentage
+   alone is not enough — the floor is what keeps the announcement off it. */
+.sm-compact .sm-toast { top: max(25%, 148px); }
 .sm-compact .sm-banner { top: 62%; }
 /* The toast drops to 25% in compact, so the splash drops with it to keep the
    same clear gap between the two when both happen to be up. */
@@ -1685,7 +1959,8 @@ html, body {
 .sm-compact .sm-splash-sub { letter-spacing: 3px; text-indent: 3px; }
 .sm-compact .sm-card { padding: 18px 18px 16px; }
 .sm-compact .sm-cell-value { font-size: 17px; }
-.sm-compact .sm-start-keys { display: none; }
+.sm-compact .sm-pause-card { padding: 18px 18px 16px; }
+.sm-compact .sm-pause-title { font-size: 28px; letter-spacing: 4px; text-indent: 4px; }
 /* Compact can be short-and-wide (1280x600) as well as narrow, so this only
    tightens the rhythm — the side-by-side/stacked decision is a width call and
    lives in the media query below. */
@@ -1698,20 +1973,35 @@ html, body {
 .sm-compact .sm-hs-row { font-size: 11px; padding: 4px 7px; gap: 7px; }
 .sm-compact .sm-score { padding: 8px 11px 9px; }
 
+/* ---------------------------------------------------------------------------
+ * PORTRAIT — the shape the game is designed for.
+ * Taller than it is wide, phone or tablet. The screen is narrow and long, the
+ * camera frames the entire 1280-unit lane, and the machine is small: the HUD's
+ * whole job here is to stay out of the vertical middle and off the thumbs.
+ * ------------------------------------------------------------------------ */
+.sm-portrait .sm-tally { bottom: max(104px, 15vh); }
+/* A tall screen has room to push the announcement further from the clock. */
+.sm-portrait .sm-toast { top: max(26%, 190px); }
+.sm-portrait .sm-banner { top: 58%; }
+/* Portrait tablets are NOT compact, but they are still held in two hands and
+   still want the readouts small enough to leave the mine visible. */
+.sm-portrait .sm-debug { display: none; }
+
 /* At 390px the tagline's 6px tracking pushes it onto a second line, orphaning
    "DEEPER." under the centre. Tighten it just enough to stay on one. */
 .sm-tiny .sm-start-sub { font-size: 9.5px; letter-spacing: 3px; text-indent: 3px; }
 
+.sm-tiny {
+  --sm-top-h: 34px;
+  --sm-btn-size: 36px;
+  --sm-cur-max: 26px;
+  --sm-cur-vw: 8.2vw;
+  --sm-cur-chrome: 108px;
+}
 .sm-tiny .sm-statrow { gap: 4px; }
-.sm-tiny .sm-progwrap { width: 40vw; }
 .sm-tiny .sm-card-grid { grid-template-columns: 1fr; }
-.sm-tiny .sm-depth { display: none; }
-/* Under 420px the corner clusters leave ~140px in the middle: digits only,
-   and the buttons shrink to buy that room back. */
-.sm-tiny .sm-stats { max-width: 33vw; }
-.sm-tiny .sm-currency-val { font-size: 19px; }
-.sm-tiny .sm-btn { min-width: 52px; padding: 9px 6px; font-size: 9px; letter-spacing: 0.6px; }
-.sm-tiny .sm-clockwrap { max-width: 32vw; }
+.sm-tiny .sm-btn:not(.sm-iconbtn) { min-width: 52px; padding: 9px 6px; font-size: 9px; letter-spacing: 0.6px; }
+.sm-tiny .sm-btn-svg { width: 17px; height: 17px; }
 .sm-tiny .sm-clock { padding: 4px 9px 6px; min-width: 96px; }
 .sm-tiny .sm-clock-label { display: none; }
 .sm-tiny .sm-clock-digits { font-size: 23px; height: 25px; line-height: 25px; }
@@ -1735,9 +2025,13 @@ html, body {
 /* Users who ask for less motion get the information, not the theatre. */
 @media (prefers-reduced-motion: reduce) {
   .sm-pop, .sm-flash, .sm-od-label, .sm-banner-final .sm-banner-text,
-  .sm-clock-urgent, .sm-clock-kick, .sm-rail-pop, .sm-hs-cta, .sm-hs-row-new {
+  .sm-clock-urgent, .sm-clock-kick, .sm-rail-pop, .sm-hs-cta, .sm-hs-row-new,
+  .sm-zonecore {
     animation: none !important;
   }
+  /* The steering pads still have to CONFIRM a press — that is feedback, not
+     theatre — so they keep the state change and lose only the fade. */
+  .sm-pad { transition-duration: 0.01ms !important; }
   /* The +10s float still has to be SEEN, so it keeps a short fade instead of
      the flight path. Losing it entirely would lose the information. */
   .sm-clock-gain-on { animation: sm-clock-gain-static 0.9s ease-out !important; }
@@ -1745,5 +2039,6 @@ html, body {
     0%, 70% { opacity: 1; transform: translate(-50%, -34px); }
     100%    { opacity: 0; transform: translate(-50%, -34px); }
   }
-  .sm-toast, .sm-banner, .sm-card, .sm-summary, .sm-start { transition-duration: 0.01ms !important; }
+  .sm-toast, .sm-banner, .sm-card, .sm-summary, .sm-start,
+  .sm-pause, .sm-pause-card { transition-duration: 0.01ms !important; }
 }

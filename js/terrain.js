@@ -40,12 +40,27 @@ SM.terrain = (function () {
   'use strict';
 
   /* ----- Agent-2 tunables local to this file ------------------------- */
-  // Deposit spacing. Slightly wider than config's 18 because the upgraded
-  // machine makes the camera pull all the way back to the MAX_WALL_VISIBLE
-  // floor, which grows the streaming window to ~1600 units tall. At 18 that
-  // window plus a full 1200-particle debris torrent runs the 7500 pool dry
-  // and streaming stalls; at 19 it leaves ~900 slots of headroom.
+  // Deposit spacing. The AUTHORED value is 19 — slightly wider than config's
+  // 18 because the upgraded machine makes the camera pull all the way back to
+  // the MAX_WALL_VISIBLE floor, which grows the streaming window to ~1600
+  // units tall. At 18 that window plus a full 1200-particle debris torrent
+  // runs the 7500 pool dry and streaming stalls; at 19 it leaves ~900 slots
+  // of headroom.
+  //
+  // It is no longer a constant. A portrait phone has to show the whole
+  // 1280-unit lane across ~390px, which puts ~2940 units of world HEIGHT on
+  // screen — two and a half times the area a landscape window streams, and
+  // 11 600 deposits against a 7500 pool. camera.js owns that trade (it is the
+  // one that decides how much world is on screen), solves the budget once at
+  // load and hands us the pitch through getWorldSpacing(); syncDensity()
+  // below picks it up. On a landscape desktop the solve lands under 19 and
+  // clamps, so nothing there changes at all.
+  //
+  // The economy follows automatically: camera.js gave materials.js the same
+  // number, and every deposit's value and hardness were scaled by the area it
+  // now stands for, so a metre of mine is worth the same on every device.
   var SPACING = 19.0;
+  var SPACING_AUTHORED = 19.0;   // what the pickup sizes below were tuned at
   var DESPAWN_INTERVAL = 6;      // run the recycle sweep every N steps
   var BG_TILE = 128;             // background noise tile size (px)
   var DEBRIS_RESERVE = 700;      // pool slots always kept free for live debris
@@ -87,15 +102,31 @@ SM.terrain = (function () {
   // that swung with a rolled radius would make that promise a lie half the
   // time. 80 units across is a bit over half the starting blade width, so it
   // is a real object you aim at rather than something you sweep up in passing.
+  //
+  // These two are the one place the density compensation could NOT be handled
+  // by the material table. A time cell is worth 0 currency; its whole payload
+  // is TIME_PER_PIECE seconds per collected FRAGMENT, so what has to be held
+  // constant is the fragment count, and that is pi*r*r/SPACING^2. So the
+  // radius scales with the pitch (syncDensity below) rather than the value:
+  // on a portrait phone the block is ~52 units across instead of 40, made of
+  // the same ~15 chunkier deposits, and still pays the +5 SEC it advertises.
   var PICKUP_RADIUS = 40;
   // The block is carved into an excavated CHAMBER. Two jobs: it makes the
   // glow read against black instead of against dirt, so you spot one from the
   // far side of the lane; and it leaves the shattered cloud nothing to snag
   // on, so a clean hit collects cleanly and the advertised number is honest.
+  // Scales with the block so the ratio, and therefore the clearance the cloud
+  // gets, is the same everywhere.
   var PICKUP_CHAMBER = 74;
+
+  // The two above, after syncDensity() has scaled them for the live grid.
+  var pickupRadius = PICKUP_RADIUS;
+  var pickupChamber = PICKUP_CHAMBER;
   // Keep them off the bedrock walls so one can never be unreachable. Measured
-  // from the CHAMBER edge, not the block, or a chamber could clip the wall.
-  var PICKUP_EDGE_MARGIN = 130;
+  // from the CHAMBER edge, not the block, or a chamber could clip the wall —
+  // so it is stated as chamber + clearance and follows the chamber when the
+  // grid coarsens.
+  var PICKUP_EDGE_CLEAR = 56;    // authored 130 = PICKUP_CHAMBER 74 + 56
 
   var C = SM.config;
 
@@ -440,7 +471,7 @@ SM.terrain = (function () {
 
   function pruneBlocks(behindY) {
     for (var i = blCount - 1; i >= 0; i--) {
-      if (blY[i] - PICKUP_CHAMBER > behindY) {
+      if (blY[i] - pickupChamber > behindY) {
         var last = --blCount;
         blX[i] = blX[last]; blY[i] = blY[last];
         blR2[i] = blR2[last]; blC2[i] = blC2[last];
@@ -494,12 +525,12 @@ SM.terrain = (function () {
     if (z.kind === 'barrier' || z.kind === 'narrow') return;
     if (rnd() >= PICKUP_RATE) return;
 
-    var lane = C.LANE_HALF_WIDTH - PICKUP_EDGE_MARGIN;
+    var lane = C.LANE_HALF_WIDTH - (pickupChamber + PICKUP_EDGE_CLEAR);
     var x = (rnd() * 2 - 1) * lane;
     var y = y1 + rnd() * (y0 - y1);
     // A hair of jitter on the block so a row of them down a run does not read
     // as stamped copies; far too small to move the fragment count.
-    var r = PICKUP_RADIUS + (rnd() * 2 - 1) * 2;
+    var r = pickupRadius + (rnd() * 2 - 1) * 2;
     // Always burn the roll, mode or not, so the two modes stay on the same
     // deterministic RNG stream and a freestyle run generates the same terrain
     // as a time run — only the pickup KIND differs.
@@ -507,7 +538,7 @@ SM.terrain = (function () {
     // Freestyle has no clock, so a time cell there is a pickup that pays into
     // nothing. Every block becomes a boost instead.
     if (SM.level.isFreestyle && SM.level.isFreestyle()) wantTime = false;
-    pushBlock(x, y, r, PICKUP_CHAMBER, wantTime ? M_TIMECELL : M_BOOSTCELL);
+    pushBlock(x, y, r, pickupChamber, wantTime ? M_TIMECELL : M_BOOSTCELL);
   }
 
   /* =====================================================================
@@ -621,13 +652,43 @@ SM.terrain = (function () {
   /* =====================================================================
    * LIFECYCLE
    * ================================================================== */
+  /**
+   * Adopt the grid pitch camera.js solved for this device, and re-derive
+   * everything that was sized in grid CELLS rather than world units.
+   *
+   * Called from init() and reset() rather than every step because the solve
+   * is latched for the life of the page — deliberately, since materials.js
+   * has already been re-balanced against it and particles.js cannot re-bake
+   * its material cache (see solveWorldDensity in camera.js). Calling it on
+   * reset() as well costs nothing and means a restart can never inherit a
+   * stale pitch if that ever changes.
+   *
+   * Bands already in the world keep whatever pitch they were generated at.
+   * That is safe by construction: generateBand() derives its row indices from
+   * absolute y every time, so a pitch change only affects bands generated
+   * after it, and the streaming window recycles everything behind the machine
+   * within STREAM_BEHIND anyway. Nothing has to be re-generated or patched.
+   */
+  function syncDensity() {
+    var sp = (SM.camera && SM.camera.getWorldSpacing)
+      ? SM.camera.getWorldSpacing() : SPACING_AUTHORED;
+    if (!(sp > 0)) sp = SPACING_AUTHORED;
+    SPACING = sp;
+    // Power-up blocks are sized in CELLS, not units — see PICKUP_RADIUS.
+    var k = sp / SPACING_AUTHORED;
+    pickupRadius = PICKUP_RADIUS * k;
+    pickupChamber = PICKUP_CHAMBER * k;
+  }
+
   function init() {
+    syncDensity();
     resolveMaterials();
     buildTiles();
     reset();
   }
 
   function reset() {
+    syncDensity();
     setSeed(0x9e3779b9);
     pkCount = 0;
     blCount = 0;
@@ -845,6 +906,8 @@ SM.terrain = (function () {
     render: render,
     getGeneratedTo: getGeneratedTo,
     setSeed: setSeed,
+    /** Live grid pitch. Solved by camera.js; exposed for measurement. */
+    getSpacing: function () { return SPACING; },
 
     /* --- power-up blocks, READ-ONLY -------------------------------------
      * particles.js bakes its sprite atlas from three silhouette families

@@ -59,6 +59,66 @@ var SM = SM || {};
 SM.materials = (function () {
   'use strict';
 
+  /* ----- tunables ----------------------------------------------------------
+   * WORLD-DENSITY COMPENSATION — read camera.js's "LANE FIT vs TERRAIN
+   * DENSITY" note first; this is the other half of that mechanism.
+   *
+   * A portrait phone has to show the whole 1280-unit lane across ~390 px,
+   * which puts ~2900 units of world HEIGHT on screen — more than twice the
+   * area a landscape screen streams. The particle pool is fixed at 7500, so
+   * terrain.js answers that by generating on a COARSER grid: camera.js solves
+   * the budget once at load and hands the resulting deposit spacing here.
+   *
+   * That solves the pool and breaks the economy. Value and hardness are
+   * per-DEPOSIT, so a grid at spacing S puts (19/S)^2 as many deposits under
+   * every square unit of mine — at S = 24.5 that is 60% of the deposits, and
+   * therefore 60% of the money and 60% of the rock, for the same distance
+   * driven. The leaderboard would quietly become a table of who owns the
+   * widest screen.
+   *
+   * So the invariant we hold is PER AREA, not per deposit: one deposit now
+   * stands for (S/19)^2 world units of mine, so it is worth that much more
+   * and contains that much more rock. Fewer, bigger, richer, harder lumps;
+   * identical money and identical toughness per metre driven.
+   *
+   * HARDNESS_EXP is the one judgement call. Value is exactly linear in the
+   * area ratio and there is nothing to argue about. Hardness is not, because
+   * hardness is not a throughput cost — particles.js applies the cutter's
+   * full damage to EVERY deposit in the blade rect independently, so what a
+   * deposit's hardness really sets is how long it survives inside the rect:
+   *
+   *   survives the whole pass   (h * v >= power * bladeDepth)
+   *       resistance = deposits_in_rect * h        -> exponent 1 conserves it
+   *   dies part-way through     (h * v <  power * bladeDepth)
+   *       resistance = deposits_in_rect * h^2 * v / (power * bladeDepth)
+   *                                                -> exponent 0.5 conserves it
+   *
+   * At the starting rig the crossover is h = 3.57, which lands the two rocks
+   * you spend most of the run in (dirt 0.55, stone 2.1) in the second regime
+   * and everything above iron in the first. 0.5 is therefore right for the
+   * material you meet constantly and wrong for the material you meet in
+   * walls; 1.0 is the other way round, and which one wins is a question about
+   * the level, not about algebra. So it was measured: seconds to cut the SAME
+   * slice of mine (depth 1000 -> 6000, freestyle, identical scripted steering,
+   * averaged over 8 terrain seeds), desktop 1280x800 at spacing 19 against
+   * 390x844 at spacing 24.5.
+   *
+   *   desktop        27.55 s  +- 0.68     (baseline)
+   *   exponent 0     24.63 s  +- 0.53      89.4%   phone 11% faster
+   *   exponent 0.5   27.65 s  +- 0.75     100.3%   <-- dead on
+   *   exponent 1.0   33.54 s  +- 0.77     121.7%   phone 22% slower
+   *
+   * 0.5 it is, and by a wide margin: the base rock dominates the clock and the
+   * walls you plough are rare enough that under-correcting them is lost in the
+   * noise. Value destroyed over the same slice was flat across all three
+   * (34.1k / 33.3k / 34.1k against desktop's 35.2k +- 2.2k), which is the
+   * point — the exponent is a difficulty knob, not an economic one.
+   * ---------------------------------------------------------------------- */
+  var HARDNESS_EXP = 0.5;
+
+  var densitySpacing = 19.0;   // grid pitch the table is currently balanced for
+  var densityArea = 1.0;       // (densitySpacing / base) ^ 2
+
   /* -------------------------------------------------------------------------
    * BREAK STYLES
    * How a deposit converts into debris. particles.js reads these verbatim.
@@ -325,11 +385,44 @@ SM.materials = (function () {
     if (m.sparkle === undefined) m.sparkle = 0;
     if (m.ore === undefined) m.ore = false;
     if (m.pickup === undefined) m.pickup = '';
+    // The AUTHORED numbers, kept so applyWorldDensity() can always re-derive
+    // from them instead of compounding a multiplier onto a multiplier.
+    m.baseValue = m.value;
+    m.baseHardness = m.hardness;
     // Pre-split value so particles.js never divides on the hot path.
     m.debrisValue = m.value / Math.max(1, m.debrisCount);
     // Pre-compute inverse mass factor used by the collision solver.
     m.invDensity = 1 / Math.max(0.05, m.density);
     byId[m.id] = m;
+  }
+
+  /**
+   * Re-balance the table for a terrain grid of `spacing` instead of the
+   * authored `baseSpacing`. See the tunables note at the top for why.
+   *
+   * CALLED EXACTLY ONCE, from the tail of camera.js's module body — which is
+   * the last moment that works. particles.js bakes hardness and value into
+   * flat typed arrays in buildMaterialCache(), main.js calls particles.init()
+   * BEFORE camera.init(), and nothing rebuilds that cache afterwards, so the
+   * numbers have to be final while the page is still parsing scripts. It is
+   * written to be idempotent anyway (it re-derives from baseValue /
+   * baseHardness) so a second call can never compound.
+   *
+   * Power-ups are worth 0 and stay worth 0: their payload is seconds, and
+   * terrain.js keeps that honest by scaling the block's radius with the grid
+   * so it still shatters into the same number of fragments.
+   */
+  function applyWorldDensity(spacing, baseSpacing) {
+    if (!(spacing > 0) || !(baseSpacing > 0)) return;
+    densitySpacing = spacing;
+    densityArea = (spacing / baseSpacing) * (spacing / baseSpacing);
+    var kH = Math.pow(densityArea, HARDNESS_EXP);
+    for (var j = 0; j < list.length; j++) {
+      var mm = list[j];
+      mm.value = mm.baseValue * densityArea;
+      mm.hardness = mm.baseHardness * kH;
+      mm.debrisValue = mm.value / Math.max(1, mm.debrisCount);
+    }
   }
 
   /** Look up by numeric index (what the particle arrays store). */
@@ -347,6 +440,14 @@ SM.materials = (function () {
     count: list.length,
     get: get,
     getById: getById,
-    indexOf: indexOf
+    indexOf: indexOf,
+
+    /* --- world-density compensation (camera.js drives this) ------------- */
+    applyWorldDensity: applyWorldDensity,
+    /** World units of mine one deposit now stands for, relative to the
+     *  authored grid. 1 on desktop, ~1.66 on a portrait phone. */
+    getDensityScale: function () { return densityArea; },
+    /** The grid pitch the table is currently balanced for. */
+    getDensitySpacing: function () { return densitySpacing; }
   };
 })();

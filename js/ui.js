@@ -4,25 +4,43 @@
  * Every piece of UI DOM is created at RUNTIME inside #ui-root, so index.html
  * never has to change. Nothing here draws to the canvas.
  *
- * LAYOUT (the centre of the screen is deliberately left empty)
- *   top-centre    THE COUNTDOWN — digits + a bar scaled by getTimeCap().
- *                 This is a TIME ATTACK: it is the thing the player watches,
- *                 so it sits above everything else and escalates as it drains.
- *   top-left      currency (animated count-up + pop), PWR / CUT / MAG chips,
- *                 resource multiplier chip
- *   under clock   run progress bar + zone name + depth readout
- *   top-right     SOUND / RESTART buttons (44px touch targets)
- *   under bar     overdrive countdown bar (only while overdriving)
+ * LAYOUT — PORTRAIT FIRST (the centre of the screen is deliberately left empty)
+ *   top strip     THE SCORE, on ONE line across the FULL width. It is the
+ *                 number the whole game is about and runs into the millions,
+ *                 so it gets the whole width rather than a corner and shrinks
+ *                 to fit instead of wrapping — see --sm-cur-len below.
+ *   under it      THE COUNTDOWN, centred: digits + a bar scaled by
+ *                 getTimeCap(). A TIME ATTACK is watched, not glanced at.
+ *   under that    zone name, plus "CORE +N m" once the map is behind you.
+ *                 Clock and zone line share ONE centred flex column, so
+ *                 FREESTYLE — which has no clock at all — simply collapses
+ *                 the column instead of leaving a hole where it was.
+ *   bottom centre OVERDRIVE / SPEED BOOST meters, invisible unless running
+ *   top-right     icon buttons: SOUND toggle + PAUSE (opens the pause menu,
+ *                 which is where RESTART now lives)
+ *   left+right    STEERING PADS — two transparent full-height hit areas that
+ *                 drive the frozen keyboard path in input.js. See sendKey().
  *   left edge     upgrade icon rail — one inline-SVG tile per owned upgrade
+ *   left edge     live HAUL tally, bottom-anchored, lifted clear of the pads
  *   upper-centre  upgrade announcement (big title + description)
  *   mid-screen    POWER-UP SPLASH — "+5 SEC" / "BOOST MODE", ~1s, the only
  *                 thing allowed into the middle of the screen and the only
  *                 HUD element you are meant to read without looking away
  *                 from the rock. Driven by time:granted (source 'cell') and
  *                 boost:start; both carry the amount actually granted.
- *   left edge     zone banner, slides in on zone:entered (offset past the rail)
- *   centre        end-of-run summary card + local top-10 table (run:over)
+ *   right edge    zone banner, slides in on zone:entered
+ *   centre        pause menu (RESUME / RESTART), end-of-run summary card +
+ *                 local top-10 table (run:over)
  *   fullscreen    "tap to start" overlay, dismissed on the first gesture
+ *
+ * THERE IS NO PROGRESS GAUGE. It used to sit under the clock with a percentage
+ * and a depth readout. On a phone it was the widest thing on the screen and it
+ * answered a question nobody asks mid-run — "how far through the map am I" is
+ * not a decision, and it cost ~70 DOM writes a second to keep current. What
+ * was worth keeping moved out of it: the zone name and its CORE overtime
+ * state onto one line under the clock, the two meters to the bottom edge.
+ * The depth readout went with the gauge — it is on the end-of-run card, which
+ * is the only place anyone ever read it.
  *
  * THE RAIL IS REBUILT ON A VERSION NUMBER, NEVER PER FRAME
  *   SM.vehicle.getUpgradeVersion() only moves when an upgrade is applied, so
@@ -62,6 +80,16 @@ SM.ui = (function () {
   var POP_MIN_GAP     = 0.14;   // seconds between currency pop animations
   var COMPACT_W       = 900;    // px viewport width that switches to compact
   var COMPACT_H       = 520;
+  var TINY_W          = 420;
+
+  /* A TAP on a steering pad has to produce a usable nudge, not a no-op.
+   * input.js ramps its keyboard axis with INPUT_KEY_RAMP (12/s), so a 40 ms
+   * touch would move the axis by 0.38 and be gone before the rig leaned. The
+   * pad therefore holds the synthetic key down for a FLOOR of this long, which
+   * reaches ~0.90 of full lock — a definite flick of the wheel — and then
+   * decays out on its own. Longer than ~0.25s and a deliberate tap starts to
+   * feel like it steers for you. */
+  var PAD_MIN_HOLD    = 190;    // ms
 
   var TIME_WARN       = 20;     // seconds: the clock turns amber
   var TIME_URGENT     = 10;     // seconds: red, pulsing, one tick per second
@@ -179,6 +207,49 @@ SM.ui = (function () {
   var ICON_FALLBACK = '<path d="M12 2.6l8.2 4.7v9.4L12 21.4 3.8 16.7V7.3z"/>' +
                       '<circle cx="12" cy="12" r="3.3"/>';
 
+  /* ---------------------------------------------------------------------
+   * CONTROL GLYPHS
+   * The same 24x24 line-art discipline as the upgrade rail, one grade
+   * heavier because these are 20px inside a 38px plate rather than a badge:
+   * at that size a 1.7px stroke reads as grey mush on a phone. The solid
+   * shapes (pause bars, play triangle) are filled rather than stroked for the
+   * same reason — a stroked triangle at 20px is a smudge.
+   *
+   * The two sound states are deliberately the SAME speaker with a different
+   * right-hand side, so the button reads as one control in two states rather
+   * than two different buttons.
+   * ------------------------------------------------------------------ */
+  var UI_ICONS = {
+    pause: '<rect x="7.2" y="4.6" width="3.7" height="14.8" rx="1.1" fill="currentColor" stroke="none"/>' +
+           '<rect x="13.1" y="4.6" width="3.7" height="14.8" rx="1.1" fill="currentColor" stroke="none"/>',
+
+    play: '<path d="M7.8 4.7 19.4 12 7.8 19.3z" fill="currentColor" stroke="none"/>',
+
+    // Nearly-closed circle with the gap at the upper left and the arrowhead
+    // riding the end of the sweep, so the direction of travel is unambiguous.
+    restart: '<path d="M6.8 6.8A7.4 7.4 0 1 1 4.6 12"/>' +
+             '<path d="M1.9 14.8 4.6 12.1 7.3 14.8"/>',
+
+    sound_on: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
+              '<path d="M15.7 9.2a3.9 3.9 0 0 1 0 5.6"/>' +
+              '<path d="M18.3 6.5a7.6 7.6 0 0 1 0 11"/>',
+
+    sound_off: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
+               '<path d="m16.2 9.6 5.2 4.8M21.4 9.6l-5.2 4.8"/>',
+
+    // Steering pads. A double chevron, because one chevron on a transparent
+    // full-height slab reads as decoration and two read as a control.
+    steer_left:  '<path d="M13.4 5.4 6.9 12l6.5 6.6"/><path d="M19.2 5.4 12.7 12l6.5 6.6"/>',
+    steer_right: '<path d="M10.6 5.4 17.1 12l-6.5 6.6"/><path d="M4.8 5.4 11.3 12l-6.5 6.6"/>'
+  };
+
+  /** Control-sized sibling of glyph(): heavier stroke, own class. */
+  function uiGlyph(inner, cls) {
+    return '<svg class="' + (cls || 'sm-btn-svg') + '" viewBox="0 0 24 24" fill="none" ' +
+           'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+           'stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
+  }
+
   var C = SM.config;
 
   var root = null;
@@ -202,7 +273,9 @@ SM.ui = (function () {
   var freestyle = false;         // chosen on the menu, survives restarts
   var zoneName = '';
   var summaryOpen = false;
+  var pauseOpen = false;
   var started = false;
+  var hudSmall = false;          // compact or portrait — set by applyCompact()
 
   // run stats for the summary card
   var statPickups = 0;
@@ -278,6 +351,13 @@ SM.ui = (function () {
     if (lastStrings[key] === v) return;
     lastStrings[key] = v;
     if (on) node.classList.add(cls); else node.classList.remove(cls);
+  }
+
+  /** Guarded custom-property write. style[prop] does not reach `--vars`. */
+  function setVar(key, node, prop, val) {
+    if (!node || lastStrings[key] === val) return;
+    lastStrings[key] = val;
+    node.style.setProperty(prop, val);
   }
 
   /** Restart a CSS animation without forcing a synchronous reflow. */
@@ -408,25 +488,50 @@ SM.ui = (function () {
     root.innerHTML = '';
     built = true;
 
-    /* --- top-left stat block ----------------------------------------- */
-    var stats = el('div', 'sm-panel sm-stats', root);
-    el('div', 'sm-stripe', stats);
+    /* --- STEERING PADS -----------------------------------------------------
+     * Built FIRST and left at the bottom of the paint order on purpose: every
+     * other overlay is created after it, so a tap that lands on a button, the
+     * pause card or the menu hits that instead. Nothing else in the HUD opts
+     * into pointer events, so the pads own every pixel no control is sitting
+     * on — which is exactly the deal we want on a phone. */
+    els.pads = el('div', 'sm-pads', root);
+    padL = makePad('left');
+    padR = makePad('right');
 
-    var cur = el('div', 'sm-currency', stats);
+    /* --- TOP STRIP: the score, one line, full width ---------------------- */
+    var bar = el('div', 'sm-panel sm-topbar', root);
+    els.topbar = bar;
+    el('div', 'sm-stripe', bar);
+
+    // PWR / CUT / MAG live at the left END of the strip rather than under the
+    // score, so the strip stays ONE line tall. Compact hides them outright —
+    // the upgrade rail says what is installed far better than three numbers.
+    var row = el('div', 'sm-statrow', bar);
+    els.power  = el('div', 'sm-stat', row, 'PWR 0');
+    els.blade  = el('div', 'sm-stat', row, 'CUT 0');
+    els.magnet = el('div', 'sm-stat', row, 'MAG 0');
+
+    // The slot is absolutely centred and the group inside it is what the
+    // payout pop scales — two elements so the animation's `transform` can
+    // never fight the centring `transform`.
+    var slot = el('div', 'sm-currency-slot', bar);
+    var cur = el('div', 'sm-currency', slot);
     el('span', 'sm-ico', cur, '◆');
     els.currency = el('span', 'sm-currency-val', cur, '0');
     els.currencyWrap = cur;
 
-    var row = el('div', 'sm-statrow', stats);
-    els.power  = el('div', 'sm-stat', row, 'PWR 0');
-    els.blade  = el('div', 'sm-stat', row, 'CUT 0');
-    els.magnet = el('div', 'sm-stat', row, 'MAG 0');
-    els.mult   = el('div', 'sm-stat sm-stat-mult', row, '×1.0');
+    els.mult = el('div', 'sm-stat sm-stat-mult', bar, '×1.0');
 
-    /* --- top-centre COUNTDOWN ------------------------------------------ */
+    /* --- CENTRED COLUMN: the countdown, then the zone line ---------------
+     * One flex column rather than two absolutely-placed blocks, because
+     * FREESTYLE deletes the clock: with a column the zone line simply rises
+     * into its place, and there is no hole to special-case. */
+    var col = el('div', 'sm-center', root);
+    els.center = col;
+
     // The gain float has to live OUTSIDE the panel: .sm-panel clips overflow,
     // and the "+10s" is supposed to fly up out of the clock.
-    var clockWrap = el('div', 'sm-clockwrap', root);
+    var clockWrap = el('div', 'sm-clockwrap', col);
     els.clockWrap = clockWrap;
     els.clock = el('div', 'sm-panel sm-clock', clockWrap);
     el('div', 'sm-stripe', els.clock);
@@ -446,40 +551,44 @@ SM.ui = (function () {
     }
 
     // If the timed-run API is not present, hide the clock rather than show a
-    // dead 0:00, and let the progress gauge take the top slot back.
+    // dead 0:00. The column closes over the gap by itself.
     if (!(SM.level && SM.level.getTimeLeft)) {
-      clockWrap.style.display = 'none';
       root.classList.add('sm-notimer');
     }
 
-    /* --- top-centre progress (under the clock) -------------------------- */
-    var progWrap = el('div', 'sm-progwrap', root);
-    els.progWrap = progWrap;
-    els.zoneLabel = el('div', 'sm-zonelabel', progWrap, '');
-    var prog = el('div', 'sm-progress', progWrap);
-    els.progFill = el('div', 'sm-progress-fill', prog);
-    el('div', 'sm-progress-notches', prog);
-    els.progText = el('div', 'sm-progress-text', prog, '0%');
-    els.depth = el('div', 'sm-depth', progWrap, '0 m');
+    /* --- zone line (+ the CORE overtime readout) -------------------------
+     * Both halves used to hang off the progress gauge. The zone NAME is the
+     * only persistent "where am I" the HUD still has, and CORE +N m is the
+     * one number the gauge was actually worth keeping — past 100% it is not
+     * progress any more, it is the score's best-paying stretch. */
+    var zoneLine = el('div', 'sm-zoneline', col);
+    els.zoneLine = zoneLine;
+    els.zoneLabel = el('span', 'sm-zonelabel', zoneLine, '');
+    els.zoneCore = el('span', 'sm-zonecore', zoneLine, '');
 
-    /* --- overdrive bar (hidden unless overdriving) --------------------- */
-    els.odWrap = el('div', 'sm-od', progWrap);
+    /* --- meters: overdrive + speed boost (hidden unless running) ---------
+     * NOT in the centred column: on a phone in landscape the top cluster is
+     * already a third of the screen. These are countdowns on a state the
+     * player can already see, so they live on the bottom edge instead. */
+    var meters = el('div', 'sm-meters', root);
+    els.odWrap = el('div', 'sm-od', meters);
     el('div', 'sm-od-label', els.odWrap, 'OVERDRIVE');
     var odBar = el('div', 'sm-od-bar', els.odWrap);
     els.odFill = el('div', 'sm-od-fill', odBar);
 
-    /* --- speed boost countdown (same shape, own colour) ----------------- */
-    els.boostWrap = el('div', 'sm-od sm-boost', progWrap);
+    els.boostWrap = el('div', 'sm-od sm-boost', meters);
     el('div', 'sm-od-label', els.boostWrap, 'SPEED BOOST');
     var boostBar = el('div', 'sm-od-bar', els.boostWrap);
     els.boostFill = el('div', 'sm-od-fill', boostBar);
 
-    /* --- top-right buttons --------------------------------------------- */
+    /* --- top-right icon buttons ------------------------------------------
+     * RESTART used to live here as a word, one tap from throwing a run away.
+     * It is now behind PAUSE, which is the button you actually want mid-run
+     * on a phone — and the pause menu is a much better place to ask "are you
+     * sure" than a confirm dialog would be. */
     var btns = el('div', 'sm-buttons', root);
-    els.mute = el('button', 'sm-btn', btns, 'SOUND');
-    els.restart = el('button', 'sm-btn sm-btn-primary', btns, 'RESTART');
-    els.mute.setAttribute('type', 'button');
-    els.restart.setAttribute('type', 'button');
+    els.mute = iconButton(btns, 'sm-btn-sound', UI_ICONS.sound_on, 'Sound on / off');
+    els.pause = iconButton(btns, 'sm-btn-pause', UI_ICONS.pause, 'Pause');
 
     els.mute.addEventListener('click', function (e) {
       e.preventDefault();
@@ -487,11 +596,33 @@ SM.ui = (function () {
       refreshMute();
       els.mute.blur();
     });
-    els.restart.addEventListener('click', function (e) {
+    els.pause.addEventListener('click', function (e) {
       e.preventDefault();
+      els.pause.blur();
+      openPause();
+    });
+
+    /* --- PAUSE MENU ------------------------------------------------------ */
+    els.pauseMenu = el('div', 'sm-pause', root);
+    var pcard = el('div', 'sm-panel sm-pause-card', els.pauseMenu);
+    el('div', 'sm-stripe', pcard);
+    el('div', 'sm-pause-kicker', pcard, 'ENGINE IDLING');
+    el('div', 'sm-pause-title', pcard, 'PAUSED');
+    els.pauseResume = menuButton(pcard, 'sm-btn-primary', UI_ICONS.play, 'RESUME');
+    els.pauseRestart = menuButton(pcard, '', UI_ICONS.restart, 'RESTART');
+    els.pauseResume.addEventListener('click', function (e) {
+      e.preventDefault();
+      els.pauseResume.blur();
+      closePause();
+    });
+    els.pauseRestart.addEventListener('click', function (e) {
+      e.preventDefault();
+      els.pauseRestart.blur();
+      // Unpause FIRST: main.js gates the fixed step, so restarting while
+      // paused would rebuild the world and then leave it frozen.
+      closePause();
       SM.sound.play('ui');
       SM.events.emit('input:restart', null);
-      els.restart.blur();
     });
 
     /* --- POWER-UP SPLASH (mid screen, above the machine) -----------------
@@ -653,12 +784,13 @@ SM.ui = (function () {
       'every gate pays an upgrade instead of seconds.',
       'SANDBOX');
 
-    el('div', 'sm-start-keys', sc,
-      'A / D  ·  ARROWS  ·  DRAG  to steer      R  restart      M  mute');
-
-    // Only rendered on a portrait phone — see applyCompact().
-    els.rotate = el('div', 'sm-rotate', sc,
-      '↻   TURN YOUR DEVICE SIDEWAYS TO SEE THE WHOLE MINE');
+    // Two lines, one shown at a time: a phone player has no keyboard to be
+    // told about and a desktop player has no side pads to find.
+    var keys = el('div', 'sm-start-keys', sc);
+    el('div', 'sm-keys-desk', keys,
+      'A / D  ·  ARROWS  ·  DRAG  to steer      ESC  pause      M  mute');
+    el('div', 'sm-keys-touch', keys,
+      'HOLD OR TAP EITHER SIDE TO STEER');
 
     /* --- opt-in update, shown only when a new build is parked and waiting --- */
     els.update = el('button', 'sm-update', sc, 'UPDATE READY — TAP TO INSTALL');
@@ -681,7 +813,7 @@ SM.ui = (function () {
     // list and colliding with the version stamp.
     root.classList.add('sm-menu');
 
-    els.hint = el('div', 'sm-hint', root, 'A / D  •  ARROWS  •  DRAG   —   R restart, M mute');
+    els.hint = el('div', 'sm-hint', root, 'A / D  •  ARROWS  •  DRAG   —   ESC pause, M mute');
     els.debug = el('div', 'sm-debug', root, '');
     if (!C.DEBUG_STATS) els.debug.style.display = 'none';
 
@@ -690,6 +822,228 @@ SM.ui = (function () {
     els.hsNote.style.display = 'none';
 
     applyCompact();
+  }
+
+  /** A square icon control. 38px plate, 20px glyph, 44px touch box in CSS. */
+  function iconButton(parent, cls, icon, title) {
+    var b = el('button', 'sm-btn sm-iconbtn ' + cls, parent);
+    b.setAttribute('type', 'button');
+    b.setAttribute('title', title);
+    b.setAttribute('aria-label', title);
+    b.innerHTML = uiGlyph(icon);
+    return b;
+  }
+
+  /** Icon + word, for the pause menu where there is room to be explicit. */
+  function menuButton(parent, cls, icon, label) {
+    var b = el('button', 'sm-btn sm-pause-btn ' + cls, parent);
+    b.setAttribute('type', 'button');
+    var ico = el('span', 'sm-pause-ico', b);
+    ico.innerHTML = uiGlyph(icon);
+    el('span', 'sm-pause-label', b, label);
+    return b;
+  }
+
+  /* =====================================================================
+   * STEERING PADS
+   * ---------------------------------------------------------------------
+   * Two transparent full-height slabs, left and right. They exist because
+   * drag-steering is a laptop gesture: on a phone held one-handed you cannot
+   * put a thumb in the middle of the screen without covering the rock you are
+   * steering through, and a drag has no resting position.
+   *
+   * HOW THEY REACH THE STEERING AXIS. js/input.js is FROZEN and owns steering
+   * entirely; it listens for keydown/keyup on WINDOW, where a/ArrowLeft steer
+   * left and d/ArrowRight steer right. So rather than inventing a second input
+   * path (which would then have to fight the first one for priority every
+   * frame), a pad press dispatches a synthetic KeyboardEvent at window and the
+   * frozen code does the rest. The pad is literally holding the A key down.
+   * That buys the keyboard ramp, the keyboard-wins-over-drag rule and reset()
+   * for free, and it stays correct if input.js ever changes how it smooths.
+   *
+   * The failure mode to design against is a STUCK PAD — a key held down with
+   * no finger on the glass, which turns the rig into a wall-hugger and cannot
+   * be recovered without a restart. Hence: pointer capture so the release
+   * always lands on the element that took the press, and pointercancel /
+   * pointerleave / lostpointercapture / blur / pause all routed to the same
+   * release path, which is idempotent.
+   * ================================================================== */
+  var padL = null, padR = null;
+
+  function makePad(side) {
+    var b = el('button', 'sm-pad sm-pad-' + side, els.pads);
+    b.setAttribute('type', 'button');
+    // Never focusable: a focused pad would eat the space bar and paint a focus
+    // ring across half the screen.
+    b.setAttribute('tabindex', '-1');
+    b.setAttribute('aria-label', 'Steer ' + side);
+    b.innerHTML = uiGlyph(side === 'left' ? UI_ICONS.steer_left : UI_ICONS.steer_right,
+                          'sm-pad-svg');
+
+    var st = { node: b, key: (side === 'left' ? 'a' : 'd'), down: false, t0: 0, timer: 0 };
+
+    b.addEventListener('pointerdown', function (e) { padDown(st, e); }, false);
+    b.addEventListener('pointerup', function (e) { padUp(st, e); }, false);
+    b.addEventListener('pointercancel', function (e) { padUp(st, e); }, false);
+    b.addEventListener('pointerleave', function (e) { padUp(st, e); }, false);
+    b.addEventListener('lostpointercapture', function (e) { padUp(st, e); }, false);
+    b.addEventListener('contextmenu', function (e) { e.preventDefault(); }, false);
+    return st;
+  }
+
+  /**
+   * Push a key event into the frozen input path.
+   * `code` is filled in as well as `key` so the event is a plausible one; a
+   * cancelable event means input.js's preventDefault() is not a console
+   * warning. Nothing here can throw into the caller.
+   */
+  function sendKey(type, key) {
+    var ev = null;
+    try {
+      ev = new KeyboardEvent(type, {
+        key: key, code: (key === 'a' ? 'KeyA' : 'KeyD'),
+        bubbles: true, cancelable: true
+      });
+    } catch (err) {
+      // Engines without the KeyboardEvent constructor still have to steer.
+      try {
+        ev = document.createEvent('Event');
+        ev.initEvent(type, true, true);
+        ev.key = key;
+      } catch (err2) { ev = null; }
+    }
+    if (ev) window.dispatchEvent(ev);
+  }
+
+  function padDown(st, e) {
+    if (e) {
+      // Stop the browser turning this into a mouse event / text selection, and
+      // stop it reaching input.js's canvas handler as a drag.
+      if (e.preventDefault) e.preventDefault();
+      if (e.stopPropagation) e.stopPropagation();
+      if (st.node.setPointerCapture && e.pointerId !== undefined) {
+        try { st.node.setPointerCapture(e.pointerId); } catch (err) { /* optional */ }
+      }
+    }
+    // Re-press inside the tap floor: keep the key down and re-arm the clock.
+    if (st.timer) { clearTimeout(st.timer); st.timer = 0; }
+    st.t0 = (typeof performance === 'object' && performance.now) ? performance.now() : +new Date();
+    if (!st.down) {
+      st.down = true;
+      st.node.classList.add('sm-pad-on');
+      sendKey('keydown', st.key);
+    }
+    SM.input.noteGesture();
+  }
+
+  function padUp(st, e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!st.down || st.timer) return;            // idle, or already releasing
+    var now = (typeof performance === 'object' && performance.now) ? performance.now() : +new Date();
+    var wait = PAD_MIN_HOLD - (now - st.t0);
+    if (wait > 0) {
+      // A tap. Let go of the highlight immediately — the finger is gone and a
+      // pad that stays lit reads as stuck — but hold the KEY to the floor.
+      st.node.classList.remove('sm-pad-on');
+      st.timer = setTimeout(function () { st.timer = 0; padRelease(st); }, wait);
+    } else {
+      padRelease(st);
+    }
+  }
+
+  function padRelease(st) {
+    if (st.timer) { clearTimeout(st.timer); st.timer = 0; }
+    if (!st.down) return;
+    st.down = false;
+    st.node.classList.remove('sm-pad-on');
+    sendKey('keyup', st.key);
+  }
+
+  /** Every "the world changed under the finger" path funnels through here. */
+  function padsRelease() {
+    if (padL) padRelease(padL);
+    if (padR) padRelease(padR);
+  }
+
+  /* =====================================================================
+   * PAUSE
+   * ---------------------------------------------------------------------
+   * SM.main.setPaused() is a contract from the gameplay side and is
+   * FEATURE-DETECTED at every call site: on a partial merge the menu still
+   * opens, still restarts and still resumes — the world simply keeps moving
+   * behind it, which is a bad pause rather than a broken game.
+   * ================================================================== */
+  function canPause() {
+    // Not while the menu is up (nothing is running yet) and not after the run
+    // has ended (the summary owns the screen, and pausing a finished run is a
+    // way to get stuck behind two overlays at once).
+    return started && !summaryOpen;
+  }
+
+  function openPause() {
+    if (pauseOpen || !canPause()) return;
+
+    /* main.js REFUSES a pause in the states that have nothing to pause, and
+     * returns the resulting state so the caller can tell an accepted pause
+     * from a refused one. Only an explicit `false` counts as a refusal: an
+     * implementation that returns nothing (a partial merge, an older build)
+     * must still get a working menu, so undefined means "carry on". */
+    if (SM.main.setPaused && SM.main.setPaused(true) === false) return;
+
+    pauseOpen = true;
+    padsRelease();                 // never freeze with a key held down
+    SM.sound.play('ui');
+    if (els.pauseMenu) els.pauseMenu.classList.add('sm-pause-on');
+    if (root) root.classList.add('sm-paused');
+  }
+
+  function closePause(silent) {
+    if (!pauseOpen) return;
+    pauseOpen = false;
+    if (silent !== true) SM.sound.play('ui');
+    if (SM.main.setPaused) SM.main.setPaused(false);
+    if (els.pauseMenu) els.pauseMenu.classList.remove('sm-pause-on');
+    if (root) root.classList.remove('sm-paused');
+  }
+
+  function togglePause() {
+    if (pauseOpen) closePause(); else openPause();
+  }
+
+  /**
+   * Somebody else paused us (a future menu, a focus-loss handler in main.js).
+   * This only mirrors the state into the DOM — it must NEVER call setPaused()
+   * back, or the two sides bounce the event between them forever.
+   */
+  function onGamePaused(p) {
+    var on = !!(p && p.paused);
+    if (on === pauseOpen) return;
+    if (on && !canPause()) return;
+    pauseOpen = on;
+    if (on) padsRelease();
+    if (els.pauseMenu) {
+      if (on) els.pauseMenu.classList.add('sm-pause-on');
+      else els.pauseMenu.classList.remove('sm-pause-on');
+    }
+    if (root) {
+      if (on) root.classList.add('sm-paused'); else root.classList.remove('sm-paused');
+    }
+  }
+
+  /**
+   * ESC / P pause the run. input.js is frozen and does not know these keys, so
+   * this listener is ui.js's own — and it is on WINDOW in the bubble phase,
+   * which is exactly where the high-score field's stopPropagation() already
+   * shields it, so typing a name still cannot pause the game.
+   */
+  function onKeyDown(e) {
+    if (!e) return;
+    var k = e.key;
+    if (k === 'Escape' || k === 'Esc' || k === 'p' || k === 'P') {
+      if (!canPause() && !pauseOpen) return;
+      e.preventDefault();
+      togglePause();
+    }
   }
 
   /**
@@ -1034,33 +1388,46 @@ SM.ui = (function () {
     SM.sound.play('ui');
   }
 
+  /**
+   * The speaker and the crossed-out speaker are the SAME control in two
+   * states, so the glyph is swapped rather than the button. This is called
+   * from a click and from the sound:muted event — never from the step — so
+   * writing innerHTML here is a handful of times a run, not a hot path.
+   */
   function refreshMute() {
     if (!els.mute) return;
     var m = SM.sound.isMuted();
-    els.mute.textContent = m ? 'MUTED' : 'SOUND';
+    els.mute.innerHTML = uiGlyph(m ? UI_ICONS.sound_off : UI_ICONS.sound_on);
+    els.mute.setAttribute('aria-pressed', m ? 'true' : 'false');
     if (m) els.mute.classList.add('sm-btn-off');
     else els.mute.classList.remove('sm-btn-off');
   }
 
-  /** One class toggle drives every compact-layout rule in style.css. */
+  /** One class toggle drives every responsive rule in style.css. */
   function applyCompact() {
     if (!root) return;
     var w = window.innerWidth || 1024;
     var h = window.innerHeight || 768;
     var compact = (w < COMPACT_W || h < COMPACT_H);
+    // style.css hides the debug readout on anything small; update() reads this
+    // so it does not spend a DOM write per step on a node nobody can see.
+    // Measured: 60 mutations a second, on a phone, for nothing.
+    hudSmall = compact || (h > w);
     if (compact) root.classList.add('sm-compact');
     else root.classList.remove('sm-compact');
-    if (w < 420) root.classList.add('sm-tiny');
+    if (w < TINY_W) root.classList.add('sm-tiny');
     else root.classList.remove('sm-tiny');
 
-    /* Portrait on a phone is the one shape where the whole lane genuinely
-     * cannot be shown. camera.js already zooms out as far as the particle
-     * budget allows (~55% of the lane, up from 34%), but the full field needs
-     * landscape — where it measures 147%. Tablets clear ~88% and are left
-     * alone; nagging them would be noise. */
-    var portraitPhone = (h > w) && (w < 560);
-    if (portraitPhone) root.classList.add('sm-rotate-hint');
-    else root.classList.remove('sm-rotate-hint');
+    /* PORTRAIT IS ITS OWN SWITCH, not a synonym for compact. A phone in
+     * landscape is compact and has almost no vertical room; a tablet held
+     * upright is not compact at all but still wants thumb pads and a haul
+     * tally lifted clear of them. The two questions are genuinely different,
+     * so they get two classes.
+     * (This used to raise an "ROTATE YOUR DEVICE" nag instead. The camera now
+     * frames the whole 1280-unit lane in portrait, so upright is a supported
+     * way to play rather than a compromise, and the nag is gone.) */
+    if (h > w) root.classList.add('sm-portrait');
+    else root.classList.remove('sm-portrait');
   }
 
   var resizePending = false;
@@ -1232,6 +1599,9 @@ SM.ui = (function () {
   function openSummary(reason, dist, timeLeft) {
     if (!els.summary || summaryOpen) return;
     summaryOpen = true;
+    // The end screen is not something you can be paused behind.
+    closePause(true);
+    padsRelease();
 
     if (burstAcc > statBestBurst) statBestBurst = burstAcc;
     runScore = Math.round(currency);
@@ -1357,8 +1727,20 @@ SM.ui = (function () {
       SM.events.on('sound:muted', refreshMute);
       SM.events.on('input:firstgesture', onFirstGesture);
       SM.events.on('run:reset', reset);
+      // Contract from the gameplay side. Subscribed unconditionally: if
+      // nothing ever emits it the handler simply never runs.
+      SM.events.on('game:paused', onGamePaused);
       window.addEventListener('resize', onResize, false);
       window.addEventListener('orientationchange', onResize, false);
+      window.addEventListener('keydown', onKeyDown, false);
+      // A pad cannot be held through a tab switch or an alt-tab; input.js
+      // resets its own axis on blur, and this keeps our idea of the pad in
+      // step with it so the next press still sends a fresh keydown.
+      window.addEventListener('blur', padsRelease, false);
+      window.addEventListener('pointercancel', padsRelease, false);
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden) padsRelease();
+      }, false);
     }
     /* The mode cards are the only way out of the menu, and they double as the
      * audio-unlock gesture. Bound on CLICK only: a pointerdown+click pair on
@@ -1413,6 +1795,13 @@ SM.ui = (function () {
     }
     if (els.odWrap) els.odWrap.classList.remove('sm-od-on');
     if (els.boostWrap) els.boostWrap.classList.remove('sm-od-on');
+    if (els.zoneLine) els.zoneLine.classList.remove('sm-zone-core');
+
+    // A restart from the pause menu has already closed it, but R / the summary
+    // card can also restart, and a pad can be mid-hold when they do. Neither
+    // may leave the next run frozen or steering into a wall.
+    closePause(true);
+    padsRelease();
 
     // The clock's escalation classes are re-derived from the value on the very
     // next update(), but they have to come off NOW or a restart flashes red.
@@ -1448,7 +1837,17 @@ SM.ui = (function () {
     /* --- animated counter -------------------------------------------- */
     shown += (currency - shown) * Math.min(1, COUNTER_LERP * dt);
     if (Math.abs(currency - shown) < COUNTER_SNAP) shown = currency;
-    setText('cur', els.currency, fmt(Math.floor(shown)));
+    var curStr = fmt(Math.floor(shown));
+    setText('cur', els.currency, curStr);
+
+    /* SHRINK-TO-FIT, WITHOUT MEASURING ANYTHING.
+     * A real run banks 4 464 858 — nine characters — and the score has to sit
+     * on ONE line at 360px wide. Reading scrollWidth to fit it would force a
+     * synchronous layout inside the fixed step, so instead the only thing JS
+     * publishes is the character COUNT, and style.css divides the available
+     * width by it (see --sm-cur-len). This writes once per digit gained, i.e.
+     * about ten times in a run, not sixty times a second. */
+    setVar('curlen', els.currencyWrap, '--sm-cur-len', '' + curStr.length);
 
     // Brief scale pop on gains, throttled so a loot torrent does not restart
     // the animation 60 times a second.
@@ -1526,31 +1925,25 @@ SM.ui = (function () {
       updateTally(tflush);
     }
 
-    /* --- progress ------------------------------------------------------- */
-    var p = SM.level.getProgress ? SM.level.getProgress() : 0;
-    if (!(p >= 0)) p = 0;
-    if (p > 1) p = 1;
-    setStyle('progw', els.progFill, 'width', (p * 100).toFixed(1) + '%');
-    setText('zone', els.zoneLabel, zoneName);
-    var dist = SM.level.getDistance ? SM.level.getDistance() : 0;
-    setText('depth', els.depth, fmt(Math.round(dist)) + ' m');
-
-    /* --- OVERTIME ---------------------------------------------------------
-     * Reaching 100% no longer ends the run (level.js), so the gauge would
-     * otherwise sit pinned at a dead "100%" for the rest of the run — wasting
-     * the one readout that should be shouting at you. Past the end it becomes
-     * a depth-beyond-the-map counter instead, and the fill goes gold.
+    /* --- zone line, and OVERTIME ------------------------------------------
+     * The progress gauge is gone; this line is what survived it. The zone
+     * name is a plain guarded write that moves five times in a run.
+     *
+     * Past 100% the map is behind you and "how far through are you" has no
+     * answer any more — so the line gains a gold CORE +N m counter, which is
+     * the stretch the score is actually made in.
      *
      * ROUNDED TO 50 m ON PURPOSE — this is the THROTTLE, not a rounding
      * error. update() runs inside the fixed step, and at 200+ units a second
-     * an exact metre count would rewrite the node on every single step. Fifty-
-     * metre steps land at about four writes a second, and fifty metres is
-     * already finer than anyone can read off a 15px bar. */
+     * an exact metre count would rewrite the node on every single step.
+     * Fifty-metre steps land at about four writes a second, and fifty metres
+     * is finer than anyone reads off a 10px label at speed. */
+    setText('zone', els.zoneLabel, zoneName);
     var over = SM.level.getOvertime ? SM.level.getOvertime() : 0;
-    setClass('progcore', els.progWrap, 'sm-prog-core', over > 0);
-    setText('progtxt', els.progText, over > 0
-      ? ('CORE  +' + fmt(Math.round(over / 50) * 50) + ' m')
-      : (Math.round(p * 100) + '%'));
+    setClass('zonecore', els.zoneLine, 'sm-zone-core', over > 0);
+    if (over > 0) {
+      setText('zonecoretxt', els.zoneCore, 'CORE +' + fmt(Math.round(over / 50) * 50) + ' m');
+    }
 
     /* --- overdrive countdown --------------------------------------------- */
     if (overdriveLeft > 0) {
@@ -1595,8 +1988,10 @@ SM.ui = (function () {
       if (splashTimer <= 0) els.splash.classList.remove('sm-splash-on');
     }
 
-    /* --- debug ------------------------------------------------------------- */
-    if (C.DEBUG_STATS) {
+    /* --- debug -------------------------------------------------------------
+     * hudSmall: the readout is display:none on compact and portrait layouts,
+     * and a write to a hidden node is still a mutation. */
+    if (C.DEBUG_STATS && !hudSmall) {
       var s = SM.particles.getStats();
       setText('dbg', els.debug,
         SM.main.getFps() + ' fps  ' + SM.main.getStepMs().toFixed(2) + ' ms  |  ' +

@@ -413,10 +413,22 @@ SM.level = (function () {
   var evTimeLow = { left: 0 };
   var evRunOver = { reason: '', distance: 0, timeLeft: 0 };
 
+  /* --- pause ------------------------------------------------------------
+   * main.js pins its step accumulator while paused, so update() is not being
+   * called at all and the clock could not tick if it wanted to. This flag is
+   * a SECOND LINE OF DEFENCE on the one number nobody may ever farm: the
+   * countdown IS the score in a time attack, so "pause is free seconds" is
+   * the single worst bug this feature could ship with. Cost is one boolean
+   * test per step, which is worth it to make the guarantee local to the file
+   * that owns the clock instead of an assumption about someone else's loop.
+   * ------------------------------------------------------------------ */
+  var paused = false;
+
   /* ------------------------------------------------------------------ */
 
   function init() {
     SM.events.on('resource:collected', onCollected);
+    SM.events.on('game:paused', function (p) { paused = !!(p && p.paused); });
     MI_TIME = SM.materials ? SM.materials.indexOf('timecell') : -1;
     reset();
   }
@@ -546,6 +558,13 @@ SM.level = (function () {
   }
 
   function update(dt) {
+    // Frozen wholesale rather than just around the countdown: the pending
+    // time-cell flush, the zone fanfares and the auto-transforms are all
+    // timers or edge tests too, and none of them should fire at a rig that is
+    // standing still behind a menu. Nothing here is derived from anything that
+    // moves while paused, so there is nothing to keep up to date either.
+    if (paused) return;
+
     distance = C.START_Y - SM.vehicle.getY();
     if (distance < 0) distance = 0;
     progress = distance / RUN_LENGTH;

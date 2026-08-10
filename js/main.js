@@ -7,6 +7,12 @@
  * If you need something to happen every frame, hook it into a module that is
  * already in the call order below, or subscribe to an event.
  *
+ * ONE DELIBERATE EXCEPTION: setPaused()/isPaused() and the `game:paused` event.
+ * A pause cannot be built from outside, because the thing that has to stop is
+ * the fixed-step accumulator that lives in this closure and nowhere else. It
+ * reuses the start-overlay gate below verbatim — no timescale, no second code
+ * path, no change to the update or render order.
+ *
  * UPDATE ORDER (one fixed step)
  *   input -> level -> terrain -> vehicle -> particles -> upgrades
  *         -> camera -> effects -> sound -> ui
@@ -39,8 +45,11 @@ SM.main = (function () {
 
   var running = false;
   var started = false;   // simulation is held until the player's first gesture
+  var paused = false;    // ...and again whenever the pause menu is up
   var lastTime = 0;
   var accumulator = 0;
+
+  var evPaused = { paused: false };   // reused payload, like every hot emitter
 
   var fps = 0;
   var fpsFrames = 0;
@@ -132,9 +141,13 @@ SM.main = (function () {
     if (dt > C.MAX_FRAME_DT) dt = C.MAX_FRAME_DT;
 
     accumulator += dt;
-    // The world renders behind the start overlay, but time does not pass —
-    // otherwise the run drives off without the player.
-    if (!started) accumulator = 0;
+    // The world renders behind the start overlay — and behind the pause menu —
+    // but time does not pass, otherwise the run drives off without the player.
+    // ZEROING the accumulator rather than skipping the while-loop is the whole
+    // trick: a paused minute banks nothing, so the first frame after a resume
+    // steps exactly once like any other frame instead of paying out sixty
+    // seconds of backlog and teleporting the rig across the map.
+    if (!started || paused) accumulator = 0;
 
     var t0 = performance.now();
     var steps = 0;
@@ -163,7 +176,40 @@ SM.main = (function () {
   /* =====================================================================
    * RUN CONTROL
    * ================================================================== */
+  /**
+   * Gate the simulation. RENDERING CARRIES ON regardless, so the mine is still
+   * there under the menu — held on the exact frame you paused it, rather than
+   * blanked out or left to a stale backbuffer.
+   *
+   * Pausing is REFUSED in the two states that have nothing to pause: behind
+   * the start overlay (no time is passing there anyway) and after `run:over`
+   * (the summary card owns the screen, and a pause menu on top of it would
+   * leave the player looking at a RESUME button for a run that is already
+   * scored). Un-pausing is never refused, so nothing can strand the game.
+   *
+   * Fires `game:paused` ON CHANGE ONLY — a button that re-asserts the state it
+   * is already in must not make the menu flicker. Returns the RESULTING state,
+   * so a caller can tell an accepted pause from a refused one on the spot
+   * instead of asking again.
+   */
+  function setPaused(p) {
+    p = !!p;
+    if (p && !started) return paused;
+    if (p && SM.level && SM.level.isRunOver && SM.level.isRunOver()) return paused;
+    if (p === paused) return paused;
+    paused = p;
+    evPaused.paused = paused;
+    SM.events.emit('game:paused', evPaused);
+    return paused;
+  }
+
   function restart() {
+    // Clear the pause FIRST. RESTART is reachable from inside the pause menu,
+    // so `game:paused` has to land before `run:reset`: the menu is then gone
+    // by the time the fresh run announces itself, and a restarted run can
+    // never come up already frozen.
+    setPaused(false);
+
     // Order matters:
     //   vehicle+camera first  -> position and DEFAULT ZOOM are restored before
     //                            terrain sizes its streaming window from the
@@ -217,6 +263,8 @@ SM.main = (function () {
   return {
     init: init,
     restart: restart,
+    setPaused: setPaused,
+    isPaused: function () { return paused; },
     getFps: function () { return fps; },
     getStepMs: function () { return stepMs; },
     getCanvas: function () { return canvas; },

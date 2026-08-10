@@ -24,6 +24,13 @@
  * bedrock, not more game. recomputeScale() clamps scale so we never show more
  * than MAX_WALL_VISIBLE of wall on each side. Do not remove it.
  *
+ * THE CAMERA ALSO SIZES THE TERRAIN GRID.
+ * How much world is on screen is a camera decision, and it is what decides how
+ * many deposits the fixed 7500-particle pool has to cover. So the budget is
+ * solved HERE, once at load (solveWorldDensity), and terrain.js and
+ * materials.js both read the answer back. That is what lets a portrait phone
+ * show the whole lane. Read the note by the tunables before touching any of it.
+ *
  * Public API (main.js depends on these signatures — do not change them):
  *   SM.camera.init()
  *   SM.camera.update(dt)
@@ -35,7 +42,8 @@
  *   SM.camera.worldToScreen(x,y) / screenToWorld(x,y)   REUSED object
  *   SM.camera.setViewport(w,h)
  *   SM.camera.reset()
- * Additions: punch(a), setZone(kind), setAutoZoom(b), getTrauma()
+ * Additions: punch(a), setZone(kind), setAutoZoom(b), getTrauma(),
+ *            getWorldSpacing(), getMaxViewHeight()
  * ========================================================================== */
 
 var SM = SM || {};
@@ -53,29 +61,66 @@ SM.camera = (function () {
   // of game between them.
   var MAX_WALL_VISIBLE = 300;
 
-  /* --- LANE FIT (the portrait/mobile problem) ---------------------------
-   * `scale` is normalised on HEIGHT alone, which is fine on any landscape
-   * screen and quietly disastrous on a portrait one: measured at 390x844 only
-   * 34% of the 1280-unit lane was on screen, so both halves of a paired gate
-   * could not be seen at once and the walls never appeared at all.
+  /* --- LANE FIT vs TERRAIN DENSITY (the portrait/mobile problem) --------
+   * `scale` used to be normalised on HEIGHT alone, which is fine on any
+   * landscape screen and quietly disastrous on a portrait one: measured at
+   * 390x844 only 34% of the 1280-unit lane was on screen, so both halves of a
+   * paired gate could not be seen at once and the walls never appeared.
    *
-   * LANE_FIT_MARGIN caps the scale so the whole lane (plus a sliver of wall)
-   * fits across the viewport.
+   * LANE_FIT_MARGIN caps the scale so the whole lane, plus a sliver of wall
+   * on each side, fits across the viewport. 40 units a side reads as "there
+   * IS a wall there" without wasting screen: portrait lands at 1360/1280 =
+   * 106% of the lane.
    *
-   * MAX_VIEW_HEIGHT is what stops that cure being worse than the disease.
-   * Fitting 1280 units into a 390px-wide screen means showing ~2900 units of
-   * world HEIGHT — and terrain.js streams the FULL visible height at SPACING
-   * 19, which works out at ~11 600 deposits against a 7500 particle pool.
-   * Streaming would run dry and the world would generate full of holes. So the
-   * fit is bounded by the tallest view the particle budget can actually fill:
-   *   rows = (H + 2*STREAM_VIEW_MARGIN) / SPACING, cols = 1280 / SPACING = 67
-   *   1500 -> ~97 rows -> ~6500 solids, leaving ~1000 for live debris.
-   * A portrait phone therefore lands around half the lane rather than a third,
-   * and only LANDSCAPE shows the whole field — which is what the rotate hint
-   * in ui.js is for.
+   * THE REASON THAT WAS NOT ENOUGH ON ITS OWN
+   * Fitting 1280 units into a 390px-wide screen means showing ~2940 units of
+   * world HEIGHT, and terrain.js streams the FULL visible height. At the
+   * authored grid pitch of 19 that is ~11 600 deposits against a 7500
+   * particle pool: streaming runs dry, generateBand() starts refusing, and
+   * the world comes out full of holes. The previous fix bounded the fit with
+   * a flat MAX_VIEW_HEIGHT of 1500 and a portrait phone got about half the
+   * lane — better than a third, still not the lane.
+   *
+   * WHAT WE DO INSTEAD
+   * Stop treating the grid pitch as a constant. There is really only one
+   * equation here — deposits = laneWidth * streamedHeight / spacing^2 — and
+   * three knobs in it, so pick the two that matter (the whole lane is
+   * visible; the pool is never starved) and SOLVE FOR SPACING. A portrait
+   * phone gets a coarser, chunkier mine; a desktop is untouched because at a
+   * landscape aspect the solve lands below the authored pitch and clamps.
+   *
+   * Roughly 82% of grid cells actually produce a deposit — pockets carve
+   * voids, corridor floors and barrier doorways are open, gates are carved
+   * out — measured as 3839 live solids against 4641 cells at 1280x800 and
+   * 5354 against 6524 at 390x844, i.e. 0.827 and 0.821. CELL_BUDGET is
+   * therefore counted in CELLS, and 7200 of them is ~5900 live deposits:
+   * that leaves ~1500 pool slots against a bandBudget() demand of ~900
+   * (DEBRIS_RESERVE 700 plus one band), so a heavy debris torrent slows
+   * streaming rather than stopping it, ~1600 units in front of the machine
+   * where nobody can see it happen.
+   *
+   * SPACING_MIN is terrain.js's authored 19 — the world never gets FINER
+   * than it is today, only coarser. SPACING_MAX 30 is where a deposit
+   * (diameter 22 at most, SPRITE_MAX_RADIUS being 11 and frozen) stops
+   * reading as packed ground and starts reading as scattered pebbles;
+   * viewports narrow enough to want more than that get the old bounded fit
+   * back instead. Spacing is rounded UP to SPACING_STEP so the rounding
+   * error is always spent on pool headroom.
+   *
+   * THE SOLVE RUNS ONCE, AT LOAD, AND IS THEN LATCHED — see solveWorldDensity().
    * ------------------------------------------------------------------ */
   var LANE_FIT_MARGIN = 40;      // world units of wall to keep beside the lane
-  var MAX_VIEW_HEIGHT = 1500;    // tallest world view the pool can fill
+  var CELL_BUDGET     = 7200;    // grid cells we can afford to stream at once
+  var SPACING_MIN     = 19.0;    // terrain.js's authored pitch; never go finer
+  var SPACING_MAX     = 30.0;    // beyond this the ground reads as scattered
+  var SPACING_STEP    = 0.5;
+
+  // A viewport whose short side is this or less belongs to something you can
+  // physically turn over. See viewportCanRotate().
+  var ROTATABLE_MAX_SHORT_SIDE = 900;
+
+  var worldSpacing = SPACING_MIN;   // solved once, read by terrain.js
+  var budgetViewHeight = 1500;      // tallest world view the solved grid fills
 
   // Width -> zoom-out. zoomFactor = (baseWidth / currentWidth) ^ WIDTH_EXP.
   // Deliberately gentle: the lane is fixed, so aggressive pull-back just shows
@@ -181,6 +226,98 @@ SM.camera = (function () {
   }
 
   /* =====================================================================
+   * WORLD DENSITY  (the lane-fit solve — read the note by the tunables)
+   * ================================================================== */
+
+  /**
+   * Can this viewport swap its width and height while the page is open?
+   * It matters because the density solve is LATCHED (see below): a phone must
+   * be sized for the orientation it is worst in, or rotating mid-run would
+   * change the grid underneath an economy that can no longer follow.
+   *
+   * `pointer: coarse` is the honest signal and is all a phone or tablet needs.
+   * maxTouchPoints is the fallback for browsers that do not report it, gated
+   * on the short side of the viewport so that a touch-screen LAPTOP — which
+   * has fingers but does not get turned over — is not quietly given a
+   * portrait phone's grid on a 1080-tall screen.
+   */
+  function viewportCanRotate() {
+    if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+    var short = Math.min(window.innerWidth || 0, window.innerHeight || 0);
+    return (navigator.maxTouchPoints | 0) > 0 && short > 0 && short <= ROTATABLE_MAX_SHORT_SIDE;
+  }
+
+  /**
+   * The SMALLEST scale (= widest view) the camera can legally settle on for a
+   * given viewport. Runs the same three clamps as recomputeScale(), in the
+   * same order, because anything else would be sizing the terrain grid for a
+   * view the camera never actually shows.
+   */
+  function widestScaleFor(w, h) {
+    // Furthest out the zoom logic itself can go (update() clamps zoom to
+    // CAM_ZOOM_MIN * 0.9), then the lane-fit ceiling, then the lane-fill floor.
+    var s = C.CAM_ZOOM_MIN * 0.9 * (h / C.CAM_REFERENCE_HEIGHT);
+    var fit = w / (C.LANE_HALF_WIDTH * 2 + LANE_FIT_MARGIN * 2);
+    if (s > fit) s = fit;
+    var lo = w / (C.LANE_HALF_WIDTH * 2 + MAX_WALL_VISIBLE * 2);
+    if (s < lo) s = lo;
+    return s;
+  }
+
+  /**
+   * Solve `deposits = laneWidth * streamedHeight / spacing^2` for spacing,
+   * then hand the answer to materials.js so value and hardness per deposit
+   * can be scaled to match. RUN ONCE, FROM THE MODULE BODY (see the call at
+   * the bottom of this file), and never again.
+   *
+   * WHY ONCE, when the brief for this was "recompute on orientationchange"?
+   * Because the economy cannot follow. particles.js bakes value and hardness
+   * into flat typed arrays in buildMaterialCache(), that runs in
+   * particles.init(), and nothing rebuilds it — so a grid that changed on
+   * rotation would be paying out at whatever density the page happened to
+   * load in. The fix is to make the answer ORIENTATION-INVARIANT instead: on
+   * anything that can rotate we solve for the portrait orientation, which is
+   * always the demanding one, and a phone then has the same mine, the same
+   * money and the same rock whichever way up it is held.
+   *
+   * That leaves one loose end — a DESKTOP window dragged from landscape to a
+   * narrow portrait shape, which no longer qualifies for the rotation
+   * treatment. Nothing breaks: budgetViewHeight is the tallest view the
+   * SOLVED grid can fill, recomputeScale() refuses to fit past it, and such a
+   * window simply gets the old bounded fit (less than the full lane) rather
+   * than a starved pool and a world full of holes. A reload gives it the
+   * full lane back.
+   */
+  function solveWorldDensity() {
+    var w = window.innerWidth || 1;
+    var h = window.innerHeight || 1;
+    if (viewportCanRotate()) {
+      var shortSide = w < h ? w : h;
+      var longSide = w < h ? h : w;
+      w = shortSide; h = longSide;              // solve for portrait
+    }
+
+    var rawH = h / widestScaleFor(w, h);
+    var laneW = C.LANE_HALF_WIDTH * 2;
+    var streamH = rawH + C.STREAM_VIEW_MARGIN * 2;   // terrain streams past the edge
+
+    var sp = Math.sqrt(laneW * streamH / CELL_BUDGET);
+    sp = Math.ceil(sp / SPACING_STEP) * SPACING_STEP;   // round UP: spend it on headroom
+    if (sp < SPACING_MIN) sp = SPACING_MIN;
+    if (sp > SPACING_MAX) sp = SPACING_MAX;
+    worldSpacing = sp;
+
+    // How tall a view that grid can actually fill. Equal to rawH except when
+    // SPACING_MAX bit, and that is exactly when the fit has to be bounded.
+    var affordableH = CELL_BUDGET * sp * sp / laneW - C.STREAM_VIEW_MARGIN * 2;
+    budgetViewHeight = rawH < affordableH ? rawH : affordableH;
+
+    if (SM.materials && SM.materials.applyWorldDensity) {
+      SM.materials.applyWorldDensity(sp, SPACING_MIN);
+    }
+  }
+
+  /* =====================================================================
    * SETUP
    * ================================================================== */
   function init() {
@@ -234,14 +371,17 @@ SM.camera = (function () {
     if (scale < minScale) scale = minScale;
 
     /* Lane-fit ceiling: never so zoomed IN that the lane runs off the sides.
-     * Bounded by MAX_VIEW_HEIGHT so a narrow screen cannot ask for more
-     * terrain than the particle pool can generate — see the notes up top.
+     * Bounded by budgetViewHeight so a narrow screen cannot ask for more
+     * terrain than the solved grid can generate — see the notes up top. On
+     * every viewport the density solve was run for, `affordable` lands at or
+     * below `fit`, so the full lane wins and this bound is dormant; it only
+     * bites on a window reshaped past what the latched grid can fill.
      * Only ever REDUCES scale: `affordable` may exceed the current scale on a
      * short landscape window, and zooming further in is the opposite of the
      * problem being solved here. */
     var fit = vpW / (C.LANE_HALF_WIDTH * 2 + LANE_FIT_MARGIN * 2);
     if (scale > fit) {
-      var affordable = vpH / MAX_VIEW_HEIGHT;
+      var affordable = vpH / budgetViewHeight;
       var target = fit > affordable ? fit : affordable;
       if (target < scale) scale = target;
     }
@@ -453,6 +593,17 @@ SM.camera = (function () {
     recomputeScale();
   }
 
+  /* --- density solve, right here in the module body -------------------------
+   * Deliberately NOT in init(), and this is not tidiness. main.js runs
+   * particles.init() BEFORE camera.init(), and particles.init() bakes hardness
+   * and value into typed arrays that nothing ever rebuilds — so materials.js
+   * has to be told the grid pitch while the page is still parsing scripts.
+   * camera.js is script 5 of 14: SM.config and SM.materials exist,
+   * window.innerWidth is readable, and terrain.js (script 7) has not asked for
+   * the spacing yet. This is the only window that works.
+   * ---------------------------------------------------------------------- */
+  solveWorldDensity();
+
   return {
     init: init,
     update: update,
@@ -473,6 +624,15 @@ SM.camera = (function () {
     punch: doPunch,
     setZone: setZone,
     setAutoZoom: setAutoZoom,
-    getTrauma: function () { return trauma; }
+    getTrauma: function () { return trauma; },
+
+    /* --- world density, solved once at load (see solveWorldDensity) ----
+     * terrain.js reads getWorldSpacing() to size its generation grid, and
+     * materials.js has already been handed the same number to re-balance
+     * value and hardness against. All three must agree or the mine pays out
+     * at one density and generates at another. */
+    getWorldSpacing: function () { return worldSpacing; },
+    /** Tallest world view the solved grid can fill, in world units. */
+    getMaxViewHeight: function () { return budgetViewHeight; }
   };
 })();
