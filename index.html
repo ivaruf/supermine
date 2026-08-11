@@ -24,6 +24,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style-adventure.css">
 </head>
 <body>
 
@@ -38,7 +39,8 @@
   Not ES modules: this must run from file:// and module imports are blocked
   there by CORS. Every file attaches itself to the single global `SM`.
 
-  >>> index.html IS FROZEN. Agents 2 and 3 must not add or reorder files. <<<
+  >>> index.html IS FROZEN. No agent adds or reorders files. The adventure
+  >>> block below was added once, by the architect, and is the complete set.
 -->
 <script src="js/config.js"></script>     <!-- SM.config    : constants, no deps        -->
 <script src="js/events.js"></script>     <!-- SM.events    : pub/sub, no deps          -->
@@ -53,6 +55,23 @@
 <script src="js/effects.js"></script>    <!-- SM.effects   : materials, camera, events -->
 <script src="js/sound.js"></script>      <!-- SM.sound     : vehicle, events           -->
 <script src="js/ui.js"></script>         <!-- SM.ui        : everything, events        -->
+
+<!--
+  ADVENTURE MODE. The order inside this block is documentation, not a
+  dependency: every cross-reference happens at runtime, and main.js init()s
+  them in the order that actually matters (data -> world -> interface -> state
+  machine). See ADVENTURE.md for the ownership map and the module contracts.
+-->
+<script src="js/mines.js"></script>      <!-- SM.mines     : catalogue + economy       -->
+<script src="js/rig.js"></script>        <!-- SM.rig       : machine parts + stats     -->
+<script src="js/save.js"></script>       <!-- SM.save      : slots, localStorage       -->
+<script src="js/advterrain.js"></script> <!-- SM.advterrain: geology, carve mask       -->
+<script src="js/scanner.js"></script>    <!-- SM.scanner   : ore signatures            -->
+<script src="js/joystick.js"></script>   <!-- SM.joystick  : translucent thumbstick    -->
+<script src="js/advhud.js"></script>     <!-- SM.advhud    : in-mine gauges            -->
+<script src="js/advui.js"></script>      <!-- SM.advui     : map, workshop, slots      -->
+<script src="js/adv.js"></script>        <!-- SM.adv       : run director + states     -->
+
 <script src="js/main.js"></script>       <!-- SM.main      : boots the game            -->
 
 </body>

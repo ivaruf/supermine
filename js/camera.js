@@ -184,9 +184,79 @@ SM.camera = (function () {
   var SHAKE_EVENT_COMPLETE = 16;
   var SHAKE_GRIND_GAIN     = 5.0;    // continuous rumble from cutter resistance
 
+  /* =====================================================================
+   * AGENT-1 TUNABLES — ADVENTURE MODE
+   * ---------------------------------------------------------------------
+   * Adventure asks the camera three different questions and everything below
+   * exists to answer them:
+   *
+   * 1. THE ZOOM IS FIXED, AND THEN FITTED. ADV.CAM_ZOOM is a shared, frozen
+   *    constant the whole mode is framed around, so the derived auto-zoom above
+   *    is off: desiredZoom() short-circuits and setZoomTarget() stays ignored.
+   *    Zoom PUNCH still lands, because that is impact feedback, not framing.
+   *
+   *    But a constant alone is wrong on a phone, and this mode is thumb-driven.
+   *    ADV.CAM_ZOOM normalises on HEIGHT (like the classic zoom), so a 390x844
+   *    portrait viewport lands at scale 0.75 and shows about 520 of the shaft's
+   *    1760 units — under a third of the width the player is steering around in.
+   *    So the adventure scale is additionally FITTED: never so zoomed in that
+   *    less than ADV_FIT_SHAFT of the shaft is across the screen. It can only
+   *    ever zoom OUT from the tuned value, so desktop framing is untouched
+   *    (measured: 1440x813 stays at 0.723, exactly as before), while portrait
+   *    settles near 0.49 and shows ~790 units — about the diameter of the
+   *    starting headlamp, which is the most of the mine a phone can usefully
+   *    light anyway.
+   *
+   * 2. THE LOOK-AHEAD HAS TO ROTATE. The classic lead is hard-coded to -y
+   *    because the classic machine only ever drives that way. Here the player
+   *    picks the direction, so the lead is a VECTOR along the velocity, eased
+   *    as a vector so that turning around swings the framing instead of
+   *    snapping it. It is expressed as a fraction of the visible half-height
+   *    for the same reason the classic one is: framing that survives a resize.
+   *
+   * 3. recomputeScale() IS SOLVED AGAINST THE WRONG WIDTH. Both of its clamps
+   *    are written against LANE_HALF_WIDTH (640) and the shaft is
+   *    ADV.MINE_HALF_WIDTH (880), so they fight it in opposite directions:
+   *      * the lane-FILL floor would allow 300 units of bedrock either side of
+   *        a 1280 lane — measured against a 1760 shaft it is simply too small a
+   *        view, so it is re-solved against the shaft;
+   *      * the lane-FIT ceiling ("never so zoomed in that the lane runs off the
+   *        sides") is actively wrong underground. The shaft is MEANT to run off
+   *        the sides — you are in a tunnel, not a lane — and forcing 1760 units
+   *        across a 390 px phone would zoom to 0.21, put the machine on screen
+   *        at eight pixels and multiply the streamed area by twenty. So the
+   *        adventure branch does not apply it at all.
+   * ================================================================== */
+
+  // Bedrock we will tolerate beside the shaft before refusing to widen further.
+  var ADV_WALL_VISIBLE = 260;
+  // The fraction of the shaft's full width that must fit across the viewport.
+  // 0.45 of 1760 is ~790 units: enough of the shaft to steer in and to see a
+  // seam beside you, without shrinking the machine to a chip on a phone.
+  var ADV_FIT_SHAFT = 0.45;
+  // ...and a hard floor, so a freak viewport cannot zoom out into abstraction.
+  // At 0.30 the starting machine is still ~45 px wide.
+  var ADV_MIN_SCALE = 0.30;
+  // Lead, as a fraction of the visible half-height, at full drive speed.
+  var ADV_LEAD_FRAC = 0.20;
+  var ADV_LEAD_LERP = 2.0;
+  // How much rock outside the shaft, and sky above the mouth, may show. Keeping
+  // the camera inside these means the walls read as the edge of the world
+  // instead of as a place the view falls off.
+  var ADV_WALL_PEEK = 150;
+  var ADV_SKY_PEEK = 420;
+
   /* ================================================================== */
 
   var C = SM.config;
+  var A = SM.config.ADV;
+
+  /** True from SM.adv.open() to close(): the whole campaign, not just a run. */
+  function advOn() {
+    return !!(SM.adv && SM.adv.isActive && SM.adv.isActive());
+  }
+
+  var advLeadX = 0, advLeadY = 0;
 
   var x = 0, y = 0;                 // camera centre in world space
   var zoomBase = C.CAM_ZOOM;        // smoothed, punch-free
@@ -365,6 +435,7 @@ SM.camera = (function () {
   }
 
   function recomputeScale() {
+    if (advOn()) { recomputeScaleAdv(); return; }
     scale = zoom * (vpH / C.CAM_REFERENCE_HEIGHT);
     // Lane-fill floor: never show more world width than lane + 2*MAX_WALL_VISIBLE.
     var minScale = vpW / (C.LANE_HALF_WIDTH * 2 + MAX_WALL_VISIBLE * 2);
@@ -385,6 +456,37 @@ SM.camera = (function () {
       var target = fit > affordable ? fit : affordable;
       if (target < scale) scale = target;
     }
+    if (scale < 0.05) scale = 0.05;
+  }
+
+  /**
+   * The adventure scale. One clamp only — the shaft-fill floor, re-solved
+   * against ADV.MINE_HALF_WIDTH — and deliberately NO lane-fit ceiling. See
+   * point 3 of the tunables note above for why that would be wrong here.
+   */
+  function recomputeScaleAdv() {
+    scale = zoom * (vpH / C.CAM_REFERENCE_HEIGHT);
+
+    /* THE PORTRAIT FIT. Only ever reduces the scale, so a landscape desktop —
+     * where the tuned framing already shows more than the whole shaft — is
+     * untouched, and a narrow screen is widened until it can see enough of the
+     * shaft to drive in. Note that this is deliberately applied to `scale` and
+     * not to `zoom`: update() clamps zoom at CAM_ZOOM_MIN * 0.9 (0.558) and a
+     * portrait fit needs ~0.52, so routing it through the zoom would be silently
+     * clamped back. getZoom() therefore stays the nominal ADV.CAM_ZOOM, which is
+     * also what keeps particles.js's LOW_DETAIL_ZOOM switch from flipping the
+     * whole mine to cheap squares on exactly the devices that most want the
+     * detail. */
+    var fit = vpW / (A.MINE_HALF_WIDTH * 2 * ADV_FIT_SHAFT);
+    if (scale > fit) scale = fit;
+
+    // Shaft-fill floor, re-solved against ADV.MINE_HALF_WIDTH: never show more
+    // bedrock than ADV_WALL_VISIBLE either side. Cannot cross the fit above —
+    // its denominator is three times as large.
+    var minScale = vpW / (A.MINE_HALF_WIDTH * 2 + ADV_WALL_VISIBLE * 2);
+    if (scale < minScale) scale = minScale;
+
+    if (scale < ADV_MIN_SCALE) scale = ADV_MIN_SCALE;
     if (scale < 0.05) scale = 0.05;
   }
 
@@ -420,6 +522,12 @@ SM.camera = (function () {
 
   /** The camera's own opinion about how far out we should be. */
   function desiredZoom() {
+    // ADVENTURE: fixed framing. The derived width/zone/overdrive zoom is a
+    // time-attack device — the rig grows there, and the mode is a lane. Here
+    // the zoom is a shared constant every other adventure module is tuned
+    // against (light radius, streaming window, joystick scale), so it is not
+    // the camera's to have an opinion about.
+    if (advOn()) return A.CAM_ZOOM;
     if (!autoZoom) return externalZoom;
 
     ensureBaseWidth();
@@ -462,6 +570,56 @@ SM.camera = (function () {
   }
 
   /* =====================================================================
+   * ADVENTURE FOLLOW
+   * ---------------------------------------------------------------------
+   * A follow for a machine that can travel in any direction. The lead is a
+   * vector along the velocity, eased AS A VECTOR so a 180-degree turn swings
+   * the framing round instead of teleporting it through zero, and the target is
+   * then clamped so the view never slides off the shaft or up into the sky.
+   * The clamp is applied to the TARGET, exactly as the classic lane-slack clamp
+   * is, so the camera eases into its limit rather than hitting a wall.
+   * ================================================================== */
+  var advTargetX = 0, advTargetY = 0;
+
+  function updateAdvFollow(dt) {
+    if (!SM.vehicle || !SM.vehicle.getY) return;
+    var vxv = SM.vehicle.getVelX ? SM.vehicle.getVelX() : 0;
+    var vyv = SM.vehicle.getVelY ? SM.vehicle.getVelY() : 0;
+    var sp = Math.sqrt(vxv * vxv + vyv * vyv);
+
+    var halfW = (vpW * 0.5) / scale;
+    var halfH = (vpH * 0.5) / scale;
+
+    var lx = 0, ly = 0;
+    if (sp > 1) {
+      var ref = (SM.rig && SM.rig.getSpeed) ? SM.rig.getSpeed() : C.VEHICLE_SPEED;
+      if (!(ref > 1)) ref = C.VEHICLE_SPEED;
+      var t = sp / ref;
+      if (t > 1) t = 1;
+      var mag = t * ADV_LEAD_FRAC * halfH;
+      lx = (vxv / sp) * mag;
+      ly = (vyv / sp) * mag;
+    }
+    var k = 1 - Math.exp(-ADV_LEAD_LERP * dt);
+    advLeadX += (lx - advLeadX) * k;
+    advLeadY += (ly - advLeadY) * k;
+
+    advTargetX = SM.vehicle.getX() + advLeadX;
+    advTargetY = SM.vehicle.getY() + advLeadY;
+
+    // Keep bedrock off the sides. When the view is wider than the shaft plus
+    // its peek there is nothing to slide, so centre it.
+    var slack = A.MINE_HALF_WIDTH + ADV_WALL_PEEK - halfW;
+    if (slack < 0) slack = 0;
+    if (advTargetX > slack) advTargetX = slack;
+    else if (advTargetX < -slack) advTargetX = -slack;
+
+    // ...and the sky off the top. -y is up, so this is a lower bound.
+    var top = A.MINE_CEILING_Y - ADV_SKY_PEEK + halfH;
+    if (advTargetY < top) advTargetY = top;
+  }
+
+  /* =====================================================================
    * UPDATE
    * ================================================================== */
   function update(dt) {
@@ -474,7 +632,11 @@ SM.camera = (function () {
     /* --- follow target ------------------------------------------------ */
     var tx = 0, ty = 0;
     var speed = 0;
-    if (SM.vehicle && SM.vehicle.getY) {
+    if (advOn()) {
+      updateAdvFollow(dt);
+      tx = advTargetX;
+      ty = advTargetY;
+    } else if (SM.vehicle && SM.vehicle.getY) {
       speed = SM.vehicle.getSpeed ? SM.vehicle.getSpeed() : C.VEHICLE_SPEED;
       var lat = SM.vehicle.getLateralSpeed ? SM.vehicle.getLateralSpeed() : 0;
       tx = SM.vehicle.getX() * C.CAM_LATERAL_LEAD + lat * STEER_LEAD;
@@ -610,6 +772,20 @@ SM.camera = (function () {
     overdriveMix = overdriveTarget = 0;
     trauma = 0;
     shakeX = shakeY = shakeRot = 0;
+    advLeadX = advLeadY = 0;
+
+    /* ADVENTURE: snap onto the machine at the mine mouth. adv.enterMine() has
+     * already reset the vehicle by the time it calls this, so the position is
+     * available — and without the snap a descent would open with the camera
+     * flying in from wherever the time-attack lane left it. */
+    if (advOn()) {
+      x = (SM.vehicle && SM.vehicle.getX) ? SM.vehicle.getX() : 0;
+      y = (SM.vehicle && SM.vehicle.getY) ? SM.vehicle.getY() : A.MINE_CEILING_Y;
+      advTargetX = x;
+      advTargetY = y;
+      zoom = zoomBase = externalZoom = A.CAM_ZOOM;
+      lookahead = 0;
+    }
     recomputeScale();
   }
 

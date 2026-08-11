@@ -1,0 +1,1662 @@
+/* =============================================================================
+ * SUPERMINE — style-adventure.css                  [OWNER: Agent 4 — INTERFACE]
+ * -----------------------------------------------------------------------------
+ * All adventure-mode styling. style.css is FROZEN: nothing in this file
+ * requires a change there.
+ *
+ * TWO RULES THAT MATTER MORE THAN THE REST
+ *
+ * 1. #ui-root gets the class `sm-adv` for the whole campaign (js/ui.js adds it).
+ *    EVERYTHING here is scoped to `.sm-adv`, which is also how the classic
+ *    chrome — still in the DOM underneath — is taken down in one block below.
+ *
+ * 2. MOBILE FIRST, and portrait is not an afterthought. The instrument panel is
+ *    a stack pinned to the TOP on every viewport, because the bottom of the
+ *    screen belongs to the thumb: the joystick's origin floats to wherever it
+ *    lands, and anything down there is something the player's own hand is
+ *    covering. Every meta screen is header / scrolling body / FIXED FOOTER, so
+ *    the primary button is reachable without a scroll on any screen size.
+ *
+ * The palette, the metal-plate treatment and the type scale come from
+ * style.css and are reused, not re-invented: .sm-panel, .sm-stripe, .sm-btn,
+ * .sm-cell and the --sm-* custom properties are all shared. Adventure mode is
+ * the same machine in a bigger world, not a different game.
+ *
+ * ORDER OF THIS FILE
+ *   1. classic chrome, hidden
+ *   2. the joystick
+ *   3. the in-mine HUD + the adventure pause card
+ *   4. the meta screens (shell, slots, map, garage, prep, results)
+ *   5. responsive: compact / portrait / tiny / short-landscape
+ * ========================================================================== */
+
+/* ===========================================================================
+ * 1. CLASSIC CHROME, HIDDEN
+ * ---------------------------------------------------------------------------
+ * ui.js builds the whole time-attack HUD at startup and leaves it in the DOM.
+ * None of it means anything in a campaign — there is no clock, no score, no
+ * upgrade rail, no auto-advance to steer — so it goes wholesale. The list is
+ * read off style.css, not guessed.
+ *
+ * The two exceptions are deliberate: `.sm-start` is the main menu, which
+ * ui.js fades with its own `.sm-start-off` and needs back when the player
+ * leaves the campaign; and `.sm-debug` is the fps readout, which is as useful
+ * underground as it is in a time attack.
+ * ======================================================================== */
+/* ...and the mirror image of the same rule: the adventure chrome is built once
+ * and left in the DOM too, so when `sm-adv` comes OFF (SM.ui.leaveAdventure)
+ * every layer this file owns leaves the classic HUD completely alone. The
+ * modules already hide themselves by class; this is the belt to that braces. */
+#ui-root:not(.sm-adv) .sm-av,
+#ui-root:not(.sm-adv) .sm-ah,
+#ui-root:not(.sm-adv) .sm-ah-btns,
+#ui-root:not(.sm-adv) .sm-ah-pause,
+#ui-root:not(.sm-adv) .sm-stick-layer {
+  display: none !important;
+}
+
+.sm-adv .sm-topbar,          /* the score strip                         */
+.sm-adv .sm-center,          /* countdown + zone line column            */
+.sm-adv .sm-meters,          /* overdrive / speed boost                 */
+.sm-adv .sm-rail,            /* upgrade icon rail                       */
+.sm-adv .sm-tally,           /* live haul tally                         */
+.sm-adv .sm-pads,            /* the two steering pads                   */
+.sm-adv .sm-hint,            /* keyboard hint line                      */
+.sm-adv .sm-banner,          /* zone banner                             */
+.sm-adv .sm-toast,           /* upgrade announcement                    */
+.sm-adv .sm-splash,          /* power-up splash                         */
+.sm-adv .sm-buttons,         /* classic sound + pause (advhud has its own) */
+.sm-adv .sm-pause,           /* classic pause card (refused in adventure) */
+.sm-adv .sm-summary {        /* classic end-of-run summary              */
+  display: none !important;
+}
+
+/* ===========================================================================
+ * 2. THE JOYSTICK
+ * ---------------------------------------------------------------------------
+ * A full-bleed FIXED layer so client coordinates map straight through with no
+ * rect measuring (#ui-root carries the safe-area padding; an input surface
+ * wants the whole viewport). It sits UNDER the HUD panels' z-index, so a tap
+ * that lands on a control is a control press and everything else is a drive.
+ *
+ * The base is only painted once a pointer has actually used it — a desktop
+ * player driving on WASD is never shown a thumb control they did not ask for.
+ * ======================================================================== */
+.sm-stick-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.sm-adv .sm-stick-layer.sm-stick-armed { pointer-events: auto; }
+
+.sm-stick-base {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 148px;                 /* 2 x RADIUS in js/joystick.js */
+  height: 148px;
+  margin-left: -74px;
+  margin-top: -74px;
+  opacity: 0;
+  transition: opacity 0.34s ease;
+  will-change: transform, opacity;
+}
+/* Visible but translucent when idle, brighter while a thumb is on it. It sits
+   on top of the mine the player is trying to read, so it never gets solid. */
+.sm-stick-base.sm-stick-on { opacity: 0.5; }
+.sm-stick-base.sm-stick-hold { opacity: 0.92; transition: opacity 0.08s ease; }
+
+.sm-stick-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(150, 200, 235, 0.34);
+  background:
+    radial-gradient(circle,
+      rgba(10, 14, 20, 0.34) 0%,
+      rgba(10, 14, 20, 0.16) 62%,
+      rgba(10, 14, 20, 0) 100%);
+  box-shadow:
+    inset 0 0 20px rgba(0, 0, 0, 0.55),
+    0 0 16px rgba(0, 0, 0, 0.40);
+}
+/* The DEAD ZONE, drawn. 42% inset of a 74px radius is ~11.8px, which is the
+   0.16 dead zone in js/joystick.js — the ring literally shows the band where
+   the machine does not move. */
+.sm-stick-ring::after {
+  content: '';
+  position: absolute;
+  inset: 42%;
+  border-radius: 50%;
+  border: 1px dashed rgba(160, 205, 240, 0.30);
+}
+
+.sm-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 60px;                  /* 2 x KNOB_R in js/joystick.js */
+  height: 60px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(180deg,
+      rgba(150, 226, 255, 0.92), rgba(46, 128, 172, 0.82) 68%, rgba(24, 74, 104, 0.86));
+  border: 1px solid rgba(196, 246, 255, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.45),
+    0 5px 16px rgba(0, 0, 0, 0.55);
+  transition: transform 0.16s cubic-bezier(0.2, 1.3, 0.4, 1);
+}
+/* No transition while a finger is on it, or the knob lags behind the thumb. */
+.sm-stick-hold .sm-stick-knob { transition: none; }
+
+/* ===========================================================================
+ * 3. THE IN-MINE HUD
+ * ---------------------------------------------------------------------------
+ * One column at the top: where am I, how much fuel, what is in the hold. The
+ * panel itself does NOT take pointer events — only the two icon buttons and
+ * the manifest rows do — so a drag that starts over the gauges still drives.
+ * ======================================================================== */
+.sm-ah {
+  position: absolute;
+  top: var(--sm-top-y);
+  left: var(--sm-gutter);
+  right: var(--sm-gutter);
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease, filter 0.28s ease;
+  z-index: 6;
+}
+.sm-ah.sm-ah-on { opacity: 1; }
+/* The pause card sits above; the instruments dim behind it. */
+.sm-ah.sm-ah-paused { filter: grayscale(0.6) brightness(0.55); }
+
+.sm-ah-lbl {
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 2.4px;
+  text-indent: 2.4px;
+  color: var(--sm-dimmer);
+}
+.sm-ah-val {
+  font-family: var(--sm-mono);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--sm-text);
+  font-variant-numeric: tabular-nums;
+}
+.sm-ah-sub {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--sm-dim);
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- row 1: depth, the way home, and the two conditional gauges -------- */
+.sm-ah-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 12px 8px;
+  padding-right: 96px;          /* clear of the icon buttons */
+  min-height: 44px;
+}
+.sm-ah-cell { min-width: 0; }
+.sm-ah-exit .sm-ah-val::before {
+  content: '\2191';             /* up arrow: the surface is -y */
+  color: var(--sm-cyan);
+  margin-right: 4px;
+  font-weight: 800;
+}
+/* HEAT and INTEGRITY are ABSENT until they mean something. A dead gauge in the
+   starter mine teaches the player to ignore that corner of the screen. */
+.sm-ah-heat, .sm-ah-integ { display: none; }
+.sm-ah-heat.sm-ah-live, .sm-ah-integ.sm-ah-live { display: block; }
+
+.sm-ah-mini {
+  width: 54px;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.sm-ah-mini-fill {
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  transform: scaleX(var(--sm-ah-fill, 0));
+  background: linear-gradient(90deg, var(--sm-cyan), var(--sm-cyan-hot));
+  transition: transform 0.14s linear;
+}
+.sm-ah-heat .sm-ah-mini-fill { background: linear-gradient(90deg, #ff8a1f, #ffd9a0); }
+.sm-ah-integ .sm-ah-mini-fill { background: linear-gradient(90deg, var(--sm-green), #d8ffe6); }
+.sm-ah-cell.sm-ah-hot .sm-ah-val { color: var(--sm-red); }
+.sm-ah-cell.sm-ah-hot .sm-ah-mini-fill { background: linear-gradient(90deg, var(--sm-red), #ffc7bf); }
+
+/* --- the bars ---------------------------------------------------------- */
+.sm-ah-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 3px;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.sm-ah-bar-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: scaleX(var(--sm-ah-fill, 0));
+  /* scaleX on a gradient would smear it, so the gradient is authored to be
+     read from the LEFT edge only — it is a level, not a picture. */
+  background: linear-gradient(90deg, #ffb01f, #ffe08a);
+  transition: transform 0.12s linear;
+}
+.sm-ah-bar-cargo .sm-ah-bar-fill { background: linear-gradient(90deg, #35c7ff, #c4f6ff); }
+
+/* THE RESERVE MARK. This is the whole fuel instrument: it turns a percentage
+   into "that much of the tank is the way home". */
+.sm-ah-bar-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 0;
+  width: 2px;
+  margin-left: calc(var(--sm-ah-mark, 0) * 100%);
+  background: var(--sm-text);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 8px rgba(255, 255, 255, 0.5);
+  opacity: 0;
+  transition: margin-left 0.2s ease, opacity 0.2s ease;
+}
+.sm-ah-bar-mark.sm-ah-bar-mark-on { opacity: 0.85; }
+
+/* --- FUEL: the primary gauge ------------------------------------------- */
+.sm-ah-fuel { padding: 8px 12px 10px; }
+.sm-ah-fuel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 6px;
+}
+.sm-ah-fuel-head .sm-ah-lbl { align-self: center; }
+.sm-ah-fuel-pct {
+  font-family: var(--sm-mono);
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 0.95;
+  letter-spacing: -0.5px;
+  color: var(--sm-gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 0 #000, 0 0 18px rgba(255, 194, 31, 0.30);
+}
+.sm-ah-fuel-note {
+  margin-left: auto;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-dim);
+}
+
+/* Amber: what is left is close to what getting home costs. */
+.sm-ah-fuel.sm-ah-warn { border-color: rgba(255, 194, 31, 0.5); }
+.sm-ah-fuel.sm-ah-warn .sm-ah-fuel-note { color: var(--sm-gold); }
+.sm-ah-fuel.sm-ah-warn .sm-ah-bar-fill { background: linear-gradient(90deg, #ff8a1f, #ffd08a); }
+/* Red and pulsing: the reserve is spent. This is the failure state arriving. */
+.sm-ah-fuel.sm-ah-crit {
+  border-color: rgba(255, 90, 72, 0.7);
+  animation: sm-ah-alarm 1.05s ease-in-out infinite;
+}
+.sm-ah-fuel.sm-ah-crit .sm-ah-fuel-pct { color: var(--sm-red); text-shadow: 0 2px 0 #000, 0 0 20px rgba(255, 90, 72, 0.5); }
+.sm-ah-fuel.sm-ah-crit .sm-ah-fuel-note { color: var(--sm-red); }
+.sm-ah-fuel.sm-ah-crit .sm-ah-bar-fill { background: linear-gradient(90deg, #ff4a36, #ffb3a8); }
+@keyframes sm-ah-alarm {
+  0%, 100% { box-shadow: inset 0 1px 0 var(--sm-edge-hi), inset 0 -2px 0 var(--sm-edge-lo), 0 6px 18px rgba(0,0,0,0.55); }
+  50%      { box-shadow: inset 0 1px 0 var(--sm-edge-hi), inset 0 -2px 0 var(--sm-edge-lo), 0 6px 18px rgba(0,0,0,0.55), 0 0 22px rgba(255,90,72,0.55); }
+}
+
+/* --- the hold ---------------------------------------------------------- */
+.sm-ah-cargo { padding: 8px 12px 9px; }
+.sm-ah-cargo-val {
+  font-family: var(--sm-mono);
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--sm-cyan-hot);
+  font-variant-numeric: tabular-nums;
+}
+.sm-ah-cargo.sm-ah-full { border-color: rgba(102, 226, 255, 0.6); }
+.sm-ah-cargo.sm-ah-full .sm-ah-cargo-val { color: var(--sm-cyan); }
+
+.sm-ah-manifest {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+.sm-ah-manifest.sm-ah-manifest-empty { margin-top: 0; }
+/* A manifest row IS a button: tap once to arm, twice to tip that material onto
+   the floor. "Dump the coal" is the decision the manifest exists to support. */
+.sm-ah-mrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 19px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: rgba(10, 13, 17, 0.55);
+  font-family: var(--sm-mono);
+  color: var(--sm-text);
+  pointer-events: auto;
+  cursor: pointer;
+  text-align: left;
+}
+.sm-ah-mrow:hover { background: rgba(30, 38, 48, 0.7); }
+.sm-ah-msw {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  flex: 0 0 auto;
+  background: var(--sm-ah-sw, #8e9bab);
+  box-shadow: 0 0 6px var(--sm-ah-sw, #8e9bab);
+}
+.sm-ah-mname {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--sm-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+}
+.sm-ah-munits {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--sm-text);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.sm-ah-mval {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--sm-gold);
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.sm-ah-mrow-armed {
+  border-color: rgba(255, 90, 72, 0.75);
+  background: rgba(70, 18, 14, 0.75);
+}
+.sm-ah-mrow-armed .sm-ah-munits { color: var(--sm-red); }
+.sm-ah-more {
+  display: none;
+  font-family: var(--sm-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  color: var(--sm-dimmer);
+  margin-top: 4px;
+}
+.sm-ah-more.sm-ah-more-on { display: block; }
+
+/* --- the scanner line -------------------------------------------------- */
+.sm-ah-scan {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-left: 3px solid var(--sm-ah-sw, var(--sm-cyan));
+  background: rgba(8, 12, 17, 0.72);
+  border-radius: 2px;
+}
+.sm-ah-scan.sm-ah-scan-on { display: flex; }
+.sm-ah-scan-arrow {
+  width: 15px;
+  height: 15px;
+  color: var(--sm-ah-sw, var(--sm-cyan));
+  transform: rotate(var(--sm-ah-bearing, 0deg));
+  transition: transform 0.18s ease;
+}
+.sm-ah-scan-arrow svg { display: block; width: 100%; height: 100%; }
+.sm-ah-scan-text {
+  font-family: var(--sm-mono);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  color: var(--sm-text);
+}
+.sm-ah-scan-dist {
+  margin-left: auto;
+  font-family: var(--sm-mono);
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--sm-ah-sw, var(--sm-cyan));
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the alert banner --------------------------------------------------
+ * Directly under the stack (top:100%), centred. Short, loud, and gone. */
+.sm-ah-alert {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-top: 12px;
+  transform: translateX(-50%) translateY(-8px);
+  min-width: 210px;
+  padding: 8px 18px 9px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(48, 20, 14, 0.92), rgba(20, 9, 7, 0.94));
+  border: 1px solid rgba(255, 138, 31, 0.55);
+  border-radius: 4px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+}
+.sm-ah-alert.sm-ah-alert-on { animation: sm-ah-alert-kf 2.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes sm-ah-alert-kf {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(-16px) scale(0.96); }
+  9%   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  82%  { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.99); }
+}
+.sm-ah-alert-title {
+  font-family: var(--sm-mono);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-indent: 3px;
+  color: var(--sm-gold-hot);
+  text-shadow: 0 2px 0 #000;
+}
+.sm-ah-alert-sub {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  color: var(--sm-dim);
+  margin-top: 3px;
+}
+
+/* --- the two icon buttons --------------------------------------------- */
+.sm-ah-btns {
+  position: absolute;
+  top: var(--sm-top-y);
+  right: var(--sm-gutter);
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+  z-index: 8;
+}
+.sm-ah-btns.sm-ah-on { opacity: 1; pointer-events: auto; }
+
+/* --- the adventure pause card ----------------------------------------- */
+.sm-ah-pause {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(4, 6, 9, 0.6), rgba(2, 3, 5, 0.92));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  z-index: 17;
+}
+.sm-ah-pause.sm-ah-pause-on { opacity: 1; pointer-events: auto; }
+.sm-ah-pause-card {
+  width: min(340px, 86vw);
+  padding: 20px 20px 18px;
+  text-align: center;
+  transform: translateY(10px);
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sm-ah-pause-on .sm-ah-pause-card { transform: none; }
+.sm-ah-pause-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin: 12px 0 14px;
+  text-align: left;
+}
+.sm-ah-pause-stats .sm-cell { padding: 6px 8px; }
+.sm-ah-pause-stats .sm-cell-value { font-size: 15px; }
+.sm-ah-pause-note {
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  line-height: 1.5;
+  color: var(--sm-dimmer);
+  margin-top: 10px;
+}
+.sm-btn.sm-ah-danger { color: #ffd8d2; border-color: rgba(255, 90, 72, 0.42); }
+.sm-btn.sm-ah-armed {
+  color: #1a0603;
+  background: linear-gradient(180deg, #ff9b8c, var(--sm-red) 55%, #b3271a);
+  border-color: rgba(255, 200, 190, 0.6);
+}
+
+/* ===========================================================================
+ * 4. THE META SCREENS
+ * ---------------------------------------------------------------------------
+ * One shell: a ledger strip, a stage holding all five screens, and a toast.
+ * Every screen is header / scrolling body / FIXED FOOTER — the footer is where
+ * the primary action lives, so it can never be scrolled out of reach.
+ * ======================================================================== */
+.sm-av {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: max(8px, var(--sm-top-y)) var(--sm-gutter) 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.26s ease;
+  z-index: 14;
+}
+.sm-av.sm-av-on { opacity: 1; pointer-events: auto; }
+
+/* --- the ledger strip -------------------------------------------------- */
+.sm-av-ledger {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 12px 7px;
+}
+.sm-av.sm-av-noledger .sm-av-ledger { display: none; }
+.sm-av-led-co {
+  font-family: var(--sm-mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2.4px;
+  color: var(--sm-text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sm-av-led-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+.sm-av-led-cell {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.8px;
+  color: var(--sm-dim);
+  font-variant-numeric: tabular-nums;
+}
+.sm-av-led-cash {
+  font-family: var(--sm-mono);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--sm-gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 0 #000, 0 0 14px rgba(255, 194, 31, 0.28);
+}
+
+/* --- the stage and one screen ------------------------------------------ */
+.sm-av-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.sm-av-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.22s ease, transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sm-av-screen.sm-av-screen-on {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+}
+.sm-av-head { flex: 0 0 auto; }
+.sm-av-kicker {
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-indent: 3px;
+  color: var(--sm-gold);
+}
+.sm-av-title {
+  font-family: var(--sm-mono);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 3.4px;
+  text-indent: 3.4px;
+  line-height: 1.1;
+  color: var(--sm-text);
+  text-shadow: 0 2px 0 #000;
+  margin-top: 2px;
+}
+.sm-av-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+.sm-av-body::-webkit-scrollbar { width: 4px; }
+.sm-av-body::-webkit-scrollbar-thumb { background: rgba(126, 140, 158, 0.35); border-radius: 2px; }
+.sm-av-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 2px;
+}
+.sm-av-foot .sm-btn { flex: 1 1 0; margin-top: 0; }
+/* The primary action gets its own line on a phone: it is the one thing that
+   must be unmissable and comfortably thumb-sized. */
+.sm-av-foot .sm-btn-big { flex: 1 1 100%; margin-top: 0; min-height: 52px; }
+.sm-btn.sm-av-quiet {
+  color: var(--sm-dim);
+  font-size: 10px;
+  min-height: 42px;
+}
+.sm-btn.sm-av-cant {
+  filter: grayscale(0.75) brightness(0.7);
+  cursor: default;
+}
+.sm-btn.sm-av-armed {
+  color: #1a0603;
+  background: linear-gradient(180deg, #ff9b8c, var(--sm-red) 55%, #b3271a);
+  border-color: rgba(255, 200, 190, 0.6);
+}
+.sm-av-sub {
+  font-family: var(--sm-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 1.1px;
+  line-height: 1.6;
+  color: var(--sm-dim);
+  font-variant-numeric: tabular-nums;
+}
+.sm-av-warn {
+  font-family: var(--sm-mono);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  line-height: 1.5;
+  color: #ffcfa8;
+  background: rgba(90, 44, 10, 0.5);
+  border-left: 3px solid var(--sm-orange);
+  padding: 7px 10px;
+  margin-top: 9px;
+  border-radius: 2px;
+}
+.sm-av-good { color: var(--sm-green) !important; }
+.sm-av-bad { color: var(--sm-red) !important; }
+
+.sm-av-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sm-av-card-name {
+  font-family: var(--sm-mono);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 2.2px;
+  color: var(--sm-text);
+}
+.sm-av-card-region {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-gold);
+  margin-left: auto;
+}
+.sm-av-card-blurb {
+  font-family: var(--sm-font);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--sm-dim);
+  margin-top: 7px;
+}
+.sm-av-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 10px;
+}
+.sm-av-card-grid .sm-cell { padding: 7px 10px; }
+.sm-av-card-grid .sm-cell-value { font-size: 15px; }
+
+/* --- chips (materials, hazards) --------------------------------------- */
+.sm-av-chips { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.sm-av-chiprow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sm-av-chiplabel {
+  font-family: var(--sm-mono);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-dimmer);
+  min-width: 52px;
+}
+.sm-av-chip {
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  padding: 3px 7px 4px;
+  border-radius: 2px;
+  color: var(--sm-text);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid var(--sm-av-chip, #8e9bab);
+}
+.sm-av-haz {
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  color: #ffb98a;
+  margin-top: 9px;
+}
+
+/* ---------------------------------------------------------------------------
+ * SLOTS
+ * ------------------------------------------------------------------------ */
+.sm-av-slot { padding: 10px 12px 11px; }
+.sm-av-slot-top { display: flex; align-items: baseline; gap: 10px; }
+.sm-av-slot-no {
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 2.4px;
+  color: var(--sm-dimmer);
+}
+.sm-av-slot-name {
+  font-family: var(--sm-mono);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sm-av-slot-empty .sm-av-slot-name { color: var(--sm-dimmer); }
+.sm-av-slot-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 9px 0 10px;
+}
+.sm-av-slot-stats .sm-cell { padding: 5px 8px 6px; }
+.sm-av-slot-stats .sm-cell-value { font-size: 13px; }
+.sm-av-slot-acts { display: flex; gap: 8px; margin-top: 9px; }
+.sm-av-slot-acts .sm-btn { flex: 1 1 0; }
+.sm-av-slot-acts .sm-av-quiet { flex: 0 0 88px; }
+/* The name editor. advui.js toggles the inline display, so the rule here is
+   what an un-inlined ('') display resolves to. */
+.sm-av-slot-form { display: flex; gap: 8px; margin-top: 9px; }
+.sm-av-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--sm-mono);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-text);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(126, 140, 158, 0.4);
+  border-radius: 3px;
+  padding: 10px 12px;
+  outline: none;
+}
+.sm-av-input:focus { border-color: var(--sm-cyan); box-shadow: 0 0 0 2px rgba(102, 226, 255, 0.18); }
+.sm-av-input::placeholder { color: var(--sm-dimmer); letter-spacing: 2px; }
+
+/* ---------------------------------------------------------------------------
+ * MAP
+ * The artwork is CSS: layered gradients that read as a surveyed plateau cut by
+ * a valley, plus a faint contour grid. No image assets, nothing to load.
+ * `.sm-av-map` is the SCREEN; `.sm-av-mapart` is the artwork inside it.
+ * ------------------------------------------------------------------------ */
+.sm-av-mapart {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 210px;
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius);
+  overflow: hidden;
+  background: #07101a;
+  box-shadow: inset 0 0 70px rgba(0, 0, 0, 0.8);
+}
+/* The land, the sea and the terrain are DRAWN — see drawMapArt() in advui.js.
+   Everything else on this screen is DOM on top of that one canvas. */
+.sm-av-map-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* A paper-chart vignette over the artwork, so the edges of the plate darken
+   instead of the coastline running into the border. */
+.sm-av-mapart::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 110% at 50% 45%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 100%);
+}
+.sm-av-map-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--sm-dimmer);
+}
+.sm-av-regions, .sm-av-pins { position: absolute; inset: 0; }
+
+/* The region box itself is now invisible: it exists to position the name and
+   the reveal sweep over the drawn land. */
+.sm-av-region {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 18px;
+}
+/* The name sits OUTSIDE the top of the region box. Inside it, a single-mine
+   region puts the region name a few pixels above the mine name and the two
+   read as one clump — which is exactly what the first draft of this screen
+   did wrong. `overflow` is deliberately not hidden here either, or a long
+   region name gets guillotined by a small island. */
+.sm-av-region-label {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -118%);
+  font-family: var(--sm-mono);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 2.6px;
+  color: rgba(222, 236, 250, 0.62);
+  white-space: nowrap;
+  text-shadow: 0 1px 3px #000, 0 0 8px #000;
+}
+/* Held ground is named in gold. Unsurveyed ground is named 'UNSURVEYED'. */
+.sm-av-region-label.sm-av-region-held { color: var(--sm-gold); }
+.sm-av-region-label.sm-av-region-fog {
+  color: rgba(160, 176, 196, 0.55);
+  letter-spacing: 3.4px;
+  font-size: 7px;
+}
+
+/* THE SURVEY SWEEP. A new region joining the chart is the campaign's
+   milestone — a bar of light crossing the new ground, once, on reveal.
+   TWO elements, because the bar has to be CLIPPED TO THE LAND: an unclipped
+   gradient over the region's bounding box reads as a bright rectangle sitting
+   on the sea, which is what the first cut of this looked like. The ellipse is
+   inset to roughly the coastline drawn on the canvas underneath. */
+.sm-av-reveal {
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  overflow: hidden;
+  opacity: 0;
+}
+.sm-av-reveal::before {
+  content: '';
+  position: absolute;
+  inset: -20% -70%;
+  background:
+    linear-gradient(105deg,
+      rgba(255, 226, 140, 0) 40%,
+      rgba(255, 240, 190, 0.62) 50%,
+      rgba(255, 226, 140, 0) 60%);
+}
+.sm-av-reveal.sm-av-reveal-on {
+  animation: sm-av-survey-fade 1.5s ease-in-out both;
+  box-shadow: inset 0 0 22px rgba(255, 226, 140, 0.45);
+}
+.sm-av-reveal.sm-av-reveal-on::before {
+  animation: sm-av-survey-sweep 1.5s cubic-bezier(0.35, 0.7, 0.25, 1) both;
+}
+@keyframes sm-av-survey-fade {
+  0%   { opacity: 0; }
+  14%  { opacity: 1; }
+  76%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes sm-av-survey-sweep {
+  0%   { transform: translateX(-46%); }
+  100% { transform: translateX(46%); }
+}
+
+/* A pin you own reads differently from one you can buy, and one you cannot
+   afford differently again. */
+.sm-av-pin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.sm-av-pin-dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--sm-dimmer);
+  border: 2px solid rgba(0, 0, 0, 0.7);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+.sm-av-pin-name {
+  font-family: var(--sm-mono);
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  color: var(--sm-dim);
+  white-space: nowrap;
+  text-shadow: 0 1px 3px #000, 0 0 6px #000;
+}
+.sm-av-pin-tag {
+  font-family: var(--sm-mono);
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: var(--sm-dimmer);
+  font-variant-numeric: tabular-nums;
+}
+/* THREE STATES, THREE SHAPES — not three shades of the same dot, because the
+   difference between "mine", "for sale" and "not yet" has to survive a glance
+   on a phone in daylight:
+     OWNED        a solid gold rivet with a dark core, name in gold, tag HELD
+     FOR SALE     a cyan DIAMOND, name in cyan, tag showing the price
+     UNAFFORDABLE a hollow grey ring, dimmed, price still shown */
+.sm-av-pin-owned .sm-av-pin-dot {
+  background: radial-gradient(circle at 50% 40%, #fff3c4 0%, var(--sm-gold) 45%, #a97a06 100%);
+  box-shadow: 0 0 14px rgba(255, 194, 31, 0.75), 0 0 0 1px rgba(0, 0, 0, 0.7);
+}
+.sm-av-pin-owned .sm-av-pin-dot::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: rgba(30, 20, 0, 0.65);
+}
+.sm-av-pin-owned .sm-av-pin-name { color: var(--sm-gold-hot); }
+.sm-av-pin-owned .sm-av-pin-tag { color: var(--sm-gold); letter-spacing: 1.6px; }
+
+.sm-av-pin-buy .sm-av-pin-dot {
+  background: linear-gradient(180deg, var(--sm-cyan-hot), var(--sm-cyan) 55%, #2597c4);
+  border-radius: 2px;
+  transform: rotate(45deg);
+  box-shadow: 0 0 14px rgba(102, 226, 255, 0.65), 0 0 0 1px rgba(0, 0, 0, 0.7);
+}
+.sm-av-pin-buy .sm-av-pin-name { color: var(--sm-cyan-hot); }
+.sm-av-pin-buy .sm-av-pin-tag { color: var(--sm-cyan); }
+
+.sm-av-pin-far { opacity: 0.72; }
+.sm-av-pin-far .sm-av-pin-dot {
+  background: rgba(10, 14, 20, 0.6);
+  border-color: rgba(150, 165, 185, 0.7);
+}
+/* On unsurveyed ground a pin is a rumour: no colour, no name, no price. */
+.sm-av-pin-fog { opacity: 0.5; }
+.sm-av-pin-fog .sm-av-pin-dot {
+  background: rgba(8, 11, 16, 0.8);
+  border-color: rgba(150, 170, 200, 0.45);
+  border-style: dashed;
+  transform: none;
+  border-radius: 50%;
+  box-shadow: none;
+}
+.sm-av-pin-fog .sm-av-pin-dot::after { display: none; }
+.sm-av-pin-fog .sm-av-pin-name { color: rgba(170, 186, 206, 0.6); letter-spacing: 1.8px; }
+.sm-av-pin-fog .sm-av-pin-tag { color: rgba(170, 186, 206, 0.5); }
+
+.sm-av-pin-sel .sm-av-pin-dot { transform: scale(1.5); }
+.sm-av-pin-buy.sm-av-pin-sel .sm-av-pin-dot { transform: rotate(45deg) scale(1.5); }
+.sm-av-pin-sel::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  width: 34px;
+  height: 34px;
+  margin: -10px 0 0 -17px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 50%;
+  animation: sm-av-ping 1.9s ease-out infinite;
+}
+@keyframes sm-av-ping {
+  0%   { transform: scale(0.5); opacity: 0.9; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+.sm-av-minecard {
+  flex: 0 0 auto;
+  padding: 11px 12px 12px;
+  display: none;
+}
+.sm-av-minecard.sm-av-minecard-on { display: block; }
+
+/* ---------------------------------------------------------------------------
+ * GARAGE
+ * ------------------------------------------------------------------------ */
+.sm-av-rig {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 210px;
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius);
+  overflow: hidden;
+  box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.7);
+}
+.sm-av-rig-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.sm-av-hots { position: absolute; inset: 0; }
+.sm-av-hot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 7px;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.sm-av-hot-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(18, 22, 28, 0.9);
+  border: 2px solid rgba(180, 200, 220, 0.6);
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+.sm-av-hot-lbl {
+  font-family: var(--sm-mono);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: var(--sm-dim);
+  text-shadow: 0 1px 3px #000, 0 0 6px #000;
+  white-space: nowrap;
+}
+.sm-av-hot-lv {
+  font-family: var(--sm-mono);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: var(--sm-gold);
+  text-shadow: 0 1px 3px #000;
+}
+/* Affordable upgrades announce themselves ON the machine. */
+.sm-av-hot-buy .sm-av-hot-dot {
+  border-color: var(--sm-cyan);
+  background: rgba(20, 70, 92, 0.9);
+  box-shadow: 0 0 12px rgba(102, 226, 255, 0.55);
+}
+.sm-av-hot-max .sm-av-hot-dot { border-color: rgba(255, 194, 31, 0.75); background: rgba(70, 52, 8, 0.9); }
+.sm-av-hot-sel .sm-av-hot-dot { transform: scale(1.45); border-color: #fff; }
+.sm-av-hot-sel .sm-av-hot-lbl { color: var(--sm-text); }
+
+.sm-av-part { flex: 0 0 auto; padding: 11px 12px 12px; }
+.sm-av-pips { display: flex; gap: 4px; margin-top: 9px; }
+.sm-av-pip {
+  width: 22px;
+  height: 5px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.sm-av-pip.sm-av-pip-on {
+  background: linear-gradient(180deg, var(--sm-gold-hot), var(--sm-gold));
+  box-shadow: 0 0 8px rgba(255, 194, 31, 0.5);
+}
+
+/* ---------------------------------------------------------------------------
+ * PREP
+ * ------------------------------------------------------------------------ */
+.sm-av-prep-mine, .sm-av-prep-fuel, .sm-av-prep-hull {
+  flex: 0 0 auto;
+  padding: 11px 12px 12px;
+}
+.sm-av-strata { margin-top: 9px; display: flex; flex-direction: column; gap: 3px; }
+.sm-av-stratum {
+  display: grid;
+  grid-template-columns: 10px 1fr 74px 1fr;
+  align-items: center;
+  gap: 8px;
+  height: 21px;
+  padding: 0 7px;
+  background: rgba(10, 13, 17, 0.55);
+  border-radius: 2px;
+  font-family: var(--sm-mono);
+}
+.sm-av-stratum-sw {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--sm-av-chip, #8e9bab);
+  box-shadow: 0 0 6px var(--sm-av-chip, #8e9bab);
+}
+.sm-av-stratum-name {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: var(--sm-text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sm-av-stratum-depth {
+  font-size: 8.5px;
+  font-weight: 800;
+  color: var(--sm-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.sm-av-stratum-ore {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--sm-gold);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The fuel slider. A real commitment, so it gets a real control. */
+.sm-av-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 26px;
+  margin: 10px 0 6px;
+  background: none;
+  pointer-events: auto;
+}
+.sm-av-range::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.sm-av-range::-moz-range-track {
+  height: 10px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.sm-av-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -9px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--sm-gold-hot), var(--sm-gold) 55%, #b4820c);
+  border: 1px solid rgba(255, 240, 168, 0.7);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.sm-av-range::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--sm-gold-hot), var(--sm-gold) 55%, #b4820c);
+  border: 1px solid rgba(255, 240, 168, 0.7);
+  cursor: pointer;
+}
+.sm-av-btnrow { display: flex; gap: 7px; margin-top: 8px; }
+.sm-av-btnrow .sm-btn { flex: 1 1 0; min-height: 38px; font-size: 9px; }
+
+.sm-av-bar {
+  position: relative;
+  height: 10px;
+  margin: 9px 0 10px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.sm-av-bar-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: scaleX(var(--sm-av-fill, 0));
+  background: linear-gradient(90deg, var(--sm-green), #d8ffe6);
+}
+.sm-av-bar-fill.sm-av-bar-bad { background: linear-gradient(90deg, var(--sm-red), #ffc7bf); }
+
+/* DESCEND is the point of no return, and it says so: the hazard stripe from
+   the machinery language, welded to the top edge of the button. */
+.sm-btn.sm-av-descend {
+  color: #150b02;
+  background: linear-gradient(180deg, #ffd979, var(--sm-gold) 45%, #c98a06 100%);
+  border-color: rgba(255, 240, 168, 0.6);
+  overflow: hidden;
+}
+.sm-btn.sm-av-descend::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--sm-hazard);
+  opacity: 0.9;
+}
+
+/* ---------------------------------------------------------------------------
+ * RESULTS — the payoff
+ * ------------------------------------------------------------------------ */
+.sm-av-res { flex: 0 0 auto; padding: 13px 14px 14px; }
+.sm-av-res-headline {
+  font-family: var(--sm-font);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--sm-dim);
+}
+.sm-av-res-hero {
+  margin: 11px 0 12px;
+  padding: 11px 14px 12px;
+  background: linear-gradient(180deg, rgba(255, 194, 31, 0.16), rgba(0, 0, 0, 0.5));
+  border: 1px solid rgba(255, 194, 31, 0.38);
+  border-radius: 4px;
+  text-align: center;
+}
+.sm-av-res-hero-label {
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-indent: 3px;
+  color: var(--sm-gold);
+}
+.sm-av-res-total {
+  font-family: var(--sm-mono);
+  font-size: clamp(30px, 11vw, 46px);
+  font-weight: 800;
+  line-height: 1.05;
+  color: var(--sm-gold-hot);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 3px 0 #000, 0 0 28px rgba(255, 194, 31, 0.4);
+  margin-top: 2px;
+}
+.sm-av-res-total-pop { animation: sm-av-pop 0.42s cubic-bezier(0.2, 1.5, 0.4, 1); }
+@keyframes sm-av-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.09); }
+  100% { transform: scale(1); }
+}
+.sm-av-res-lines { display: flex; flex-direction: column; gap: 3px; }
+.sm-av-res-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 26px;
+  padding: 0 9px;
+  background: rgba(10, 13, 17, 0.6);
+  border-radius: 2px;
+  border-left: 3px solid var(--sm-av-chip, #8e9bab);
+  font-family: var(--sm-mono);
+  opacity: 0;
+  transform: translateX(-9px);
+}
+/* Each line lands in turn — the count-up in advui.js adds this class as that
+   row's number starts rolling. */
+.sm-av-res-row.sm-av-res-row-in {
+  animation: sm-av-row-in 0.34s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes sm-av-row-in {
+  from { opacity: 0; transform: translateX(-9px); }
+  to   { opacity: 1; transform: none; }
+}
+.sm-av-res-sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 1px;
+  background: var(--sm-av-chip, #8e9bab);
+  box-shadow: 0 0 7px var(--sm-av-chip, #8e9bab);
+  flex: 0 0 auto;
+}
+.sm-av-res-name {
+  flex: 1 1 auto;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: var(--sm-text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sm-av-res-units {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: var(--sm-dim);
+  font-variant-numeric: tabular-nums;
+}
+.sm-av-res-val {
+  min-width: 82px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--sm-gold);
+  font-variant-numeric: tabular-nums;
+}
+.sm-av-res-empty {
+  font-family: var(--sm-mono);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-dimmer);
+  padding: 10px 0;
+  text-align: center;
+}
+/* A strand is a different screen wearing the same bones. */
+.sm-av-res-strand .sm-av-kicker { color: var(--sm-red); }
+.sm-av-res-strand .sm-av-res-hero {
+  background: linear-gradient(180deg, rgba(255, 90, 72, 0.16), rgba(0, 0, 0, 0.5));
+  border-color: rgba(255, 90, 72, 0.42);
+}
+.sm-av-res-strand .sm-av-res-hero-label { color: var(--sm-red); }
+.sm-av-res-strand .sm-av-res-hero-label::after { content: ' — LOST'; }
+.sm-av-res-strand .sm-av-res-total { color: #ffb3a8; text-shadow: 0 3px 0 #000, 0 0 28px rgba(255, 90, 72, 0.35); }
+.sm-av-res-strand .sm-av-res-val { color: #ffb3a8; }
+.sm-av-res-strand .sm-stripe { background: linear-gradient(90deg, var(--sm-red), #7a1d13); }
+
+/* --- the toast -------------------------------------------------------- */
+.sm-av-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%) translateY(10px);
+  min-width: 230px;
+  max-width: min(420px, 88vw);
+  padding: 9px 18px 10px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(28, 34, 42, 0.95), rgba(12, 15, 19, 0.96));
+  border: 1px solid rgba(255, 194, 31, 0.45);
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 19;
+}
+.sm-av-toast.sm-av-toast-on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.sm-av-toast-title {
+  font-family: var(--sm-mono);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 2.6px;
+  text-indent: 2.6px;
+  color: var(--sm-gold-hot);
+}
+.sm-av-toast-sub {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: var(--sm-dim);
+  margin-top: 3px;
+}
+
+/* ===========================================================================
+ * 5. RESPONSIVE
+ * ---------------------------------------------------------------------------
+ * ui.js already publishes .sm-compact / .sm-portrait / .sm-tiny on #ui-root on
+ * every resize, for both modes, so adventure mode reuses those switches rather
+ * than inventing a second set of breakpoints.
+ * ======================================================================== */
+
+/* --- WIDE: two columns, so nothing has to scroll at all ---------------- */
+@media (min-width: 760px) {
+  .sm-adv .sm-ah-strip { padding-right: 12px; }
+  .sm-adv .sm-av { padding-left: max(var(--sm-gutter), 3vw); padding-right: max(var(--sm-gutter), 3vw); }
+  .sm-adv .sm-av-foot { justify-content: flex-end; }
+  .sm-adv .sm-av-foot .sm-btn { flex: 0 1 200px; }
+  .sm-adv .sm-av-foot .sm-btn-big { flex: 0 1 320px; }
+
+  /* MAP and GARAGE become side-by-side: the artwork on the left, the card on
+     the right, and neither one scrolls the other out of view. */
+  .sm-adv .sm-av-map > .sm-av-body,
+  .sm-adv .sm-av-garage > .sm-av-body {
+    flex-direction: row;
+    align-items: flex-start;         /* the card hugs its content, not the frame */
+    overflow: hidden;                /* each column scrolls itself */
+  }
+  .sm-adv .sm-av-mapart,
+  .sm-adv .sm-av-rig { flex: 1 1 58%; min-height: 0; align-self: stretch; }
+  .sm-adv .sm-av-minecard,
+  .sm-adv .sm-av-part {
+    flex: 0 0 384px;
+    min-height: 0;
+    max-height: 100%;
+    overflow-y: auto;
+  }
+
+  /* THE SINGLE-COLUMN SCREENS GET A COLUMN, NOT A WALL.
+     Slots, prep and results are lists of rows; stretched across 1440 px the
+     label ends up a foot away from its value and a manifest line reads as two
+     unrelated numbers. Cap them and centre them — footer included, so the
+     primary button stays directly under the card it belongs to. */
+  .sm-adv .sm-av-slots > .sm-av-body > *,
+  .sm-adv .sm-av-prep > .sm-av-body > *,
+  .sm-adv .sm-av-results > .sm-av-body > *,
+  .sm-adv .sm-av-slots > .sm-av-foot,
+  .sm-adv .sm-av-prep > .sm-av-foot,
+  .sm-adv .sm-av-results > .sm-av-foot {
+    width: 100%;
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* Centre the three slots in the empty height rather than pinning them to the
+     top of a very tall screen. Auto margins, not justify-content: a scrolling
+     flex column with centred content clips its first child when it overflows. */
+  .sm-adv .sm-av-slots > .sm-av-body > .sm-av-slot:first-child { margin-top: auto; }
+  .sm-adv .sm-av-slots > .sm-av-body > .sm-av-slot:last-child { margin-bottom: auto; }
+  /* CONTINUE / NEW COMPANY does not need to be a metre wide. */
+  .sm-adv .sm-av-slot-acts .sm-btn { flex: 0 1 260px; }
+  .sm-adv .sm-av-slot-acts { justify-content: flex-start; }
+  .sm-adv .sm-av-title { font-size: 26px; }
+  .sm-adv .sm-av-pin-name { font-size: 8.5px; }
+  .sm-adv .sm-av-hot-lbl { font-size: 8px; }
+}
+
+/* --- COMPACT (phone landscape, small windows) -------------------------- */
+.sm-adv.sm-compact .sm-ah { gap: 5px; max-width: 460px; }
+.sm-adv.sm-compact .sm-ah-strip { min-height: 38px; padding: 5px 10px 6px; }
+.sm-adv.sm-compact .sm-ah-val { font-size: 15px; }
+.sm-adv.sm-compact .sm-ah-fuel-pct { font-size: 26px; }
+.sm-adv.sm-compact .sm-ah-fuel { padding: 6px 10px 8px; }
+.sm-adv.sm-compact .sm-ah-cargo { padding: 6px 10px 7px; }
+.sm-adv.sm-compact .sm-ah-mrow { height: 17px; }
+.sm-adv.sm-compact .sm-av { gap: 6px; }
+.sm-adv.sm-compact .sm-av-title { font-size: 18px; letter-spacing: 2.6px; }
+.sm-adv.sm-compact .sm-av-ledger { min-height: 34px; padding: 4px 10px 5px; }
+.sm-adv.sm-compact .sm-av-led-cash { font-size: 15px; }
+.sm-adv.sm-compact .sm-av-slot { padding: 8px 10px 9px; }
+.sm-adv.sm-compact .sm-av-slot-stats { margin: 7px 0 8px; }
+.sm-adv.sm-compact .sm-av-res { padding: 10px 11px 11px; }
+
+/* Phone landscape has almost no vertical room: collapse the strata report and
+   the machine blurb rather than let the primary button drift off-screen. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .sm-adv .sm-av-strata { display: none; }
+  .sm-adv .sm-av-card-blurb { display: none; }
+  .sm-adv .sm-av-res-hero { margin: 8px 0 8px; padding: 7px 10px 8px; }
+  .sm-adv .sm-av-title { font-size: 16px; }
+  .sm-adv .sm-ah-manifest { display: none; }
+}
+
+/* --- PORTRAIT (the default phone case) --------------------------------- */
+.sm-adv.sm-portrait .sm-ah { max-width: none; }
+.sm-adv.sm-portrait .sm-av-map { min-height: 34vh; }
+.sm-adv.sm-portrait .sm-av-rig { min-height: 30vh; }
+.sm-adv.sm-portrait .sm-av-slot-stats { grid-template-columns: repeat(2, 1fr); }
+.sm-adv.sm-portrait .sm-av-toast { bottom: 108px; }
+/* The joystick's throw is a thumb rotation, not a screen fraction, so it does
+   not scale with the viewport — but the base does get a touch smaller on a
+   phone so it covers less of the rock. */
+.sm-adv.sm-portrait .sm-stick-base { opacity: 0; }
+.sm-adv.sm-portrait .sm-stick-base.sm-stick-on { opacity: 0.44; }
+.sm-adv.sm-portrait .sm-stick-base.sm-stick-hold { opacity: 0.86; }
+
+/* --- TINY (narrow phones) ---------------------------------------------
+ * The card grid deliberately stays TWO columns here. One column per cell was
+ * tried and it pushed the material chips and the hazard line a whole screen
+ * further down; the values are all short ('$18 000', '21+ YOURS 13') and two
+ * 175 px cells hold them comfortably. */
+.sm-adv.sm-tiny .sm-av-slot-stats { grid-template-columns: repeat(2, 1fr); }
+.sm-adv.sm-tiny .sm-av-title { font-size: 16px; }
+.sm-adv.sm-tiny .sm-ah-fuel-pct { font-size: 24px; }
+.sm-adv.sm-tiny .sm-ah-strip { gap: 9px; }
+/* The label is the whole point of a hotspot; it is the TIER BADGE that goes on
+   a narrow screen. Eight tags reading "MK II" name nothing. */
+.sm-adv.sm-tiny .sm-av-hot-lv { display: none; }
+.sm-adv.sm-tiny .sm-av-hot-sel .sm-av-hot-lv { display: block; }
+.sm-adv.sm-tiny .sm-av-hot-lbl { font-size: 6.5px; letter-spacing: 0.8px; }
+/* Region washes stay; their LABELS collide with the pin names at this width,
+   and the mine card names the region anyway. */
+.sm-adv.sm-tiny .sm-av-region-label { display: none; }
+.sm-adv.sm-tiny .sm-av-stratum { grid-template-columns: 10px 1fr 62px; }
+.sm-adv.sm-tiny .sm-av-stratum-ore { display: none; }
+.sm-adv.sm-tiny .sm-av-res-val { min-width: 66px; font-size: 12px; }
+
+/* --- reduced motion --------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .sm-adv .sm-av-screen,
+  .sm-adv .sm-av-res-row,
+  .sm-adv .sm-stick-knob,
+  .sm-adv .sm-ah-bar-fill,
+  .sm-adv .sm-ah-mini-fill { transition: none; animation: none; }
+  .sm-adv .sm-av-pin-sel::before,
+  .sm-adv .sm-ah-fuel.sm-ah-crit { animation: none; }
+  .sm-adv .sm-av-res-row { opacity: 1; transform: none; }
+}
+
+/* --- workshop: the pitch and the arithmetic (added with the real part table) */
+.sm-av-sell { margin-top: 10px; }
+.sm-av-delta { margin-top: 8px; letter-spacing: 1.4px; color: var(--sm-cyan); }
+
+/* ===========================================================================
+ * THE MINE CARD'S PROFILE ROW
+ * ---------------------------------------------------------------------------
+ * HEAT · GROUND · PAYS FOR, read off the layer table (see paintProfile()).
+ * This is what makes two mines at the same price legibly different
+ * propositions — one with no heat anywhere, one that is a gamble all the way
+ * down — so the three cells are colour-coded rather than merely listed.
+ * ======================================================================== */
+.sm-av-profile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.sm-av-prof {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 9px 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-left: 3px solid var(--sm-dimmer);
+  font-family: var(--sm-mono);
+}
+.sm-av-prof-label {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-dimmer);
+}
+.sm-av-prof-value {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: var(--sm-text);
+}
+.sm-av-prof-good { border-left-color: var(--sm-green); }
+.sm-av-prof-good .sm-av-prof-value { color: var(--sm-green); }
+.sm-av-prof-warn { border-left-color: var(--sm-gold); }
+.sm-av-prof-warn .sm-av-prof-value { color: var(--sm-gold); }
+.sm-av-prof-bad { border-left-color: var(--sm-red); }
+.sm-av-prof-bad .sm-av-prof-value { color: #ff8f80; }
+.sm-av-prof-ore { border-left-color: var(--sm-av-chip, var(--sm-gold)); }
+.sm-av-prof-ore .sm-av-prof-value { color: var(--sm-av-chip, var(--sm-gold)); }
+
+/* ===========================================================================
+ * THE MOTHERLODE BANNER
+ * The in-mine HUD's one celebration: hitting a real formation is the payoff
+ * the whole mode is built to deliver, so the banner changes dress for it
+ * instead of announcing it in the same amber as a low tank.
+ * ======================================================================== */
+.sm-ah-alert.sm-ah-alert-lode {
+  background: linear-gradient(180deg, rgba(72, 54, 8, 0.94), rgba(28, 20, 4, 0.95));
+  border-color: rgba(255, 214, 120, 0.85);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.65), 0 0 26px rgba(255, 200, 90, 0.35);
+}
+.sm-ah-alert-lode .sm-ah-alert-title {
+  color: #fff6d0;
+  text-shadow: 0 2px 0 #000, 0 0 18px rgba(255, 210, 110, 0.75);
+}
+.sm-ah-alert-lode .sm-ah-alert-sub { color: #ffe6a8; }

@@ -40,6 +40,9 @@
  *   SM.effects.chips / smoke / glint / streak / shock / popup / burst
  *   SM.effects.screenFlash(strength,r,g,b)
  *   SM.effects.getIntensity()
+ * Adventure mode (Agent 4, called only from SM.adv.renderWorld())
+ *   SM.effects.renderDarkness(ctx)   -- the headlight; see the section at the
+ *                                       bottom of this file
  * ========================================================================== */
 
 var SM = SM || {};
@@ -1473,6 +1476,108 @@ SM.effects = (function () {
     ctx.globalAlpha = 1;
   }
 
+  /* =====================================================================
+   * THE HEADLIGHT — adventure mode's darkness composite   [Agent 4]
+   * ---------------------------------------------------------------------
+   * Called ONLY from SM.adv.renderWorld(), which main.js runs last inside the
+   * world transform, so the darkness falls on the terrain, the machine AND
+   * every effect above — nothing in classic mode reaches this function and
+   * nothing above it is touched.
+   *
+   * THE BUDGET IS ONE RADIAL GRADIENT AND ONE FILL. This is a full-screen
+   * blend at DPR 2, which is already the most expensive thing on the frame;
+   * a per-particle lighting pass at ~5000 deposits is not on the table.
+   *
+   * WHY THE GRADIENT IS BAKED AT THE ORIGIN AND THE CONTEXT IS TRANSLATED
+   *   A CanvasGradient bakes its coordinates, so a gradient centred on the
+   *   machine would have to be rebuilt every single frame (the machine is
+   *   always moving). Building it at (0,0) and translating the context
+   *   instead means it is rebuilt only when the LIGHT RADIUS changes — i.e.
+   *   when the player buys better lamps, which is the point of the upgrade.
+   *
+   * Beyond the last stop a radial gradient keeps painting the terminal colour,
+   * so one fillRect over the whole view is genuinely all it takes: lit disc in
+   * the middle, DARK_ALPHA black everywhere else.
+   * ================================================================== */
+  var DARK_ALPHA    = 0.94;   // how black the rock is beyond the lamps
+  var DARK_CORE     = 0.30;   // inner fraction of the radius that stays clear
+  var DARK_MID      = 0.62;   // ...and where the falloff is half spent
+  var DARK_MID_A    = 0.34;   // alpha at DARK_MID — shapes the pool of light
+  var DARK_LEAD     = 0.16;   // fraction of the radius the pool leans forward
+  var DARK_MIN_R    = 90;     // never a pinhole, even with the light "off"
+  var DARK_MAX_R    = 4000;   // sanity clamp on a placeholder stat
+
+  var darkGrad = null;
+  var darkGradR = -1;
+  var darkGradCtx = null;
+
+  function darkGradient(ctx, r) {
+    // One integer of radius is finer than the eye can see and keeps a stat
+    // that drifts by fractions from rebuilding the gradient every frame.
+    if (darkGrad && darkGradR === r && darkGradCtx === ctx) return darkGrad;
+    var g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(DARK_CORE, 'rgba(0,0,0,0)');
+    g.addColorStop(DARK_MID, 'rgba(0,0,0,' + DARK_MID_A + ')');
+    g.addColorStop(1, 'rgba(0,0,0,' + DARK_ALPHA + ')');
+    darkGrad = g;
+    darkGradR = r;
+    darkGradCtx = ctx;
+    return g;
+  }
+
+  /**
+   * Lay the dark over everything except a pool of light around the machine.
+   * Radius comes from SM.rig.getLightRadius(); a missing or nonsense value
+   * degrades to a usable radius rather than to a black screen.
+   */
+  function renderDarkness(ctx) {
+    if (!ctx || !SM.camera || !SM.camera.getViewBounds) return;
+
+    var r = 520;
+    if (SM.rig && SM.rig.getLightRadius) {
+      var rr = SM.rig.getLightRadius();
+      if (typeof rr === 'number' && rr === rr) r = rr;
+    }
+    if (r < DARK_MIN_R) r = DARK_MIN_R;
+    if (r > DARK_MAX_R) r = DARK_MAX_R;
+    r = r | 0;
+
+    var cx = 0, cy = 0;
+    if (SM.vehicle && SM.vehicle.getX) { cx = SM.vehicle.getX(); cy = SM.vehicle.getY(); }
+    if (!(cx === cx) || !(cy === cy)) { cx = 0; cy = 0; }
+
+    /* The lamps are on the front of the hull, so the pool of light leans the
+     * way the machine is pointing. Feature-detected: vehicle.js owns the
+     * heading and adventure mode may or may not have given it one yet — with
+     * no heading the light simply sits centred, which is the classic look. */
+    var hx = 0, hy = -1;
+    var v = SM.vehicle;
+    if (v) {
+      if (v.getHeadingX && v.getHeadingY) { hx = v.getHeadingX(); hy = v.getHeadingY(); }
+      else if (v.getHeading) {
+        var a = v.getHeading();
+        if (typeof a === 'number' && a === a) { hx = Math.sin(a); hy = -Math.cos(a); }
+      }
+    }
+    var hm = Math.sqrt(hx * hx + hy * hy);
+    if (hm > 0.0001) { cx += (hx / hm) * r * DARK_LEAD; cy += (hy / hm) * r * DARK_LEAD; }
+
+    var b = SM.camera.getViewBounds();
+    // A little slack past the view: shake translates the whole transform after
+    // these bounds were solved, and an unpainted seam at the edge would read
+    // as a bright crack in the rock.
+    var pad = 64;
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.translate(cx, cy);
+    ctx.fillStyle = darkGradient(ctx, r);
+    ctx.fillRect(b.minX - cx - pad, b.minY - cy - pad,
+                 (b.maxX - b.minX) + pad * 2, (b.maxY - b.minY) + pad * 2);
+    ctx.restore();
+  }
+
   function getCount() { return actCount; }
   function getIntensity() { return overdrive; }
   function getZoneLevel() { return zoneLevel; }
@@ -1499,6 +1604,10 @@ SM.effects = (function () {
     burst: burst,
     screenFlash: screenFlash,
     getIntensity: getIntensity,
-    getZoneLevel: getZoneLevel
+    getZoneLevel: getZoneLevel,
+
+    /* --- ADVENTURE MODE (Agent 4) -------------------------------------
+     * Called by SM.adv.renderWorld() only. Classic mode never reaches it. */
+    renderDarkness: renderDarkness
   };
 })();

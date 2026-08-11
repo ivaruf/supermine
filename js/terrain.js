@@ -28,6 +28,19 @@
  *
  *   Upgrade gates carve their own opening (read from SM.upgrades.getGates()).
  *
+ * ADVENTURE MODE                                    [Agent 3, ADVENTURE.md §1]
+ *   main.js calls terrain.update() and terrain.render() unconditionally, in
+ *   both game modes, so this file is where the two worlds fork. When
+ *   SM.advterrain reports a mine is loaded, every entry point below DELEGATES
+ *   to it and returns; otherwise it runs exactly the code it ran before, byte
+ *   for byte. Nothing classic is behind a new conditional and no classic value
+ *   was touched, which is the point: TIME ATTACK and FREESTYLE have to play
+ *   identically, and the only way to be sure of that is for the adventure
+ *   branch to be a leading `return`.
+ *
+ *   The fork is feature-detected (`SM.advterrain &&`), so a build without the
+ *   adventure modules loads and plays as a pure classic build.
+ *
  * Public API
  *   SM.terrain.init() / reset() / update(dt) / render(ctx)
  *   SM.terrain.getGeneratedTo()  most-forward y that has been generated
@@ -719,6 +732,38 @@ SM.terrain = (function () {
     }
   }
 
+  /**
+   * A RUN IS LIVE UNDERGROUND. True only between SM.advterrain.beginMine() and
+   * endMine(), so classic runs — and any build without the adventure modules at
+   * all — never see it. This is the gate on STREAMING.
+   */
+  function advActive() {
+    return !!(SM.advterrain && SM.advterrain.isActive && SM.advterrain.isActive());
+  }
+
+  /**
+   * ADVENTURE MODE OWNS THE WORLD ON SCREEN. Wider than advActive() by exactly
+   * one case: the campaign is still up (extraction card, world map, workshop)
+   * but the run has ended, so advterrain has stopped streaming and still has a
+   * mine loaded.
+   *
+   * ADVENTURE.md §2 requires the world to keep RENDERING behind those screens
+   * with time stopped. Gating render on advActive() alone meant that on the
+   * frame the player was extracted, this file fell straight back to the classic
+   * background and painted bedrock lane walls, a classic depth ruler and a
+   * "SURFACE CUT" zone banner across the mine, behind the results card. Found
+   * on a screenshot; this is the fix.
+   *
+   * It also makes terrain.reset() a no-op while the campaign is up, which is
+   * what stops anything rebuilding the time-attack lane on top of a mine the
+   * player is still looking at.
+   */
+  function advOwns() {
+    if (advActive()) return true;
+    return !!(SM.adv && SM.adv.isActive && SM.adv.isActive() &&
+              SM.advterrain && SM.advterrain.isLoaded && SM.advterrain.isLoaded());
+  }
+
   function init() {
     syncDensity();
     resolveMaterials();
@@ -727,6 +772,14 @@ SM.terrain = (function () {
   }
 
   function reset() {
+    // A restart inside a mine means "re-descend this mine", not "rebuild the
+    // time-attack lane underneath the player". main.js already routes its own
+    // restart() to SM.adv.restart(), but adv.js may reasonably reset the
+    // terrain through the normal entry point, so honour it here too.
+    // On a meta screen advterrain.reset() is itself a no-op, which is correct:
+    // the mine stays exactly as the player left it, behind the card.
+    if (advOwns()) { SM.advterrain.reset(); return; }
+
     syncDensity();
     setSeed(0x9e3779b9);
     pkCount = 0;
@@ -770,6 +823,11 @@ SM.terrain = (function () {
   }
 
   function update(dt) {
+    // advOwns(), not advActive(): if a stepped frame ever slips through while a
+    // meta screen is up, running the CLASSIC streamer would pour time-attack
+    // bands into the pool on top of the mine.
+    if (advOwns()) { if (advActive()) SM.advterrain.update(dt); return; }
+
     var vy = SM.vehicle.getY();
     fillAhead(vy);
     markSpentBlocks();
@@ -785,7 +843,10 @@ SM.terrain = (function () {
     }
   }
 
-  function getGeneratedTo() { return deepestY; }
+  function getGeneratedTo() {
+    if (advOwns()) return SM.advterrain.getGeneratedTo();
+    return deepestY;
+  }
 
   /* =====================================================================
    * BACKGROUND RENDERING
@@ -896,6 +957,8 @@ SM.terrain = (function () {
   }
 
   function render(ctx) {
+    if (advOwns()) { SM.advterrain.render(ctx); return; }
+
     var v = SM.camera.getViewBounds();
     var lane = C.LANE_HALF_WIDTH;
     var y0 = v.minY - 40, y1 = v.maxY + 40;
@@ -955,8 +1018,14 @@ SM.terrain = (function () {
      * presentation layer therefore draws a real ITEM over each block, and
      * needs to know where they are. Never more than BLOCK_MAX (8) live.
      * Indices are only valid within the current frame — pruneBlocks() does a
-     * swap-remove, so nothing outside may hold on to one. */
-    getBlockCount: function () { return blCount; },
+     * swap-remove, so nothing outside may hold on to one.
+     *
+     * ZERO IN ADVENTURE MODE. Power-up blocks are a time-attack device, the
+     * adventure streamer never places any, and the list is not cleared when a
+     * player leaves a classic run for the campaign — so without this guard
+     * effects.js would keep drawing item graphics for blocks that belong to a
+     * run that ended, floating in the middle of a mine. */
+    getBlockCount: function () { return advOwns() ? 0 : blCount; },
     getBlockX: function (i) { return blX[i]; },
     getBlockY: function (i) { return blY[i]; },
     getBlockRadius: function (i) { return Math.sqrt(blR2[i]); },

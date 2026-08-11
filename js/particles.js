@@ -831,7 +831,20 @@ SM.particles = (function () {
 
   /* --- 1. integration ------------------------------------------------ */
   function integrate(dt) {
+    /* THE ONE DELIBERATE EXCEPTION TO THIS FILE'S FREEZE.
+     *
+     * These are the walls loose debris bounces off. They were hard-coded to the
+     * classic lane, but an ADVENTURE shaft is wider (ADV.MINE_HALF_WIDTH 880 vs
+     * LANE_HALF_WIDTH 640), so underground every fragment in the outer 240 units
+     * of each side was snapped inward off a wall that is not drawn and is not
+     * there — ore erupting from a wide cut visibly jumped towards the middle.
+     *
+     * Read ONCE PER STEP, not per particle, so the cost is a single guarded
+     * function call against ~200 dynamic entries. Deliberately not a setter:
+     * a setter is a second copy of this fact that some code path forgets to
+     * update, and the bound would then be wrong for a whole descent. */
     var lane = C.LANE_HALF_WIDTH;
+    if (SM.adv && SM.adv.isActive && SM.adv.isActive()) lane = C.ADV.MINE_HALF_WIDTH;
     var maxSpeed = C.MAX_SPEED;
     var snap2 = C.COLLECT_SNAP_DIST * C.COLLECT_SNAP_DIST;
     var collAcc = C.COLLECT_ACCEL;

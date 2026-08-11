@@ -172,3 +172,46 @@ SM.config = {
    * ------------------------------------------------------------------ */
   DEBUG_STATS: true            // draw the fps / particle-count readout
 };
+
+/* =============================================================================
+ * ADVENTURE MODE — SHARED CONSTANTS
+ * -----------------------------------------------------------------------------
+ * >>> FROZEN. Read these; do not add to them. <<<
+ * Only values that MORE THAN ONE adventure module must agree on live here.
+ * Everything else belongs in the "tunables" block at the top of the file that
+ * owns it (see ADVENTURE.md "File ownership").
+ *
+ * ORIENTATION IS UNCHANGED from classic SUPERMINE:
+ *   -y is UP (towards the surface / the mine mouth), +y is DOWN (deeper).
+ *   Depth in metres is  (y - MINE_CEILING_Y) * METERS_PER_UNIT, clamped at 0.
+ *   There is still NO GRAVITY. Adventure movement is direct 2D drive: the
+ *   machine crawls where the stick points and stops when the stick is centred.
+ * ========================================================================== */
+SM.config.ADV = {
+
+  /* --- scale ---------------------------------------------------------- */
+  METERS_PER_UNIT: 0.1,        // 10 world units = 1 metre of depth
+  MINE_CEILING_Y: 0,           // y of the mine mouth; depth 0 m
+  MINE_HALF_WIDTH: 880,        // shaft spans x in [-880, +880] (wider than the classic lane)
+
+  /* --- terrain window -------------------------------------------------
+   * particles.js only despawns by Y (despawnBehind / despawnAhead), so the
+   * adventure streamer windows in Y and keeps the FULL shaft width resident.
+   * SPACING is coarser than classic TERRAIN_SPACING for exactly that reason:
+   *   (MINE_HALF_WIDTH*2 / SPACING) * (window height / SPACING) <= SOLID_BUDGET
+   * ------------------------------------------------------------------ */
+  SPACING: 21,                 // adventure deposit pitch
+  SOLID_BUDGET: 5200,          // hard ceiling on resident SOLID particles
+  STREAM_MARGIN: 240,          // generate this far beyond the visible edge
+
+  /* --- camera --------------------------------------------------------- */
+  CAM_ZOOM: 0.80,             // fixed adventure zoom; lane-fit auto-zoom is OFF
+
+  /* --- run pressures -------------------------------------------------- */
+  EXIT_RADIUS: 200,            // within this of the mine mouth = extracted
+
+  /* --- persistence ---------------------------------------------------- */
+  SAVE_KEY: 'supermine.adventure.v1',
+  SAVE_SLOTS: 3,
+  SAVE_VERSION: 1
+};

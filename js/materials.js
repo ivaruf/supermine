@@ -379,6 +379,195 @@ SM.materials = (function () {
       restitution: 0.62, friction: 0.64,
       debrisCount: 5, breakStyle: 'prize', glow: true, sparkle: 1.0,
       shape: 'shard', pickup: 'boost'
+    },
+
+    /* =====================================================================
+     * ADVENTURE-MODE GEOLOGY (appended — indices 13..22)
+     * [OWNER: Agent 3 — GEOLOGY]
+     *
+     * APPENDED, NEVER INSERTED. Every index above is baked into save files,
+     * the particle arrays and the sprite atlases; the only safe edit to this
+     * table is another entry at the bottom.
+     *
+     * The classic table is a SCORE ladder: seven ores whose only axis is
+     * "worth more, takes longer". Adventure needs a second axis, because the
+     * player is not racing a clock — they are filling a hold with volume, and
+     * choosing which rock to spend fuel on. So this block adds:
+     *
+     *   THREE COUNTRY ROCKS  clay / sandstone / limestone. Near-worthless and
+     *     soft. They exist so a mine can have BEDS — a wall you look at reads
+     *     as strata because the beds are visibly different rock, not because
+     *     the noise function changed seed. Their value is deliberately 1-2:
+     *     they are the "long stretches of near-worthless rock" the money shot
+     *     is measured against.
+     *   FIVE ORES  coal / copper / silver / platinum / uranium, spanning the
+     *     whole descent. Prices and cargo volumes are js/mines.js's (they are
+     *     keyed on these exact string ids); the numbers HERE are only what
+     *     particles.js needs — hardness, debris, how it shatters, how it
+     *     looks. `value` is still filled in honestly so the classic haul
+     *     tally and the effects layer have something sane to show if one ever
+     *     appears in a classic run.
+     *   ONE ANCIENT FORMATION  the deepest mine's motherlode.
+     *   ONE FLOOR  bedrock. Not a resource: it is the bottom of the mine
+     *     expressed as hardness rather than as an invisible wall.
+     *
+     * HARDNESS IS THE DEPTH GATE. Contact time is ~BLADE_DEPTH/speed, so at
+     * the starting rig (power 21, speed 200) a deposit breaks without stalling
+     * up to hardness ~3.5. Everything at or under copper (3.0) is therefore
+     * "drillable now"; silver (3.6) grinds; platinum (5.2) needs a real bit;
+     * the ancient formation (9.5) and bedrock (26) need the top of the tree.
+     * That is the "your drill cannot get through that yet" gate, and it is a
+     * SLOWDOWN, never a refusal — an under-gunned player burns fuel instead
+     * of being told no.
+     *
+     * COLOUR IS A LEGIBILITY BUDGET, NOT DECORATION. Thirteen materials were
+     * already using up the hue circle, so each of these was picked against
+     * what it will actually be standing next to underground:
+     *   coal      near-black, the only one in the table; unmistakable.
+     *   clay      pushed orange-grey so it separates from dirt's brown.
+     *   sandstone light warm tan / limestone pale cool grey — the two most
+     *             common beds, deliberately one warm and one cool so a bed
+     *             boundary is visible across a whole wall.
+     *   copper    metallic orange, kept off boostcell's dark red-orange shell
+     *             by being bright and matte rather than dark with a white core.
+     *   silver    cool near-white, matte (glow OFF) — iron is the same family
+     *             but much darker and duller.
+     *   platinum  lilac-steel and GLOWING, so the pair silver/platinum reads
+     *             as "the good one is the one that shines".
+     *   uranium   yellow-green: the one gap left between emerald's spring
+     *             green and gold's yellow, and it earns it by being the only
+     *             material whose colour is a warning.
+     *   ancient   pale gold-white with a white-hot highlight, the brightest
+     *             thing in the table, on the biggest shards, in the loudest
+     *             break style. It is allowed to look like the end of the game
+     *             because it is.
+     * ------------------------------------------------------------------ */
+    {
+      // Overburden. Soft, sticky, worthless — the top of every mine. Higher
+      // friction than dirt and almost no restitution, so a broken clay bed
+      // slumps into a heap instead of scattering: the debris behaves like the
+      // wet ground it is, and it stops the first thirty metres of a descent
+      // from reading as another gravel pit.
+      id: 'clay', name: 'Clay',
+      colors: ['#9c7256', '#6b4a33', '#c39a76'],
+      hardness: 0.9, value: 2,
+      radius: [7.6, 10.4], density: 1.05,
+      restitution: 0.08, friction: 0.95,
+      debrisCount: 3, breakStyle: 'crumble', glow: false, sparkle: 0,
+      shape: 'round'
+    },
+    {
+      // The first thing worth hauling, and the reason the cargo hold has
+      // VOLUME. Cheap per unit and bulky (js/mines.js prices it that way), so
+      // a hold full of coal is a decision the player regrets the moment the
+      // scanner finds silver. Brittle: it breaks into more fragments than its
+      // hardness suggests, which is what "friable" looks like.
+      id: 'coal', name: 'Coal',
+      colors: ['#31353c', '#14161a', '#646c7a'],
+      hardness: 1.5, value: 8,
+      radius: [7.8, 10.6], density: 0.95,
+      restitution: 0.22, friction: 0.86,
+      debrisCount: 5, breakStyle: 'gravel', glow: false, sparkle: 0.05,
+      shape: 'chunk', ore: true
+    },
+    {
+      // The shallow-mine payday. Sits just under the starting rig's stall
+      // threshold (3.0 against ~3.5) on purpose: a fresh company CAN work a
+      // copper seam, it just feels like work.
+      id: 'copper', name: 'Copper Ore',
+      colors: ['#d0763c', '#8a4318', '#ffc79a'],
+      hardness: 3.0, value: 22,
+      radius: [8.0, 10.6], density: 2.25,
+      restitution: 0.22, friction: 0.88,
+      debrisCount: 4, breakStyle: 'fracture', glow: false, sparkle: 0.30,
+      shape: 'chunk', ore: true
+    },
+    {
+      // Country rock, warm half of the bed pair. Soft and cheap to drive
+      // through, which makes a sandstone layer the FAST part of a descent.
+      id: 'sandstone', name: 'Sandstone',
+      colors: ['#c2a479', '#8a7048', '#e8d3ab'],
+      hardness: 1.7, value: 2,
+      radius: [8.0, 10.8], density: 1.30,
+      restitution: 0.24, friction: 0.86,
+      debrisCount: 4, breakStyle: 'crumble', glow: false, sparkle: 0,
+      shape: 'chunk'
+    },
+    {
+      // Country rock, cool half of the bed pair, and the rock caverns form
+      // in — a limestone layer is where the generator puts its voids.
+      id: 'limestone', name: 'Limestone',
+      colors: ['#b9bcae', '#82877a', '#e4e7dc'],
+      hardness: 2.6, value: 2,
+      radius: [8.2, 10.8], density: 1.55,
+      restitution: 0.28, friction: 0.85,
+      debrisCount: 4, breakStyle: 'fracture', glow: false, sparkle: 0,
+      shape: 'chunk'
+    },
+    {
+      // Mid-game money. First material above the starting stall threshold, so
+      // the drill upgrade that makes silver flow is the first upgrade that
+      // CHANGES WHAT YOU CAN DO rather than adding a percentage.
+      id: 'silver', name: 'Silver',
+      colors: ['#d9e2ea', '#93a1b0', '#ffffff'],
+      hardness: 3.6, value: 60,
+      radius: [7.8, 10.4], density: 2.80,
+      restitution: 0.16, friction: 0.93,
+      debrisCount: 5, breakStyle: 'burst', glow: false, sparkle: 0.60,
+      shape: 'chunk', ore: true
+    },
+    {
+      // Deep money. Glows where silver does not: the pair is designed to be
+      // told apart at a glance in a dark cavern, and the brighter one is the
+      // one worth the fuel.
+      id: 'platinum', name: 'Platinum',
+      colors: ['#c6cde4', '#767d99', '#ffffff'],
+      hardness: 5.2, value: 150,
+      radius: [8.0, 10.8], density: 3.20,
+      restitution: 0.14, friction: 0.94,
+      debrisCount: 5, breakStyle: 'burst', glow: true, sparkle: 0.85,
+      shape: 'chunk', ore: true
+    },
+    {
+      // The hazard ore: worth more than platinum per deposit and it is the
+      // one material whose colour is a warning. Deep layers carry heat, and a
+      // uranium pocket is where a player with poor cooling learns that.
+      id: 'uranium', name: 'Uranium Ore',
+      colors: ['#a8e02a', '#4d6d05', '#eaff9a'],
+      hardness: 4.4, value: 220,
+      radius: [8.0, 10.8], density: 2.60,
+      restitution: 0.30, friction: 0.82,
+      debrisCount: 6, breakStyle: 'burst', glow: true, sparkle: 0.95,
+      shape: 'shard', ore: true
+    },
+    {
+      // THE MONEY SHOT. One expedition's worth of cash per deposit, and the
+      // generator only ever puts it in the shell of a natural cavern in the
+      // deepest layer of the deepest mine — you do not stumble into a speck
+      // of this, you break through a wall and find it lining the far side.
+      // Biggest radius band, brightest colours, loudest break style in the
+      // table, all in service of one moment being unmistakable.
+      id: 'ancient', name: 'Ancient Formation',
+      colors: ['#fff0b8', '#9a6a10', '#ffffff'],
+      hardness: 9.5, value: 900,
+      radius: [8.6, 11.0], density: 1.70,
+      restitution: 0.55, friction: 0.70,
+      debrisCount: 8, breakStyle: 'shatter', glow: true, sparkle: 1.0,
+      shape: 'shard', ore: true
+    },
+    {
+      // THE FLOOR OF THE MINE, expressed as hardness instead of as an
+      // invisible wall. Worth nothing, and hard enough that no rig in the
+      // workshop cuts it at a useful rate, so a player who insists on
+      // drilling the bottom is spending fuel on a decision rather than
+      // hitting a message that says no.
+      id: 'bedrock', name: 'Bedrock',
+      colors: ['#4a4750', '#22202a', '#726e7d'],
+      hardness: 26.0, value: 0,
+      radius: [8.8, 11.0], density: 3.00,
+      restitution: 0.16, friction: 0.92,
+      debrisCount: 4, breakStyle: 'fracture', glow: false, sparkle: 0,
+      shape: 'chunk'
     }
   ];
 

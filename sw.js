@@ -32,7 +32,10 @@
 //         buttons, pause menu, on-screen steering pads, progress gauge gone;
 //         portrait now frames the WHOLE lane by solving the terrain grid
 //         pitch against the particle pool instead of capping the zoom
-const VERSION = 'v1.5.0';
+// v1.6.0  ADVENTURE MODE: save slots, world map, mining rights, fuel + cargo
+//         pressure, workshop upgrades, free 2D driving on a translucent
+//         joystick, persistent per-mine tunnels
+const VERSION = 'v1.6.0';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [
@@ -40,6 +43,7 @@ const ASSETS = [
   './index.html',
   './manifest.webmanifest',
   './style.css',
+  './style-adventure.css',
   './js/config.js',
   './js/events.js',
   './js/materials.js',
@@ -53,6 +57,15 @@ const ASSETS = [
   './js/effects.js',
   './js/sound.js',
   './js/ui.js',
+  './js/mines.js',
+  './js/rig.js',
+  './js/save.js',
+  './js/advterrain.js',
+  './js/scanner.js',
+  './js/joystick.js',
+  './js/advhud.js',
+  './js/advui.js',
+  './js/adv.js',
   './js/main.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
