@@ -242,39 +242,66 @@ SM.rig = (function () {
        * player drives down, prospects laterally for about half the vertical
        * distance and drives back. Real play wanders two or three times that, so
        * "40% of the tank" on paper is "most of the tank" in the mine. If you
-       * ever measure the real figure, THIS is the number to move. */
+       * ever measure the real figure, THIS is the number to move.
+       *
+       * RE-SIZED for the 3x deeper catalogue, and the FIRST TANK IS DELIBERATELY
+       * SMALL — MEASURED small, not guessed. It used to hold 175 units against a
+       * 48-unit skip, so the starter rig could roam a whole mine on one tank and
+       * never think about diesel; the tank was solving a problem the hold had
+       * already solved.
+       *
+       * The measurement that set this number: driving burn is far cheaper per
+       * metre than it looks, so a 90-unit tank still carried the starter rig to
+       * 452 m of a 480 m mine and home again — the entire mine, on the free tank.
+       * 45 turns that into roughly the top two hundred metres, which is about
+       * five times as far as a 48-unit skip is worth hauling, so there is margin
+       * for a wander without the tank being irrelevant.
+       *
+       * Deep prospecting is now something you BUY. The ceiling had to move much
+       * further than the floor, because the top tier must cover 3600 m AND the
+       * climb back out: 1.9x across the whole range before, 207x now. */
       tiers: [
-        { name: 'DENTED TANK', cost: 0, cap: 175,
-          blurb: 'Old Creek and back with a margin. Red Ridge, only just.' },
-        { name: 'WELDED TANK', cost: 500, cap: 340,
-          blurb: 'Doubled. Red Ridge becomes comfortable, Blackstone possible.' },
-        { name: 'TWIN TANKS', cost: 2200, cap: 620,
+        { name: 'DENTED TANK', cost: 0, cap: 45,
+          blurb: 'The top of Old Creek and back. Not a metre of it is spare.' },
+        { name: 'WELDED TANK', cost: 500, cap: 150,
+          blurb: 'Three times the range. Old Creek opens up, Red Ridge is reachable.' },
+        { name: 'TWIN TANKS', cost: 2200, cap: 450,
+          blurb: 'Red Ridge floor to ceiling, and a real look at Blackstone.' },
+        { name: 'PRESSURE BLADDER', cost: 9800, cap: 1300,
           blurb: 'Blackstone and Frostpeak, there and back, with fuel to spare.' },
-        { name: 'PRESSURE BLADDER', cost: 9800, cap: 1100,
+        { name: 'LONG-RANGE CELLS', cost: 41000, cap: 3300,
           blurb: 'Enough to reach the Deep Hollow floor and still climb out.' },
-        { name: 'LONG-RANGE CELLS', cost: 41000, cap: 1850,
-          blurb: 'Cinder Fell at eight hundred and eighty metres, twice over.' },
-        { name: 'DEEP EXPEDITION RESERVE', cost: 231000, cap: 3100,
-          blurb: 'Twelve hundred metres. The Rift stops being a suicide run.' }
+        { name: 'DEEP EXPEDITION RESERVE', cost: 231000, cap: 9300,
+          blurb: 'Three and a half thousand metres. The Rift stops being suicide.' }
       ]
     },
     {
       key: 'cargo', title: 'CARGO', icon: 'cargo', glyph: 'U',
       blurb: 'Hold volume — and the intake radius that fills it.',
       stats: ['cap', 'collect'],
+      /* THE HOLD DOUBLES EVERY TIER. 48 -> 1536.
+       * The old curve crept up (48/80/130/210/330/520, about 1.6x a step), which
+       * made every cargo upgrade feel like a rounding error and left the hold as
+       * the thing that ended every single run at every single tier. Doubling
+       * makes the purchase change what a trip IS: at the bottom you surface
+       * because the skip is full, at the top because the tank is dry, and the
+       * decision the mode is built around — dump the coal to fit the gold —
+       * moves from "constantly" to "when it actually costs you something".
+       * The intake radius still rises with it, or a big hold just takes longer
+       * to fill from the same size of bite. */
       tiers: [
         { name: 'OPEN SKIP', cost: 0, cap: 48, collect: 215,
           blurb: 'Twelve deposits of coal. You will learn to hate coal.' },
-        { name: 'STEEL HOPPER', cost: 650, cap: 80, collect: 250,
-          blurb: 'Two thirds more per trip, and a wider magnet to fill it.' },
-        { name: 'HIGH-SIDED HOPPER', cost: 2900, cap: 130, collect: 290,
+        { name: 'STEEL HOPPER', cost: 650, cap: 96, collect: 250,
+          blurb: 'Double. Two full skips before you have to climb out.' },
+        { name: 'HIGH-SIDED HOPPER', cost: 2900, cap: 192, collect: 290,
           blurb: 'A silver vein no longer fills you up halfway along it.' },
-        { name: 'COMPACTING HOPPER', cost: 12600, cap: 210, collect: 340,
-          blurb: 'The whole Deep Hollow floor in one load.' },
-        { name: 'DUAL HOPPER RIG', cost: 52000, cap: 330, collect: 400,
+        { name: 'COMPACTING HOPPER', cost: 12600, cap: 384, collect: 340,
+          blurb: 'Ore goes in crushed. A deep run stops being two trips.' },
+        { name: 'DUAL HOPPER RIG', cost: 52000, cap: 768, collect: 400,
           blurb: 'You can afford to carry the cheap ore as well as the good.' },
-        { name: 'ORE TRAIN', cost: 297000, cap: 520, collect: 470,
-          blurb: 'Five hundred units. Dumping anything becomes a choice, not a tax.' }
+        { name: 'ORE TRAIN', cost: 297000, cap: 1536, collect: 470,
+          blurb: 'Fifteen hundred units. Now the tank is what sends you home.' }
       ]
     },
     {
@@ -410,6 +437,53 @@ SM.rig = (function () {
   function currentTierInfo(key) { return getTierInfo(key, getTier(key)); }
   /** The tier descriptor of the NEXT purchase, or null when maxed. */
   function nextTierInfo(key) { return getTierInfo(key, getTier(key) + 1); }
+
+  /* =====================================================================
+   * FITTING PREREQUISITES — running gear before power
+   * ---------------------------------------------------------------------
+   * You cannot fit an engine your tracks cannot carry. ENGINE tier N requires
+   * TRACKS tier N or better, full stop.
+   *
+   * WHY A HARD BLOCK rather than letting the extra power go to waste in
+   * wheelspin: tracks used to sell `grip` (braking) and `turn`, and both are
+   * real but neither is FELT — nobody notices a 180 taking half a second less,
+   * so the whole category read as pointless next to an engine you feel every
+   * second. Making the engine literally unbuyable without the running gear to
+   * match turns tracks from a stat nobody can perceive into a gate everybody
+   * understands, and it costs no simulation subtlety at all: the machine never
+   * behaves in a way the player has to diagnose.
+   *
+   * Expressed as a table rather than an `if`, so a second pairing later (a
+   * cooling requirement on a thermal drill, say) is one line here and needs no
+   * change in adv.js or advui.js.
+   * ================================================================== */
+  var REQUIRES = { engine: 'tracks' };
+
+  /** The part key that gates `key`, or null if nothing does. */
+  function requiredPart(key) { return REQUIRES[key] || null; }
+
+  /**
+   * Can the next tier of `key` be FITTED at all, ignoring money?
+   * -> { ok:true } or { ok:false, needKey, needTier, needName }
+   * Callers: adv.buyPart() refuses, advui's workshop explains.
+   */
+  function fitCheck(key) {
+    var dep = REQUIRES[key];
+    if (!dep) return { ok: true };
+    var want = getTier(key) + 1;                 // the tier being bought
+    if (want > maxTier(key)) return { ok: true }; // maxed; nextCost() says -1
+    if (getTier(dep) >= want) return { ok: true };
+    var info = getTierInfo(dep, want);
+    return {
+      ok: false,
+      needKey: dep,
+      needTier: want,
+      needName: info ? info.name : ''
+    };
+  }
+
+  /** Convenience: is the next tier of `key` blocked by its running gear? */
+  function canFit(key) { return fitCheck(key).ok; }
 
   /** Price of the NEXT tier of `key`, or -1 when maxed. */
   function nextCost(key) {
@@ -619,6 +693,10 @@ SM.rig = (function () {
     maxTier: maxTier,
     isMaxed: isMaxed,
     nextCost: nextCost,
+    fitCheck: fitCheck,
+    canFit: canFit,
+    requiredPart: requiredPart,
+
     nextName: nextName,
     setTier: setTier,
     getDrillPower: getDrillPower,

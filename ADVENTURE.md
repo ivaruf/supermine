@@ -41,10 +41,25 @@ digger chewing through material that closes around it, not a jetpack. This keeps
 a frozen, tuned, load-bearing module untouched. Sell it in the *feel* — weight,
 inertia, the hull grinding to a halt against rock it cannot cut.
 
-**The shaft is a fixed-width column.** `particles.js` can only despawn by Y, so
-the streamed window is a full-width horizontal slab. `ADV.MINE_HALF_WIDTH` is
-880 (the classic lane is 640). Depth is the axis of progression, which is what
-the brief wants anyway — 420 m, 700 m, and what is down there.
+**Mines are wide, and the window is a rectangle.** *(Revised. This originally read
+"the shaft is a fixed-width column", because `particles.js` could only despawn on
+a Y line, which forced the streamer to keep the full width resident.)*
+`particles.js` now also exports
+`despawnOutsideRect(minX, minY, maxX, maxY, keepLoose)`, so `advterrain.js`
+windows in **both** axes. `ADV.MINE_HALF_WIDTH` is **2600** — 5200 units, 520 m
+across — and width is nearly free: the screen only ever shows ~2000 units, so a
+wider mine costs no extra resident particles and no extra draw calls, only a
+bigger carve mask (one byte per cell: 64 KB for Old Creek, ~435 KB for The Rift).
+
+**The limit on the window is the SPATIAL HASH, not the pool.** `particles.js`
+wraps its grid with a bitmask over `GRID_COLS x GRID_CELL` = **2944** units in x
+and `GRID_ROWS x GRID_CELL` = **5888** in y. Two live particles further apart than
+that alias into the same hash cell and collision detection corrupts **silently**,
+with no error to trace. `advterrain.js` clamps the live extent to 2800 x 5600 for
+exactly that reason, and the clamp covers loose debris too — a heap dumped 3000
+units away would otherwise stay live and break the hash on its own. Measured peak
+live extent in play: 2778 x 1896. Widening the *mine* further is cheap; widening
+the *window* past those numbers means raising `GRID_COLS`.
 
 ---
 
@@ -121,7 +136,7 @@ Do not rebuild any of this.
 ### `SM.config.ADV` — shared constants (frozen)
 
 ```
-METERS_PER_UNIT 0.1     MINE_CEILING_Y 0        MINE_HALF_WIDTH 880
+METERS_PER_UNIT 0.1     MINE_CEILING_Y 0        MINE_HALF_WIDTH 2600
 SPACING 21              SOLID_BUDGET 5200       STREAM_MARGIN 240
 CAM_ZOOM 0.80           EXIT_RADIUS 200
 SAVE_KEY / SAVE_SLOTS 3 / SAVE_VERSION 1
@@ -252,7 +267,7 @@ Adventure mode makes that harder in two specific ways, so:
 
 * **Resident solids ≤ `ADV.SOLID_BUDGET` (5200).** The shaft is 1760 wide at
   `SPACING` 21 — about 84 deposits per row — so the streamed slab may be roughly
-  60 rows tall. Trim **both** edges (`despawnBehind` *and* `despawnAhead`);
+  60 rows tall. Trim **every** edge (`despawnOutsideRect`, both axes);
   adventure players drive back up. Watch `SM.particles.getStats().free` and keep
   the classic `DEBRIS_RESERVE` discipline: the graceful failure is "streaming
   pauses", never "pool exhausted".

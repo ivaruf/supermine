@@ -18,6 +18,23 @@
  * exhausts puff, warning lights strobe. When a part is installed it UNFOLDS
  * (deploy timer 0..1 with an overshooting ease).
  *
+ * ADVENTURE MODE DRAWS A DIFFERENT MACHINE FROM THE SAME PARTS. The diagram
+ * above is the TIME ATTACK rig, built by UPGRADE_EFFECTS. Adventure's geometry
+ * comes from SM.rig.getPartFlags(), and its two big subassemblies are their own
+ * thing because they have to communicate a SHOP LADDER rather than a pickup:
+ *
+ *              [ point ]                    <- front (-y)
+ *             [[ auger ]]                   drawDrillRig()  — the DRILL tiers:
+ *          ===[ reamer bar ]===             one bit that gets longer, thicker,
+ *      [tr][      chassis      ][tr]        deeper-fluted, then hot, then lit
+ *          [   intake throat   ]            drawIntake()    — where ore goes in
+ *          [ bay 0: the load   ]            drawOreBed()    — the CARGO tiers:
+ *          [ bay 1 ] [ bay 2 ]              a tub that grows into an ore train
+ *
+ * The seam is `advMode()` and it is taken in exactly two places, both inside
+ * drawMachine(). Everything else — tracks, chassis, cabin, exhaust, lamps,
+ * radiators, armour, dish — is shared and identical in both modes.
+ *
  * Public API (main.js / particles.js / camera.js / effects.js depend on these —
  * do NOT change the signatures):
  *   SM.vehicle.init() / reset() / update(dt) / render(ctx)
@@ -247,8 +264,86 @@ SM.vehicle = (function () {
    * The floor still bites, so there is headroom left for the deep mines, and
    * the knee sits where it should: soft ground is free, rock is a decision.
    * ------------------------------------------------------------------ */
-  var ADV_LOAD_SCALE = 0.017;    // slowdown per second of work ahead
+  /* RETUNED — the SHAPE as well as the coefficient, and both for measured
+   * reasons.
+   *
+   * 0.017 with a linear 1/(1+kL) was solved when the tier-0 drill had 21 power
+   * and virgin ground measured 3 to 267 "seconds of work". rig.js now ships tier
+   * 0 at 8.0 power, and the quantity it multiplies has moved with it: MEASURED
+   * live, the load while cutting the top layers of Old Creek is 0.1 to 0.7, and
+   * the load standing in front of the bit in granite is 50+. At 0.017 the first
+   * of those is a 2% slowdown, so drilling ran at the full rated 110 units/sec —
+   * indistinguishable from driving down an open corridor, which erases the whole
+   * point of owning a better drill.
+   *
+   * The linear form cannot fix that by coefficient alone, because the load spans
+   * nearly three decades: any k that makes soft ground meaningfully slow puts
+   * every real rock on the floor, and a floor is not a difficulty curve. THE
+   * SQRT DOES: it is gentle where the load is small and keeps resolving where the
+   * load is large.
+   *
+   *     factor = 1 / (1 + k * sqrt(load)),  k = 1.45
+   *         load 0.1  (soft dirt, overpowered)  -> 0.69 x
+   *         load 0.5  (clay)                    -> 0.49 x
+   *         load 2    (stone)                   -> 0.33 x
+   *         load 10   (granite for a tier-0 bit)-> 0.18 x
+   *         load 50   (a face it can only just cut) -> the floor
+   *
+   * MEASURED in Old Creek with the tier-0 bit: the descent runs 3 to 6 m/s and
+   * the climb back up the same corridor runs 14.5 m/s. The range cost of that is
+   * real and it is reported — see the note on advReportWork().
+   *
+   * Against the 2.5x travel gear that is 3x to 20x between cutting and running,
+   * which is the rhythm the mode is built on. And because load is hardness over
+   * POWER, every drill tier buys that pace back in the same rock — the upgrade is
+   * FELT rather than read off a stat card.
+   *
+   * There is a feedback loop in here worth knowing about before you touch k:
+   * cutting slower leaves the cut box emptier, which lowers the load, which
+   * speeds you up. It is self-limiting and it is why the coefficient had to be
+   * measured in the mine rather than solved on paper.
+   *
+   * The floor is ours rather than config's VEHICLE_MIN_SPEED_FACTOR (0.34): that
+   * number is the time attack's, where the machine must never stop making
+   * progress against the clock. Here a face you can only just cut SHOULD be a
+   * crawl, and the hardness gate stops it ever being an infinite one. */
+  var ADV_LOAD_SCALE = 1.45;     // slowdown per root-second of work ahead
+  var ADV_MIN_FACTOR = 0.12;     // ...and the slowest a cuttable face may make us
   var ADV_LOAD_LERP = 10;        // e-folds/sec of smoothing on the load
+
+  /* --- TRAVEL vs DRILLING: two gears, and why the fuel follows ----------
+   * Drilling pace and travelling pace are different jobs. Chewing a fresh face
+   * is meant to be slow; crawling back up two hundred metres of tunnel you
+   * already dug at that same pace is just the player waiting, and the round trip
+   * is the loop this mode is built out of. So when the bit has nothing in front
+   * of it — an open cavern, or your own corridor — the machine runs at
+   * ADV_TRAVEL_MUL of its rated speed, and the moment the bit bites it gears
+   * back down over ADV_TRAVEL_RAMP.
+   *
+   * The gate is `advLoad`, the seconds of work ahead of the bit, because it is
+   * already the honest answer to "is this machine digging or driving".
+   * MEASURED, tier-0 rig, 8.0 drill power: cutting virgin ground reads 0.60 to
+   * 2.94 (mean 1.14 — it swings because the cut clears the box faster than the
+   * machine can advance into it), and reversing back up the corridor it just
+   * carved reads a flat 0.00. So the thresholds sit low and close together: any
+   * real cutting is drilling pace, and your own tunnel is the top gear.
+   *
+   * A footprint-based signal was tried first — hardness within one bit radius —
+   * and MEASURED USELESS: damageSolidInRect() clears the whole 168-wide box, so
+   * the bit is permanently sitting in a void of its own making and the number
+   * read 0.04 while drilling. The box total is the one that carries the answer.
+   *
+   * FUEL SCALES WITH THE SAME NUMBER, and that is not optional. rig.js's tank
+   * sizes and mines.js's depths are solved against fuel per METRE; leaving the
+   * burn at its old per-SECOND rate while the machine covers 2.5x the ground
+   * would hand every tank 2.5x the range and quietly undo that balance. See
+   * advReportWork() — the drive term is multiplied by advTravel, so a metre of
+   * tunnel costs exactly what it did, and only the clock moves.
+   * ------------------------------------------------------------------ */
+  var ADV_TRAVEL_MUL = 2.5;      // top-speed multiplier with the bit in clear air
+  var ADV_TRAVEL_FREE = 0.03;    // load below this is free travel
+  var ADV_TRAVEL_LOAD = 0.32;    // ...and at this it is drilling pace again
+  var ADV_TRAVEL_RAMP = 3.2;     // e-folds/sec — a gear change, not a switch
 
   // --- the lurch -------------------------------------------------------
   // Breaking through a wall you were straining against should throw the machine
@@ -333,9 +428,66 @@ SM.vehicle = (function () {
   // --- visible subassemblies -------------------------------------------
   // Adventure geometry is driven ENTIRELY by SM.rig.getPartFlags(); tiers are
   // never read here, so Agent 2 can re-tier without touching this renderer.
-  var ADV_BLADE_WIDTH = 150;     // drawn drum span at bladeTier 0
+  var ADV_BLADE_WIDTH = 150;     // drawn reamer span at bladeTier 0
   var ADV_BLADE_PER_TIER = 22;
   var ADV_ARMOR_WIDTH = 5;       // extra chassis width per armour flag
+
+  /* --- THE AUGER: what the DRILL upgrade looks like ---------------------
+   * See the note above drawDrillRig(). The tip is pinned to the front of the cut
+   * box (ADV_AUGER_REACH of the box half-extent, plus a bit per tier) so the
+   * drawn bit reaches as far as the machine really cuts; girth is a fraction of
+   * the reamer span so the head stays in proportion as the blade widens.
+   * ------------------------------------------------------------------ */
+  var ADV_AUGER_REACH = 0.82;    // of the cut box half-extent, ahead of the bit
+  var ADV_AUGER_PER_TIER = 11;   // ...and this much more length per drill tier
+  // Girth is deliberately shy of the length: MEASURED on screen, a body wider
+  // than about half its length stops reading as a bit and starts reading as a
+  // box with a point on it. Tier 0 is 39 x 73 units, tier 5 is 76 x 139.
+  var ADV_AUGER_GIRTH = 0.26;    // base radius as a fraction of the reamer half
+  var ADV_AUGER_GIRTH_STEP = 0.022;
+  var ADV_AUGER_SHANK = 0.66;    // fraction of the length that is straight shank
+  var ADV_FLUTE_PITCH = 19;      // helical groove spacing at tier 0, world units
+  var ADV_DRILL_THERMAL = 4;     // bladeTier at which the bit runs hot
+  var ADV_DRILL_PLASMA = 5;      // ...and at which it is energised
+
+  /* --- THE ORE BED: what the CARGO upgrade looks like ------------------
+   * The cargo ladder has to read as ONE thing — "this machine can carry more
+   * ore" — from a top-down view at about 0.65 scale, which is roughly 90 px of
+   * hull. So the whole budget goes on VOLUME:
+   *
+   *   LENGTH   the bed grows rearward every tier, and past ADV_BAY2 it grows by
+   *            gaining WHOLE BAYS. That is the silhouette change, and it is the
+   *            only cue that survives being small on a phone.
+   *   WALL     wall thickness IS wall height in a top-down view: the rim band
+   *            you see around the cavity is the top of the plate, so a thicker
+   *            rim plus a deeper inner shadow is a taller side. This is the
+   *            "high-sided" tier's entire job.
+   *   FILL     the cavity is drawn empty and the load is drawn INTO it, from
+   *            SM.adv.getCargoPct(). A bigger bed therefore looks emptier with
+   *            the same ore in it, which is exactly what the upgrade bought.
+   *
+   * Nothing here reaches outboard. The old collector arms were the widest thing
+   * on the machine and read as antennae; the magnet is now an INTAKE THROAT on
+   * the deck (drawIntake) plus the collector rings that were always there.
+   * Anything that does stick out is a rib, a hinge or a coupling.
+   * ------------------------------------------------------------------ */
+  var ADV_BED_LEN = 54;          // first bay's length at cargo flag 0
+  var ADV_BED_PER_TIER = 28;     // ...plus this per flag, up to ADV_BAY2
+  var ADV_BED_LEN_LATE = 6;      // ...and this much per flag after that
+  var ADV_BED_HALF = 0.76;       // bed half-width as a fraction of hullHalf()
+  var ADV_BED_HALF_STEP = 0.075;
+  var ADV_BED_HALF_MAX = 1.16;   // the top tiers are an over-wide load
+  var ADV_WALL = 3.4;            // side-wall thickness (= height) at flag 0
+  var ADV_WALL_STEP = 1.9;
+  var ADV_BAY_GAP = 10;          // coupling gap between bays
+  var ADV_BAY2_LEN = 0.60;       // second bay length, relative to the first
+  var ADV_BAY3_LEN = 0.45;
+  // Feature thresholds on the `hopper` flag (== the CARGO tier).
+  var ADV_TAILGATE = 1;          // hinged tailgate instead of an open lip
+  var ADV_HIGHSIDE = 2;          // bolted side-board extensions + fill gauge
+  var ADV_RAM = 3;               // compactor ram on hydraulic cylinders
+  var ADV_BAY2 = 4;              // a second bay behind a bulkhead
+  var ADV_BAY3 = 5;              // ...and a third, with load straps: the train
 
   /* =====================================================================
    * UPGRADE TABLE
@@ -556,6 +708,7 @@ SM.vehicle = (function () {
   var driveBurn = 0;             // smoothed fuel/sec from driving + drilling
   var advDry = false;            // the tank came up empty on the last draw
   var advTurning = 0;            // rad/sec actually applied, for the bank
+  var advTravel = 1;             // 1 = drilling pace .. ADV_TRAVEL_MUL = clear air
 
   /* --- hardness cache + pre-scan accumulators --------------------------
    * Module-level so the queryRect callback is a single hoisted function with no
@@ -726,6 +879,7 @@ SM.vehicle = (function () {
     driveBurn = 0;
     advDry = false;
     advTurning = 0;
+    advTravel = 1;
 
     if (!advMode()) return;
     x = 0;
@@ -1324,10 +1478,23 @@ SM.vehicle = (function () {
      * machine walks toward it over ADV_SPINUP seconds (or brakes over
      * ADV_STOPTIME), so weight lives in the delay, not in a lerp constant.
      * ------------------------------------------------------------------ */
-    var factor = 1 / (1 + advLoad * ADV_LOAD_SCALE);
-    if (factor < C.VEHICLE_MIN_SPEED_FACTOR) factor = C.VEHICLE_MIN_SPEED_FACTOR;
+    var factor = 1 / (1 + ADV_LOAD_SCALE * Math.sqrt(advLoad > 0 ? advLoad : 0));
+    if (factor < ADV_MIN_FACTOR) factor = ADV_MIN_FACTOR;
 
-    var top = rigStat('getSpeed', C.VEHICLE_SPEED);
+    /* TWO GEARS. See the ADV_TRAVEL_* note: clear air runs fast, rock does not,
+     * and the smoothstep plus the ramp mean the change of pace is something the
+     * machine DOES over a third of a second rather than a value that flips. */
+    var u = (advLoad - ADV_TRAVEL_FREE) / (ADV_TRAVEL_LOAD - ADV_TRAVEL_FREE);
+    if (u < 0) u = 0; else if (u > 1) u = 1;
+    u = u * u * (3 - 2 * u);
+    var gear = ADV_TRAVEL_MUL + (1 - ADV_TRAVEL_MUL) * u;
+    if (stalled && gear > 1) gear = 1;
+    advTravel += (gear - advTravel) * (1 - Math.exp(-ADV_TRAVEL_RAMP * dt));
+
+    // The whole budget rides on the geared top speed, so winding up to travel
+    // pace still takes ADV_SPINUP seconds and meeting rock still takes
+    // ADV_STOPTIME to shed — the machine loads up instead of changing value.
+    var top = rigStat('getSpeed', C.VEHICLE_SPEED) * advTravel;
     var tvx = 0, tvy = 0;
     if (mag > 0) {
       var ux = mx / mag, uy = my / mag;
@@ -1507,7 +1674,21 @@ SM.vehicle = (function () {
     var drillRate = rigStat('getDrillBurn', ADV_FALLBACK_DRILL_BURN);
     var load = damaged > 0 ? (damaged > 24 ? 1 : damaged / 24) : 0;
 
-    var drive = mag > 0 ? driveRate * mag : 0;
+    /* FUEL PER METRE IS THE INVARIANT FOR THE GEAR. advTravel is a speed
+     * multiplier, so the drive burn carries the same multiplier: the tank empties
+     * at the same rate per metre of tunnel it always did and only the wall clock
+     * gets shorter. Drilling burn is untouched — that is work, not distance.
+     *
+     * THE SLOWDOWN IS DELIBERATELY *NOT* COMPENSATED THE SAME WAY. Every burn
+     * here is per SECOND, so cutting at 0.33x speed spends three times the fuel
+     * per metre of rock, and that is the honest price of grinding: hard ground
+     * costs range, a better drill buys it back. It does move rig.js's numbers —
+     * MEASURED with ibal.js, the tier-0 rig now turns back at 166 m of Old
+     * Creek's 480 instead of 247 m. If that is too tight, the lever is rig.js's
+     * tank or burn rates (Agent 2's), or ADV_LOAD_SCALE above; multiplying the
+     * drive term by `factor` here would restore the old range exactly, at the
+     * cost of making rock free to drive through. */
+    var drive = mag > 0 ? driveRate * mag * advTravel : 0;
     var drill = 0;
     if (stalled) drill = drillRate * ADV_HARD_BURN_MUL;
     else if (damaged > 0) drill = drillRate * (0.35 + 0.65 * load);
@@ -1562,8 +1743,25 @@ SM.vehicle = (function () {
    * ================================================================== */
   function trackWidth() { return TRACK_WIDTH + parts.treads * TRACK_PER_LEVEL; }
   function hullHalf() { return bodyWidth * 0.5 + trackWidth() - TRACK_INSET; }
-  function hopperLen() { return HOPPER_LEN + parts.hopper * HOPPER_PER_LEVEL; }
+  /**
+   * How far the rear cargo assembly reaches behind the chassis rear edge.
+   * ADVENTURE returns the ore bed (bays + couplings, measured from ADV_BED_Y0);
+   * classic returns exactly the hopper it always did. Everything downstream —
+   * the ground shadow, rearEdge(), advRadius() and the trailing collector — is
+   * therefore correct in both modes with no branch of its own.
+   */
+  function hopperLen() {
+    if (advMode()) {
+      var l = advBedTotal() - wallT();
+      return l > 10 ? l : 10;
+    }
+    return HOPPER_LEN + parts.hopper * HOPPER_PER_LEVEL;
+  }
   function conveyorLen() {
+    // ADVENTURE: the belt is not a tail, it is the intake feeder on the deck
+    // (drawIntake), so it adds no length. The `conveyor` flag still drives the
+    // trailing pickup bubble in advPushToParticles() — that is gameplay.
+    if (advMode()) return 0;
     return parts.conveyor > 0
       ? CONVEYOR_LEN + (parts.conveyor - 1) * CONVEYOR_PER_LEVEL : 0;
   }
@@ -1578,9 +1776,9 @@ SM.vehicle = (function () {
     if (parts.grinders <= 0) return 0;
     return hullHalf() + GRINDER_R * 1.15 + (parts.grinders - 1) * GRINDER_R * 1.55;
   }
-  /** Half-span reached by the magnet collector arms (0 if none). */
+  /** Half-span reached by the magnet collector arms (0 if none, 0 in adventure). */
   function magnetHalf() {
-    if (parts.magnetArms <= 0) return 0;
+    if (advMode() || parts.magnetArms <= 0) return 0;
     return hullHalf() + ARM_REACH + parts.magnetArms * ARM_REACH_STEP;
   }
 
@@ -1593,7 +1791,14 @@ SM.vehicle = (function () {
       var g = (hull + GRINDER_R * 1.15 + (parts.grinders - 1) * GRINDER_R * 1.55) * 2;
       if (g > s) s = g;
     }
-    if (parts.magnetArms > 0) {
+    // ADVENTURE has no collector arms — the widest thing at the back is the ore
+    // bed, which may overhang the tracks by a few units and nothing more. That
+    // keeps getWidth() an honest hull width for the dust and the camera instead
+    // of the 840-unit arm span the old geometry reported at full cargo.
+    if (advMode()) {
+      var b = hull * bedHalfFrac() * 2;
+      if (b > s) s = b;
+    } else if (parts.magnetArms > 0) {
       var m = (hull + ARM_REACH + parts.magnetArms * ARM_REACH_STEP) * 2;
       if (m > s) s = m;
     }
@@ -1601,6 +1806,71 @@ SM.vehicle = (function () {
     // grinding bedrock and the camera has no lane left to frame.
     if (s > MAX_BLADE) s = MAX_BLADE;
     return s;
+  }
+
+  /* --- ADVENTURE: the ore bed's dimensions -----------------------------
+   * All of it derives from ONE number, the `hopper` flag out of
+   * SM.rig.getPartFlags(), so a re-tier in rig.js needs nothing here. Written
+   * as growth + thresholds rather than as a six-row table so that a seventh
+   * cargo tier still gets a longer bed and a thicker wall for free.
+   * ------------------------------------------------------------------ */
+  function cargoFlag() {
+    var t = parts.hopper | 0;
+    return t > 0 ? t : 0;
+  }
+  function bayCount() {
+    var t = cargoFlag();
+    return 1 + (t >= ADV_BAY2 ? 1 : 0) + (t >= ADV_BAY3 ? 1 : 0);
+  }
+  function bedHalfFrac() {
+    var f = ADV_BED_HALF + cargoFlag() * ADV_BED_HALF_STEP;
+    return f > ADV_BED_HALF_MAX ? ADV_BED_HALF_MAX : f;
+  }
+  function bedHalf() { return hullHalf() * bedHalfFrac(); }
+  function wallT() { return ADV_WALL + cargoFlag() * ADV_WALL_STEP; }
+  /** Length of bay `i`, front to back. Bay 0 is the one on the chassis. */
+  function bayLen(i) {
+    var t = cargoFlag();
+    var base = ADV_BED_LEN + (t < ADV_BAY2 ? t : ADV_BAY2) * ADV_BED_PER_TIER;
+    if (t > ADV_BAY2) base += (t - ADV_BAY2) * ADV_BED_LEN_LATE;
+    if (i <= 0) return base;
+    if (i === 1) return base * ADV_BAY2_LEN;
+    return base * ADV_BAY3_LEN;
+  }
+  /** Bays taper slightly as they trail, which is what makes them read as a set. */
+  function bayScale(i) { return i <= 0 ? 1 : (i === 1 ? 0.95 : 0.90); }
+  /** The bed SETTLES on install rather than inflating from nothing. */
+  function bedGrow() { return 0.90 + 0.10 * depOf('hopper'); }
+  /** The whole assembly, front wall to tailgate, measured from bedY0(). */
+  function advBedTotal() {
+    var n = bayCount(), total = 0;
+    for (var i = 0; i < n; i++) total += bayLen(i);
+    return total + (n - 1) * ADV_BAY_GAP;
+  }
+  /** How full the hold is, 0..1. Empty (and honest) outside a run. */
+  function cargoFill() {
+    if (!SM.adv || !SM.adv.getCargoPct) return 0;
+    var f = SM.adv.getCargoPct();
+    if (!(f > 0)) return 0;
+    return f > 1 ? 1 : f;
+  }
+  /**
+   * Unfold progress of a part, but SETTLED on every meta screen.
+   * main.js zeroes the fixed step while the workshop is up, so update() — and
+   * with it animateMorph() — does not run there. Reading deploy[] directly
+   * would draw the machine you just paid for permanently half-built on the one
+   * screen whose whole job is showing it to you. The four adventure-only
+   * subassemblies below (lamps, radiators, armour, dish) were reading deploy[]
+   * directly and had exactly that bug; they go through here now too. Classic is
+   * unaffected either way — its flags never leave zero and advDriving() is false,
+   * so this returns the settled 1 it always effectively had.
+   */
+  function depOf(k) {
+    // Classic keeps its unfold exactly as it was — its clock never stops, so
+    // there is no frozen screen to protect against and popping a part in
+    // fully-formed would lose the transform beat.
+    if (!advMode()) return easeOutBack(deploy[k]);
+    return advDriving() ? easeOutBack(deploy[k]) : 1;
   }
 
   /* =====================================================================
@@ -1630,9 +1900,12 @@ SM.vehicle = (function () {
    * ------------------------------------------------------------------- */
   var gradSig = -1, gradCtx = null;
   var gChassis = null, gHopper = null, gDrum = null, gBelt = null;
+  var gBedWall = null, gBedFloor = null, gOre = null;
+  var gAuger = null, gTipHeat = null, gAugerHeat = null;
 
   function ensureGradients(ctx, bw, bl) {
-    var sig = ((bw * 2) | 0) * 100003 + ((bladeWidth * 2) | 0) * 31 + parts.hopper;
+    var sig = ((bw * 2) | 0) * 100003 + ((bladeWidth * 2) | 0) * 31 + parts.hopper
+            + parts.treads * 7919 + (advMode() ? 524287 : 0);
     if (sig === gradSig && gradCtx === ctx) return;
     gradSig = sig;
     gradCtx = ctx;
@@ -1658,6 +1931,61 @@ SM.vehicle = (function () {
     gBelt.addColorStop(0, '#23272d');
     gBelt.addColorStop(0.5, '#363c44');
     gBelt.addColorStop(1, '#23272d');
+
+    /* --- the ore bed ---------------------------------------------------
+     * Three gradients, cached exactly like the four above. The WALL one runs
+     * across the machine so the plate tops catch light on the left and fall
+     * away to the right — the same lighting the chassis uses, which is what
+     * makes the bed read as part of the same machine rather than as cargo
+     * bolted on. The FLOOR and ORE ones run along it so a long bed still has
+     * depth down its length. */
+    var bh = bedHalf();
+    if (!(bh > 1)) bh = bw * 0.5;
+    gBedWall = ctx.createLinearGradient(-bh, 0, bh, 0);
+    gBedWall.addColorStop(0, '#6a7480');
+    gBedWall.addColorStop(0.30, '#8b96a3');
+    gBedWall.addColorStop(0.66, '#6f7883');
+    gBedWall.addColorStop(1, '#464d55');
+
+    /* --- ADVENTURE ONLY: the auger and the ore bed ----------------------
+     * Guarded because the signature carries a mode bit, so entering or leaving
+     * adventure always forces a rebuild and these can never be stale-null when
+     * something wants them. The classic morph animates bladeWidth every frame
+     * and therefore re-signs every frame; there is no reason for it to be
+     * building five gradients it will not draw.
+     *
+     * The auger's is along its axis, so the root reads as lit steel and the point
+     * as the far end of a cone. Two of them are radial/graded heat for the
+     * THERMAL LANCE; building those per frame would be an allocation in the
+     * render path, which is the whole reason this function exists. */
+    if (!advMode()) return;
+
+    var ayb = augerBaseY(), ayt = augerTipY();
+    gAuger = ctx.createLinearGradient(0, ayb, 0, ayt);
+    gAuger.addColorStop(0, '#98a3af');
+    gAuger.addColorStop(0.42, '#79838f');
+    gAuger.addColorStop(1, '#4f5761');
+
+    var yh = ayb + (ayt - ayb) * 0.22;
+    gAugerHeat = ctx.createLinearGradient(0, yh, 0, ayt);
+    gAugerHeat.addColorStop(0, 'rgba(150,52,14,0)');
+    gAugerHeat.addColorStop(0.45, 'rgba(186,66,18,0.60)');
+    gAugerHeat.addColorStop(1, 'rgba(255,152,62,0.88)');
+
+    gTipHeat = ctx.createRadialGradient(0, ayt + 6, 2, 0, ayt + 6, 58);
+    gTipHeat.addColorStop(0, 'rgba(255,214,150,0.85)');
+    gTipHeat.addColorStop(0.35, 'rgba(255,120,40,0.35)');
+    gTipHeat.addColorStop(1, 'rgba(255,80,20,0)');
+
+    var by0 = bl * 0.5 - ADV_WALL, by1 = by0 + advBedTotal();
+    gBedFloor = ctx.createLinearGradient(0, by0, 0, by1);
+    gBedFloor.addColorStop(0, '#20242a');
+    gBedFloor.addColorStop(1, '#0f1216');
+
+    gOre = ctx.createLinearGradient(0, by0, 0, by1);
+    gOre.addColorStop(0, '#e2a94f');
+    gOre.addColorStop(0.45, '#b8792c');
+    gOre.addColorStop(1, '#8a5620');
   }
 
   /* =====================================================================
@@ -1700,17 +2028,35 @@ SM.vehicle = (function () {
 
     drawShadow(ctx, bw, bl);
     drawCollectorField(ctx, bl);
-    if (parts.conveyor > 0) drawConveyor(ctx, bw, bl);
-    drawHopper(ctx, bw, bl);
-    // Arms draw AFTER the hopper: behind it they were completely hidden.
-    if (parts.magnetArms > 0) drawMagnetArms(ctx, bw, bl);
+    /* THE SEAM. Adventure's cargo geometry is the ore bed; classic's is the
+     * hopper, the tail conveyor and the collector arms its own upgrade path
+     * installs. Neither knows about the other. */
+    var adv = advMode();
+    if (adv) {
+      drawOreBed(ctx, bw, bl);
+    } else {
+      if (parts.conveyor > 0) drawConveyor(ctx, bw, bl);
+      drawHopper(ctx, bw, bl);
+      // Arms draw AFTER the hopper: behind it they were completely hidden.
+      if (parts.magnetArms > 0) drawMagnetArms(ctx, bw, bl);
+    }
     drawTracks(ctx, bw, bl);
     if (parts.radiators > 0) drawRadiators(ctx, bw, bl);
     drawChassis(ctx, bw, bl, morphFlash);
+    // The intake sits ON the deck, so it draws over the chassis it is bolted to.
+    if (adv) drawIntake(ctx, bw, bl);
     if (parts.armor > 0) drawArmor(ctx, bw, bl);
-    if (parts.grinders > 0) drawGrinders(ctx, bw, bl);
-    drawBlade(ctx, bw, bl, morphFlash);
-    if (parts.drills > 0) drawDrills(ctx, bw, bl);
+    /* THE SAME SEAM AT THE FRONT END. Adventure's drill is one auger that grows
+     * (drawDrillRig, which folds the `drills` and `grinders` flags into the head
+     * as collars and shoulder cutters); classic's is the wide blade plus the
+     * separate rotary heads and outrigger grinders its own upgrades install. */
+    if (adv) {
+      drawDrillRig(ctx, bw, bl, morphFlash);
+    } else {
+      if (parts.grinders > 0) drawGrinders(ctx, bw, bl);
+      drawBlade(ctx, bw, bl, morphFlash);
+      if (parts.drills > 0) drawDrills(ctx, bw, bl);
+    }
     if (parts.lamps > 0) drawLamps(ctx, bw, bl);
     if (parts.dish > 0) drawDish(ctx, bw, bl);
     drawExhaust(ctx, bw, bl);
@@ -1722,6 +2068,25 @@ SM.vehicle = (function () {
   function drawShadow(ctx, bw, bl) {
     var hh = hullHalf();
     ctx.fillStyle = 'rgba(0,0,0,0.42)';
+    /* ADVENTURE: the bed is its own object, narrower than the tracks at the low
+     * tiers and split by couplings at the high ones. One slab down the whole
+     * machine drew a black skirt around the tub and filled the gaps between the
+     * bays in solid, which is exactly what killed the "separate wagons" read. */
+    if (advMode()) {
+      roundRect(ctx, -hh + 5, -bl * 0.5 + 7, hh * 2, bl, 12);
+      ctx.fill();
+      var n = bayCount(), y = bedY0(), hw = bedHalf(), grow = bedGrow();
+      ctx.save();
+      ctx.translate(5, 7);
+      for (var i = 0; i < n; i++) {
+        var len = bayLen(i) * grow, sc = hw * bayScale(i);
+        bedPath(ctx, y, y + len, sc * 0.96, sc, 7);
+        ctx.fill();
+        y += len + ADV_BAY_GAP;
+      }
+      ctx.restore();
+      return;
+    }
     roundRect(ctx, -hh + 5, -bl * 0.5 + 7, hh * 2, bl + hopperLen() + conveyorLen(), 12);
     ctx.fill();
   }
@@ -2309,9 +2674,960 @@ SM.vehicle = (function () {
    * model drawn on the machine would fight the real one.
    * ================================================================== */
 
+  /* ---------------------------------------------------------------------
+   * THE DRILL — one bit that gets bigger, not a rack of discs
+   * ---------------------------------------------------------------------
+   * WORN AUGER BIT -> ... -> PLASMA CORE BREAKER is 8 to 84 power and a hardness
+   * cap from 8.5 to 34. That escalation has to be one machine getting more
+   * formidable, so the story is a single AUGER: it gets longer out front, thicker
+   * at the root, gains flutes, gains stepped stages, grows teeth into cutters,
+   * and finally runs hot and then energised.
+   *
+   * The wide toothed bar behind it stays, because the cut is honestly that wide
+   * (ADV_CUT_HALF*2 is 168 at tier 0 and 248 at tier 5) — but it is demoted from
+   * "the drill" to what it actually is, a REAMER that opens the pilot hole out to
+   * the corridor. The rotary discs and side grinders the flags still carry are
+   * folded into the head as collars and shoulder cutters instead of being bolted
+   * on as separate machinery, which was the thing that read as "more discs".
+   *
+   *   yBase  the collar face, just in front of the reamer bar
+   *   yTip   pinned to the front of the cut box, so the drawn bit reaches as far
+   *          as the machine actually cuts — that is what makes it look honest
+   *   R(t)   Rb * (1-t)^0.62, a slightly convex cone rather than a straight one
+   * ------------------------------------------------------------------ */
+  var AUG_N = 9;                          // samples along the auger axis
+  var augY = new Float32Array(AUG_N);
+  var augR = new Float32Array(AUG_N);
+
+  function drillTier() {
+    var t = parts.bladeTier | 0;
+    return t > 0 ? t : 0;
+  }
+  function augerBaseY() {
+    return -C.VEHICLE_BODY_LENGTH * 0.5 - BLADE_ARM - bladeThick() * 0.35;
+  }
+  function augerTipY() {
+    var T = drillTier();
+    var cutHalf = ADV_CUT_HALF + T * ADV_CUT_PER_TIER;
+    return -(drillReach() + cutHalf * ADV_AUGER_REACH + T * ADV_AUGER_PER_TIER);
+  }
+  function augerRadius() {
+    return bladeWidth * 0.5 * (ADV_AUGER_GIRTH + drillTier() * ADV_AUGER_GIRTH_STEP);
+  }
+  /**
+   * Fill augY/augR for this frame's geometry. No allocation.
+   *
+   * The profile is a SHANK and then a POINT, not a cone. A cone drawn top-down
+   * with symmetric flutes reads as a pyramid — it was tried, screenshotted, and
+   * looked like a pagoda bolted to the nose. A near-cylindrical body with the
+   * taper saved for the last third reads as a drill, and it also gives the
+   * helical flutes a constant width to scroll across, which is what actually
+   * sells the rotation (the same reason the reamer's diagonal stripes work).
+   */
+  function augerSamples() {
+    var yb = augerBaseY(), yt = augerTipY(), Rb = augerRadius();
+    for (var i = 0; i < AUG_N; i++) {
+      var t = i / (AUG_N - 1);
+      augY[i] = yb + (yt - yb) * t;
+      if (t <= ADV_AUGER_SHANK) {
+        // a barely-tapered shank, thickest at the root where the torque is
+        augR[i] = Rb * (1 - 0.13 * (t / ADV_AUGER_SHANK));
+      } else {
+        var u = (t - ADV_AUGER_SHANK) / (1 - ADV_AUGER_SHANK);
+        augR[i] = Rb * 0.92 * Math.pow(1 - u, 1.15);
+      }
+    }
+  }
+  function augerPath(ctx) {
+    var i;
+    ctx.beginPath();
+    ctx.moveTo(-augR[0], augY[0]);
+    for (i = 1; i < AUG_N; i++) ctx.lineTo(-augR[i], augY[i]);
+    for (i = AUG_N - 1; i >= 0; i--) ctx.lineTo(augR[i], augY[i]);
+    ctx.closePath();
+  }
+  /** Radius at an arbitrary 0..1 along the axis, from the sampled cone. */
+  function augerAt(t) {
+    var f = t * (AUG_N - 1), i = f | 0;
+    if (i >= AUG_N - 1) return augR[AUG_N - 1];
+    return augR[i] + (augR[i + 1] - augR[i]) * (f - i);
+  }
+  function augerYAt(t) { return augY[0] + (augY[AUG_N - 1] - augY[0]) * t; }
+
+  /**
+   * The whole front end. Replaces drawBlade + drawDrills + drawGrinders in
+   * adventure mode; classic still calls all three, untouched.
+   */
+  function drawDrillRig(ctx, bw, bl, flash) {
+    var T = drillTier();
+    var thick = bladeThick();
+    var frontY = -bl * 0.5 - BLADE_ARM;
+    var halfW = bladeWidth * 0.5;
+    var top = frontY - thick * 0.5;
+    var dep = depOf('bladeTier');
+    var s, i, k;
+
+    augerSamples();
+
+    /* JUDDER. Pinned against rock it cannot cut, the whole head shakes. This is
+     * the moment the hardness gate has to sell, and the drill is what the player
+     * is staring at while it happens. */
+    var jud = stalled ? 1.6 + Math.min(1.4, resistance * 0.004) : 0;
+    ctx.save();
+    if (jud > 0) {
+      ctx.translate(Math.sin(lightPhase * 120) * jud, Math.cos(lightPhase * 97) * jud);
+    }
+
+    /* --- mounts: heavy legs from the hull nose to the reamer ---------- */
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#2b3138';
+    ctx.lineWidth = 13;
+    for (s = -1; s <= 1; s += 2) {
+      ctx.beginPath();
+      ctx.moveTo(s * bw * 0.30, -bl * 0.5 + 12);
+      ctx.lineTo(s * Math.min(halfW - 12, bw * 0.34 + 26), frontY + 3);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = '#4a525c';
+    ctx.lineWidth = 7;
+    for (s = -1; s <= 1; s += 2) {
+      ctx.beginPath();
+      ctx.moveTo(s * bw * 0.44, -bl * 0.28);
+      ctx.lineTo(s * (halfW - 9), frontY + 4);
+      ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
+
+    /* --- the reamer bar ----------------------------------------------- */
+    ctx.save();
+    roundRect(ctx, -halfW, top, bladeWidth, thick, 7);
+    ctx.clip();
+    ctx.fillStyle = gDrum;
+    ctx.fillRect(-halfW, top, bladeWidth, thick);
+    var pitch = 20;
+    var off = (drumPhase * 3.2) % pitch;
+    ctx.fillStyle = 'rgba(255,205,70,0.34)';
+    for (var sx = -halfW - pitch * 2; sx < halfW + pitch; sx += pitch) {
+      ctx.beginPath();
+      ctx.moveTo(sx + off, top);
+      ctx.lineTo(sx + off + 5, top);
+      ctx.lineTo(sx + off + 5 + thick, top + thick);
+      ctx.lineTo(sx + off + thick, top + thick);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(-halfW, top + 2, bladeWidth, 5);
+    ctx.restore();
+    ctx.strokeStyle = '#14171b';
+    ctx.lineWidth = 3;
+    roundRect(ctx, -halfW, top, bladeWidth, thick, 7);
+    ctx.stroke();
+
+    // reamer teeth, biggest at the shoulders where the corridor gets its width
+    var toothPitch = 16 - parts.teeth * 1.6;
+    if (toothPitch < 10) toothPitch = 10;
+    var n = Math.max(3, Math.round(bladeWidth / toothPitch));
+    if (n > 70) n = 70;
+    var step = bladeWidth / n;
+    var toothLen = 8 + parts.teeth * 1.8;
+    for (i = 0; i < n; i++) {
+      var cx = -halfW + step * (i + 0.5);
+      var edge = Math.abs(cx) / halfW;              // 0 centre .. 1 shoulder
+      var wob = Math.sin(drumPhase * 2.4 + i * 0.9) * 2.2;
+      var len = toothLen * (0.72 + edge * 0.5) + wob;
+      ctx.beginPath();
+      ctx.moveTo(cx - step * 0.40, top);
+      ctx.lineTo(cx, top - len);
+      ctx.lineTo(cx + step * 0.40, top);
+      ctx.closePath();
+      ctx.fillStyle = (i & 1) ? '#c8d2dc' : '#98a4b0';
+      ctx.fill();
+    }
+
+    /* --- shoulder cutters: the `grinders` flag, folded into the head --- */
+    if (parts.grinders > 0) drawShoulderCutters(ctx, halfW, frontY, thick);
+
+    /* --- the auger ---------------------------------------------------- */
+    var tipY = augY[AUG_N - 1];
+    // seated shadow, so the bit reads as standing off the bar
+    ctx.save();
+    ctx.translate(4, 5);
+    augerPath(ctx);
+    ctx.fillStyle = 'rgba(0,0,0,0.38)';
+    ctx.fill();
+    ctx.restore();
+
+    augerPath(ctx);
+    ctx.fillStyle = gAuger;
+    ctx.fill();
+    ctx.strokeStyle = '#14171b';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+
+    /* FLUTES. Helical grooves, drawn as diagonal bands travelling toward the tip
+     * — the same trick the reamer drum uses to read as a spinning cylinder, and
+     * the only one that survives being 90 px tall. Pitch tightens and the groove
+     * deepens with the tier: a worn auger has a lazy coarse thread, the core
+     * breaker is close-pitched and aggressive. */
+    var Rb = augR[0];
+    var pitch = ADV_FLUTE_PITCH - T * 1.7;
+    if (pitch < 9) pitch = 9;
+    var off = (drumPhase * 7) % pitch;
+    var rise = Rb * 1.5;                        // helix angle across the body
+    ctx.save();
+    augerPath(ctx);
+    ctx.clip();
+    for (var fy = augY[0] + pitch * 2; fy > augY[AUG_N - 1] - rise; fy -= pitch) {
+      var y0 = fy - off;
+      ctx.strokeStyle = 'rgba(10,13,17,0.62)';
+      ctx.lineWidth = pitch * 0.44 + T * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(-Rb * 1.3, y0);
+      ctx.lineTo(Rb * 1.3, y0 - rise);
+      ctx.stroke();
+      // the land: the lit edge of the thread, just ahead of the groove
+      ctx.strokeStyle = 'rgba(228,238,248,0.26)';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(-Rb * 1.3, y0 - pitch * 0.34);
+      ctx.lineTo(Rb * 1.3, y0 - rise - pitch * 0.34);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    /* Gauge cutters where the thread meets the gauge — two pairs, chunky, at the
+     * root and at the shoulder where the point begins. Rows of little spikes all
+     * down the flanks were tried and read as a pinecone. */
+    var tl = 4 + T * 1.6;
+    for (k = 0; k < 2; k++) {
+      var gt = k === 0 ? 0.16 : ADV_AUGER_SHANK - 0.04;
+      var rr = augerAt(gt), yy = augerYAt(gt);
+      if (rr < 4) continue;
+      for (s = -1; s <= 1; s += 2) {
+        ctx.beginPath();
+        ctx.moveTo(s * (rr - 1), yy - 6 - T * 0.5);
+        ctx.lineTo(s * (rr + tl), yy - 1);
+        ctx.lineTo(s * (rr + tl * 0.6), yy + 5);
+        ctx.lineTo(s * (rr - 1), yy + 6 + T * 0.5);
+        ctx.closePath();
+        ctx.fillStyle = k ? '#cdd6e0' : '#aeb9c4';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(10,13,16,0.6)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+    }
+
+    /* --- stepped stages: the `drills` flag as collars on ONE bit ------ */
+    var collars = parts.drills > 2 ? 2 : parts.drills;
+    for (k = 0; k < collars; k++) {
+      var ct = 0.26 + k * 0.26;
+      var cr = augerAt(ct), cy = augerYAt(ct);
+      var isNew = (k === collars - 1);
+      var cw = cr * (1.30 + k * 0.06) * (isNew ? 0.55 + 0.45 * dep : 1);
+      var chh = 9 + T * 0.7;
+      ctx.fillStyle = '#4d5661';
+      roundRect(ctx, -cw, cy - chh * 0.5, cw * 2, chh, 3);
+      ctx.fill();
+      ctx.strokeStyle = '#14171b';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fillRect(-cw + 3, cy - chh * 0.5 + 1.5, cw * 2 - 6, 1.6);
+      // bolt heads round the collar, not cutters hanging off it
+      ctx.fillStyle = 'rgba(20,24,29,0.55)';
+      for (s = -1; s <= 1; s += 2) {
+        ctx.beginPath();
+        ctx.arc(s * cw * 0.72, cy, 1.8 + T * 0.12, 0, TAU);
+        ctx.fill();
+      }
+    }
+
+    /* --- the point ---------------------------------------------------- */
+    var rt = augerAt(ADV_AUGER_SHANK + 0.02), ry = augerYAt(ADV_AUGER_SHANK + 0.02);
+    ctx.beginPath();
+    ctx.moveTo(-rt, ry);
+    ctx.lineTo(-rt * 0.30, tipY + 6);
+    ctx.lineTo(0, tipY - 4);
+    ctx.lineTo(rt * 0.30, tipY + 6);
+    ctx.lineTo(rt, ry);
+    ctx.closePath();
+    ctx.fillStyle = '#c6d0da';
+    ctx.fill();
+    ctx.strokeStyle = '#14171b';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    // chisel edge: two ground faces meeting at the point
+    ctx.fillStyle = 'rgba(255,255,255,0.34)';
+    ctx.beginPath();
+    ctx.moveTo(-rt * 0.55, ry);
+    ctx.lineTo(0, tipY - 3);
+    ctx.lineTo(rt * 0.05, ry);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(12,15,19,0.55)';
+    ctx.lineWidth = 1.4;
+    for (k = 0; k < 2; k++) {
+      var qy = ry + (tipY - ry) * (0.30 + k * 0.32);
+      var qr = rt * (0.72 - k * 0.30);
+      ctx.beginPath();
+      ctx.moveTo(-qr, qy); ctx.lineTo(qr, qy - 3);
+      ctx.stroke();
+    }
+
+    /* --- heat, then plasma -------------------------------------------- */
+    var work = loadSmoothed;
+    if (stalled) work = 1;
+    if (T >= ADV_DRILL_THERMAL) drawDrillHeat(ctx, T, work, tipY);
+    if (T >= ADV_DRILL_PLASMA) drawDrillPlasma(ctx, T, work, tipY);
+
+    // Working glow at the cutting face in every tier, hotter under load.
+    var glow = 0.16 + Math.min(0.46, resistance * 0.0035) + work * 0.22;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'rgba(255,150,40,' + glow.toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.arc(0, tipY + 6, 9 + T * 2.2 + work * 6, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,150,40,' + (glow * 0.7).toFixed(3) + ')';
+    ctx.fillRect(-halfW, top - 3, bladeWidth, 4);
+    ctx.restore();
+
+    /* --- morph flourish, exactly as the old blade had it -------------- */
+    if (flash > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = 'rgba(255,255,255,' + (flash * 0.7).toFixed(3) + ')';
+      augerPath(ctx);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,220,255,' + (flash * 0.85).toFixed(3) + ')';
+      ctx.lineWidth = 3;
+      var rr2 = (1 - flash) * 70 + 10;
+      for (k = -1; k <= 1; k += 2) {
+        ctx.beginPath();
+        ctx.arc(k * halfW, frontY, rr2, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    ctx.restore();                        // judder
+  }
+
+  /**
+   * The `grinders` flag: toothed wheels at the ends of the reamer bar, where a
+   * real machine would put the gauge cutters. Inside the cut width on purpose —
+   * outriggers hanging off the hull were the "more discs" problem.
+   */
+  function drawShoulderCutters(ctx, halfW, frontY, thick) {
+    var n = parts.grinders > 3 ? 3 : parts.grinders;
+    var dep = depOf('grinders');
+    var top = frontY - thick * 0.5;
+    for (var g = 0; g < n; g++) {
+      var sc = (g === n - 1) ? 0.4 + 0.6 * dep : 1;
+      var w = (9 - g * 1.2) * sc;
+      var len = (15 - g * 2.5) * sc;
+      if (w < 2) continue;
+      // Chatter, so they read as machinery under load — the same travelling
+      // wave the reamer teeth use, half a beat out of phase.
+      var wob = Math.sin(grindPhase * 1.6 + g) * 1.8;
+      var gx = halfW - 4 - g * (w * 2.2);
+      for (var s = -1; s <= 1; s += 2) {
+        ctx.beginPath();
+        ctx.moveTo(s * (gx - w), top + 2);
+        ctx.lineTo(s * (gx - w * 0.2), top - len - wob);
+        ctx.lineTo(s * (gx + w * 0.9), top - len * 0.55 - wob);
+        ctx.lineTo(s * (gx + w), top + 4);
+        ctx.closePath();
+        ctx.fillStyle = g ? '#aeb9c4' : '#cdd6e0';
+        ctx.fill();
+        ctx.strokeStyle = '#14171b';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.beginPath();
+        ctx.moveTo(s * (gx - w * 0.7), top);
+        ctx.lineTo(s * (gx - w * 0.25), top - len * 0.85 - wob);
+        ctx.lineTo(s * (gx + w * 0.1), top - len * 0.45 - wob);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  /** THERMAL LANCE: nozzles round the collar and a bit that runs cherry-red. */
+  function drawDrillHeat(ctx, T, work, tipY) {
+    var heat = 0.45 + work * 0.55;
+    /* The forward half runs cherry-red. NOT additive: 'lighter' orange over cool
+     * steel comes out pink, which was screenshotted and looked like copper. A
+     * plain warm fill tints it toward rust and keeps the metal reading as metal. */
+    ctx.save();
+    augerPath(ctx);
+    ctx.clip();
+    if (gAugerHeat) {
+      ctx.globalAlpha = 0.55 + heat * 0.45;
+      ctx.fillStyle = gAugerHeat;
+      ctx.fillRect(-90, augerYAt(1) - 12, 180, (augerYAt(0) - augerYAt(1)) + 12);
+    }
+    ctx.restore();
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    // radiant halo at the point (cached radial — see ensureGradients)
+    if (gTipHeat) {
+      ctx.save();
+      ctx.globalAlpha = 0.35 + heat * 0.5;
+      ctx.fillStyle = gTipHeat;
+      ctx.fillRect(-80, tipY - 60, 160, 130);
+      ctx.restore();
+    }
+    ctx.restore();
+    // lance nozzles: short stubs round the base, alight
+    var rb = augR[1], yb = augY[1];
+    for (var s = -1; s <= 1; s += 2) {
+      ctx.fillStyle = '#39414b';
+      roundRect(ctx, s * rb - (s > 0 ? 8 : 0), yb - 4, 8, 13, 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,190,90,' + (0.5 + work * 0.4).toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.arc(s * (rb - 4), yb - 3, 2.6, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  /** PLASMA CORE BREAKER: a lit core and arcs walking over the cutters. */
+  function drawDrillPlasma(ctx, T, work, tipY) {
+    var i;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    /* A field turning round the bit: two arcs sweeping with lightPhase. A full
+      * ring was tried and read as a soap bubble stuck on the drill. */
+    var cy = augerYAt(0.80), cr = augerAt(0.62) * 1.35;
+    var pulse = 0.55 + 0.45 * Math.sin(lightPhase * 9);
+    var spin = lightPhase * 5.5;
+    ctx.strokeStyle = 'rgba(150,235,255,' + (0.40 + pulse * 0.35).toFixed(3) + ')';
+    ctx.lineWidth = 2.5 + pulse * 2;
+    for (i = 0; i < 2; i++) {
+      ctx.beginPath();
+      ctx.arc(0, cy, cr, spin + i * Math.PI, spin + i * Math.PI + 1.9);
+      ctx.stroke();
+    }
+    // the lit core, at the root of the point where the energy is delivered
+    var ky = augerYAt(0.88);
+    ctx.fillStyle = 'rgba(210,248,255,' + (0.34 + pulse * 0.34).toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.arc(0, ky, augerAt(0.88) * 1.5 + 2, 0, TAU);
+    ctx.fill();
+
+    // arcs: three, re-rolled ~14 times a second so they crackle
+    ctx.strokeStyle = 'rgba(190,240,255,' + (0.5 + work * 0.4).toFixed(3) + ')';
+    ctx.lineWidth = 1.8;
+    var tick = (lightPhase * 14) | 0;
+    for (i = 0; i < 3; i++) {
+      var h1 = bump(tick + i * 7), h2 = bump(tick * 3 + i * 11);
+      var t0 = 0.25 + h1 * 0.5, t1 = 0.72 + h2 * 0.24;
+      var s0 = h1 > 0.5 ? 1 : -1;
+      var x0 = s0 * augerAt(t0) * 0.9, y0 = augerYAt(t0);
+      var x1 = -s0 * augerAt(t1) * 0.5, y1 = augerYAt(t1);
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo((x0 + x1) * 0.5 + (h2 - 0.5) * 14, (y0 + y1) * 0.5);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* ---------------------------------------------------------------------
+   * THE ORE BED — the CARGO ladder, drawn as volume
+   * ---------------------------------------------------------------------
+   * Read the ADV_BED_* note by the tunables first; this is the implementation.
+   * One bay is a chamfered steel tub drawn as three concentric shapes:
+   *
+   *     shell   the plate, filled with the wall gradient      <- outer
+   *     cavity  the hold, filled dark                         <- inset by wallT()
+   *     load    the ore, filled from the intake end backwards <- clipped to it
+   *
+   * The visible ring of shell between those two IS the wall seen from above, so
+   * its thickness is the only height cue this view can carry, and the two
+   * offset strokes inside the cavity (shadow down-left, light up-right) are what
+   * turn a dark rectangle into a hole. Everything else — ribs, hinges, the
+   * tailgate, the ram, the couplings — is there to say what the thing is FOR.
+   * ------------------------------------------------------------------ */
+
+  /** y of the bed's front wall. Tucked under the chassis by its own thickness,
+   *  so the tub looks welded to the hull and the whole cavity stays visible. */
+  function bedY0() { return C.VEHICLE_BODY_LENGTH * 0.5 - wallT(); }
+
+  /** Chamfered trapezoid — the plate silhouette of one bay. */
+  function bedPath(ctx, y0, y1, hw0, hw1, ch) {
+    var lim = (y1 - y0) * 0.45, lw = (hw0 < hw1 ? hw0 : hw1) * 0.5;
+    if (ch > lim) ch = lim;
+    if (ch > lw) ch = lw;
+    if (!(ch > 0)) ch = 0;
+    ctx.beginPath();
+    ctx.moveTo(-hw0 + ch, y0);
+    ctx.lineTo(hw0 - ch, y0);
+    ctx.lineTo(hw0, y0 + ch);
+    ctx.lineTo(hw1, y1 - ch);
+    ctx.lineTo(hw1 - ch, y1);
+    ctx.lineTo(-hw1 + ch, y1);
+    ctx.lineTo(-hw1, y1 - ch);
+    ctx.lineTo(-hw0, y0 + ch);
+    ctx.closePath();
+  }
+
+  /** Deterministic 0..1 from an integer — heap bumps that do not jitter. */
+  function bump(i) {
+    var s = Math.sin(i * 12.9898) * 43758.5453;
+    return s - Math.floor(s);
+  }
+
+  function drawOreBed(ctx, bw, bl) {
+    var T = cargoFlag();
+    var n = bayCount();
+    var grow = bedGrow();
+    var wall = wallT();
+    var hw = bedHalf();
+    var fill = cargoFill();
+    var i, len;
+
+    // The load is ONE contiguous run from the intake end, so a small haul sits
+    // in the front bay and the rest is visibly, expensively empty.
+    var interior = 0;
+    for (i = 0; i < n; i++) {
+      len = bayLen(i) * grow - wall * 2;
+      if (len > 0) interior += len;
+    }
+    var run = fill * interior;
+
+    var y = bedY0();
+    for (i = 0; i < n; i++) {
+      len = bayLen(i) * grow;
+      var hwR = hw * bayScale(i), hwF = hwR * 0.96;
+      var inner = len - wall * 2;
+      var f = inner > 0 ? run / inner : 0;
+      if (f > 1) f = 1; else if (f < 0) f = 0;
+      run -= inner;
+      // Couplings draw BEFORE the bay behind them so the bay's plate overlaps
+      // the drawbar, which is how a hitch actually sits.
+      if (i > 0) drawCoupling(ctx, y - ADV_BAY_GAP, hwR, wall);
+      drawBay(ctx, y, len, hwF, hwR, wall, f, T, i, i === n - 1);
+      y += len + ADV_BAY_GAP;
+    }
+  }
+
+  /**
+   * One bay. `f` is how full THIS bay is, 0..1; `idx` 0 is the one on the hull.
+   */
+  function drawBay(ctx, y0, len, hwF, hwR, wall, f, T, idx, last) {
+    var y1 = y0 + len;
+    var ch = 6 + T * 0.7;
+    var s, k;
+
+    /* --- the plate ---------------------------------------------------- */
+    bedPath(ctx, y0, y1, hwF, hwR, ch);
+    ctx.fillStyle = gBedWall;
+    ctx.fill();
+    ctx.strokeStyle = '#14171b';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';   // lit top edge of the plate
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+
+    /* --- bolted side boards: the HIGH-SIDED tier's read --------------- */
+    if (T >= ADV_HIGHSIDE) {
+      var board = 3 + (T - ADV_HIGHSIDE) * 1.1;
+      bedPath(ctx, y0 + wall * 0.5, y1 - wall * 0.5,
+              hwF - wall * 0.42, hwR - wall * 0.42, ch * 0.7);
+      ctx.strokeStyle = 'rgba(30,35,41,0.55)';    // the seam where they bolt on
+      ctx.lineWidth = board;
+      ctx.stroke();
+    }
+
+    /* --- the cavity --------------------------------------------------- */
+    var iF = hwF - wall, iR = hwR - wall;
+    var iy0 = y0 + wall, iy1 = y1 - wall;
+    if (iF < 4) iF = 4;
+    if (iR < 4) iR = 4;
+    if (iy1 - iy0 < 6) iy1 = iy0 + 6;
+    var ich = ch * 0.55;
+
+    bedPath(ctx, iy0, iy1, iF, iR, ich);
+    ctx.fillStyle = gBedFloor;
+    ctx.fill();
+
+    ctx.save();
+    bedPath(ctx, iy0, iy1, iF, iR, ich);
+    ctx.clip();
+
+    /* --- the floor ----------------------------------------------------
+     * An EMPTY bay has to read as a floor you could stand on, or a big unfilled
+     * hold looks like a hole cut in the machine — which is the one thing that
+     * would undo the whole "look how much room is left" story. Ribbed steel:
+     * cross slats plus two rails, all of it under the load. */
+    var slat = 15 + T;
+    ctx.lineWidth = 1;
+    for (k = 1; iy0 + k * slat < iy1; k++) {
+      var sy = iy0 + k * slat;
+      ctx.strokeStyle = 'rgba(255,255,255,0.055)';
+      ctx.beginPath(); ctx.moveTo(-iR, sy); ctx.lineTo(iR, sy); ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath(); ctx.moveTo(-iR, sy + 1.2); ctx.lineTo(iR, sy + 1.2); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    for (s = -1; s <= 1; s += 2) {
+      ctx.beginPath();
+      ctx.moveTo(s * iF * 0.52, iy0); ctx.lineTo(s * iR * 0.52, iy1);
+      ctx.stroke();
+    }
+
+    /* --- the load ----------------------------------------------------- */
+    if (f > 0.004) {
+      // The compactor's ram stands in front of the load and pushes it back, so
+      // the ore starts behind the plate rather than at the front wall.
+      var oy0 = (idx === 0 && T >= ADV_RAM) ? ramStroke(iy0) + ramThick(wall) + 1 : iy0;
+      var oy1 = oy0 + (iy1 - oy0) * f;
+      ctx.fillStyle = gOre;
+      ctx.fillRect(-iR, oy0 - 2, iR * 2, oy1 - oy0 + 2);
+      // Heaped surface: bumps along the back edge, then a lit crest. The bump
+      // radius is capped against the depth of the load, or a nearly empty
+      // OPEN SKIP — a 40-unit tub — reads as brim-full on its own heap.
+      var bumps = 4 + (iR / 22) | 0;
+      var bmax = (oy1 - oy0) * 0.42 + 1.5;
+      for (k = 0; k < bumps; k++) {
+        var bx = -iR + (iR * 2) * ((k + 0.5) / bumps);
+        var br = 4 + bump(k + idx * 7) * (wall * 0.8 + 4);
+        if (br > bmax) br = bmax;
+        ctx.beginPath();
+        ctx.arc(bx, oy1 - br * 0.35, br, 0, TAU);
+        ctx.fill();
+      }
+      // Chunk texture — a handful of darker lumps, fixed per bay.
+      ctx.fillStyle = 'rgba(60,36,12,0.45)';
+      for (k = 0; k < 5; k++) {
+        var cxx = (bump(k * 3 + 1 + idx) - 0.5) * iR * 1.7;
+        var cyy = oy0 + (oy1 - oy0) * bump(k * 5 + 2 + idx);
+        ctx.beginPath();
+        ctx.arc(cxx, cyy, 3.2 + bump(k * 7 + idx) * 3.4, 0, TAU);
+        ctx.fill();
+      }
+      // The gulp: every collected fragment brightens the whole load for a beat.
+      if (hopperPulse > 0.01) {
+        ctx.fillStyle = 'rgba(255,214,120,' + (hopperPulse * 0.42).toFixed(3) + ')';
+        ctx.fillRect(-iR, oy0 - 2, iR * 2, oy1 - oy0 + 2);
+      }
+      ctx.strokeStyle = 'rgba(255,226,160,0.40)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-iR * 0.92, oy1 - 1);
+      ctx.lineTo(iR * 0.92, oy1 - 1);
+      ctx.stroke();
+    }
+
+    /* --- depth: the walls seen from inside --------------------------- */
+    ctx.save();
+    ctx.translate(wall * 0.34, wall * 0.42);
+    bedPath(ctx, iy0, iy1, iF, iR, ich);
+    ctx.strokeStyle = 'rgba(0,0,0,0.62)';
+    ctx.lineWidth = wall * 0.85;
+    ctx.stroke();
+    ctx.restore();
+    ctx.save();
+    ctx.translate(-wall * 0.30, -wall * 0.36);
+    bedPath(ctx, iy0, iy1, iF, iR, ich);
+    ctx.strokeStyle = 'rgba(190,205,220,0.13)';
+    ctx.lineWidth = wall * 0.7;
+    ctx.stroke();
+    ctx.restore();
+
+    /* --- the compactor ram -------------------------------------------- */
+    if (idx === 0 && T >= ADV_RAM) drawRam(ctx, iy0, iF, iR, wall);
+    ctx.restore();                      // end cavity clip
+
+    /* --- ribs, and outboard bracing once the load is heavy ------------ */
+    var ribs = 2 + T;
+    ctx.lineWidth = 1;
+    for (k = 0; k < ribs; k++) {
+      var t = (k + 0.6) / (ribs + 0.2);
+      var ry = y0 + len * t;
+      var ro = hwF + (hwR - hwF) * t;
+      for (s = -1; s <= 1; s += 2) {
+        ctx.fillStyle = 'rgba(0,0,0,0.34)';
+        ctx.fillRect(s > 0 ? ro - wall : -ro, ry - 1.4, wall, 2.8);
+        ctx.fillStyle = 'rgba(255,255,255,0.10)';
+        ctx.fillRect(s > 0 ? ro - wall : -ro, ry - 2.4, wall, 1);
+        // A brace every other rib once the sides are tall enough to need them.
+        if (T >= ADV_HIGHSIDE && (k & 1) === 0) {
+          var fl = 3 + T * 0.7;
+          ctx.fillStyle = '#4b535d';
+          ctx.beginPath();
+          ctx.moveTo(s * ro, ry - 5);
+          ctx.lineTo(s * (ro + fl), ry - 2.5);
+          ctx.lineTo(s * (ro + fl), ry + 2.5);
+          ctx.lineTo(s * ro, ry + 5);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#14171b';
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+        }
+      }
+    }
+
+    /* --- the back end ------------------------------------------------- */
+    if (last && T >= ADV_TAILGATE) drawTailgate(ctx, y1, hwR, wall, T);
+    else if (last) drawSkipLip(ctx, y1, hwR, wall);
+
+    /* --- load straps once there is a train to secure ------------------ */
+    if (T >= ADV_BAY3 && idx < 2) {
+      ctx.strokeStyle = 'rgba(24,28,33,0.72)';
+      ctx.lineWidth = 4.5;
+      for (k = 0; k < 2; k++) {
+        var sy = y0 + len * (0.30 + k * 0.34);
+        var so = hwF + (hwR - hwF) * ((sy - y0) / len);
+        ctx.beginPath();
+        ctx.moveTo(-so - 2, sy); ctx.lineTo(so + 2, sy);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-so - 2, sy - 2); ctx.lineTo(so + 2, sy - 2);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(24,28,33,0.72)';
+        ctx.lineWidth = 4.5;
+      }
+    }
+  }
+
+  /** Where the ram plate currently sits, in world y. Slow, heavy, hydraulic. */
+  function ramStroke(iy0) {
+    return iy0 + 3 + (0.5 + 0.5 * Math.sin(armPhase * 0.45)) * 16;
+  }
+  function ramThick(wall) { return 7 + wall * 0.25; }
+
+  /** Compactor ram: a striped plate on two cylinders, crushing the load back. */
+  function drawRam(ctx, iy0, iF, iR, wall) {
+    var ry = ramStroke(iy0);
+    var half = iF - 1;
+    var th = ramThick(wall);
+
+    // cylinders back to the front wall
+    for (var s = -1; s <= 1; s += 2) {
+      var cx = s * half * 0.56;
+      ctx.fillStyle = '#39414b';
+      ctx.fillRect(cx - 3.5, iy0 - 4, 7, ry - iy0 + 4);
+      ctx.fillStyle = '#9aa4b0';
+      ctx.fillRect(cx - 1.5, iy0 + 2, 3, ry - iy0 - 2);
+    }
+    // the plate
+    ctx.fillStyle = '#2a2f36';
+    roundRect(ctx, -half, ry, half * 2, th, 2);
+    ctx.fill();
+    ctx.save();
+    roundRect(ctx, -half, ry, half * 2, th, 2);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(255,190,40,0.85)';
+    for (var sx = -half - th; sx < half + th; sx += 14) {
+      ctx.beginPath();
+      ctx.moveTo(sx, ry);
+      ctx.lineTo(sx + 6, ry);
+      ctx.lineTo(sx + 6 + th, ry + th);
+      ctx.lineTo(sx + th, ry + th);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.strokeStyle = '#14171b';
+    ctx.lineWidth = 1.6;
+    roundRect(ctx, -half, ry, half * 2, th, 2);
+    ctx.stroke();
+  }
+
+  /** Hinged tailgate: hinges outboard, latch in the middle, hazard band. */
+  function drawTailgate(ctx, y1, hwR, wall, T) {
+    var w = hwR + 3;
+    var th = wall * 1.15 + 5;
+    var y = y1 - wall * 0.55;
+
+    ctx.fillStyle = '#5c646f';
+    roundRect(ctx, -w, y, w * 2, th, 3);
+    ctx.fill();
+    if (T >= ADV_HIGHSIDE) {
+      ctx.save();
+      roundRect(ctx, -w, y, w * 2, th, 3);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(255,190,40,0.80)';
+      for (var sx = -w - th; sx < w + th; sx += 16) {
+        ctx.beginPath();
+        ctx.moveTo(sx, y);
+        ctx.lineTo(sx + 7, y);
+        ctx.lineTo(sx + 7 + th, y + th);
+        ctx.lineTo(sx + th, y + th);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    ctx.strokeStyle = '#14171b';
+    ctx.lineWidth = 2.2;
+    roundRect(ctx, -w, y, w * 2, th, 3);
+    ctx.stroke();
+
+    // hinge knuckles and the centre latch
+    ctx.fillStyle = '#2f353d';
+    for (var s = -1; s <= 1; s += 2) {
+      ctx.beginPath();
+      ctx.arc(s * (w - 3), y + th * 0.5, 3.4, 0, TAU);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#9aa4b0';
+    roundRect(ctx, -7, y + th * 0.5 - 2, 14, 4, 1.5);
+    ctx.fill();
+  }
+
+  /** The OPEN SKIP's back end: no gate, a thin lip and two tipping pins. */
+  function drawSkipLip(ctx, y1, hwR, wall) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-hwR + 4, y1 - wall * 0.5);
+    ctx.lineTo(hwR - 4, y1 - wall * 0.5);
+    ctx.stroke();
+    ctx.fillStyle = '#2f353d';
+    for (var s = -1; s <= 1; s += 2) {
+      ctx.beginPath();
+      ctx.arc(s * (hwR - 2), y1 - 3, 3.6, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = '#14171b';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    }
+  }
+
+  /** Drawbar between two bays: a heavy bar, two plates and a pin. */
+  function drawCoupling(ctx, y, hw, wall) {
+    var dep = depOf('hopper');
+    var g = ADV_BAY_GAP * (0.7 + 0.3 * dep);
+    ctx.fillStyle = '#39414b';
+    roundRect(ctx, -9, y - 2, 18, g + 4, 3);
+    ctx.fill();
+    ctx.strokeStyle = '#14171b';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    // side plates, so the bays read as coupled rather than merely adjacent
+    ctx.fillStyle = '#4b535d';
+    for (var s = -1; s <= 1; s += 2) {
+      roundRect(ctx, s * (hw * 0.62) - 4, y, 8, g + 2, 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#9aa4b0';
+    ctx.beginPath();
+    ctx.arc(0, y + g * 0.5, 3, 0, TAU);
+    ctx.fill();
+  }
+
+  /**
+   * THE INTAKE. Where the magnet puts the ore: a funnel on the deck feeding the
+   * front bay, with coil bars across its mouth that pulse as material comes in.
+   * This is what the collector ARMS used to be, and it is deliberately flush
+   * with the hull — the old arms were the widest thing on the machine and they
+   * read as antennae, which is not what a cargo upgrade should look like.
+   */
+  function drawIntake(ctx, bw, bl) {
+    var T = cargoFlag();
+    var mg = parts.magnetArms > 0 ? parts.magnetArms : T;
+    var dep = depOf('magnetArms');
+    var y0 = bl * 0.32;
+    var y1 = bl * 0.5 + 1;                    // right up to the chassis edge
+    var deck = bw * 0.46;
+    // A funnel has to CONVERGE or it is a box: the mouth grows with the tier but
+    // is always narrower than the collecting end.
+    var mouth = bedHalf() * 0.56;
+    if (mouth > deck * 0.84) mouth = deck * 0.84;
+    var lip = 5 + T * 0.5;
+    var k, s;
+
+    // chute plates
+    bedPath(ctx, y0, y1, deck, mouth, 5);
+    ctx.fillStyle = gBedWall;
+    ctx.fill();
+    ctx.strokeStyle = '#14171b';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+
+    // the throat itself, dark and open
+    var iF = deck - lip, iR = mouth - lip * 0.4;
+    ctx.save();
+    bedPath(ctx, y0 + lip * 0.7, y1, iF, iR, 4);
+    ctx.fillStyle = '#191d22';
+    ctx.fill();
+    bedPath(ctx, y0 + lip * 0.7, y1, iF, iR, 4);
+    ctx.clip();
+
+    // A powered feeder belt once the CARGO tier includes one.
+    if (parts.conveyor > 0) {
+      ctx.fillStyle = gBelt;
+      ctx.fillRect(-iR, y0, iR * 2, y1 - y0);
+      var pitch = 15;
+      var off = (beltPhase * pitch) % pitch;
+      ctx.strokeStyle = 'rgba(255,196,64,0.50)';
+      ctx.lineWidth = 3;
+      for (var cy = y0 - pitch; cy < y1 + pitch; cy += pitch) {
+        var yy = cy + off;
+        ctx.beginPath();
+        ctx.moveTo(-iF + 3, yy - 6);
+        ctx.lineTo(0, yy);
+        ctx.lineTo(iF - 3, yy - 6);
+        ctx.stroke();
+      }
+    }
+
+    /* Magnet coils across the throat. Deliberately THIN and mostly dark iron
+     * with a lit core: a solid block of cyan slats read as a radiator grille,
+     * and the machine already has a cyan language (the collector rings) that
+     * this only needs to echo. One more coil per magnet flag, capped at four. */
+    var bars = 1 + (mg > 3 ? 3 : mg);
+    var glowBase = 0.16 + hopperPulse * 0.42;
+    for (k = 0; k < bars; k++) {
+      var t = (k + 0.5) / bars;
+      var by = y0 + lip * 0.7 + (y1 - y0 - lip * 0.7) * t;
+      var bx = iF + (iR - iF) * t;
+      var pulse = 0.5 + 0.5 * Math.sin(armPhase * 2.6 - k * 0.9);
+      ctx.fillStyle = '#333b45';
+      roundRect(ctx, -bx, by - 2.4, bx * 2, 4.8, 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(130,225,255,' +
+                      ((glowBase + pulse * 0.24) * dep).toFixed(3) + ')';
+      roundRect(ctx, -bx + 3, by - 0.9, (bx - 3) * 2, 1.9, 1);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // The gulp, at the mouth: material arriving is a flash where it goes in.
+    if (hopperPulse > 0.02) {
+      ctx.fillStyle = 'rgba(255,206,110,' + (hopperPulse * 0.45).toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.ellipse ? ctx.ellipse(0, y1 - 3, iR * 0.85, 7 + hopperPulse * 6, 0, 0, TAU)
+                  : ctx.arc(0, y1 - 3, iR * 0.6, 0, TAU);
+      ctx.fill();
+    }
+
+    // pole shoes: short blocks on the chute shoulders, flush with the hull
+    ctx.fillStyle = '#4b535d';
+    for (s = -1; s <= 1; s += 2) {
+      roundRect(ctx, s * deck - (s > 0 ? 7 : 0), y0 + 2, 7, 12 + T, 2);
+      ctx.fill();
+      ctx.strokeStyle = '#14171b';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
   /** Headlamp pods on the nose. One pair per lamps level, brightest outboard. */
   function drawLamps(ctx, bw, bl) {
-    var dep = easeOutBack(deploy.lamps);
+    var dep = depOf('lamps');
     var noseY = -bl * 0.5 + 4;
     var n = parts.lamps;
     for (var i = 0; i < n; i++) {
@@ -2348,7 +3664,7 @@ SM.vehicle = (function () {
    * the rig is visibly cherry-red before the player has read a gauge.
    */
   function drawRadiators(ctx, bw, bl) {
-    var dep = easeOutBack(deploy.radiators);
+    var dep = depOf('radiators');
     var heat = (SM.adv && SM.adv.getHeatPct) ? SM.adv.getHeatPct() : 0;
     if (heat < 0) heat = 0; else if (heat > 1) heat = 1;
     var hh = hullHalf();
@@ -2389,7 +3705,7 @@ SM.vehicle = (function () {
    * is legible from the world view rather than only from the HUD.
    */
   function drawDish(ctx, bw, bl) {
-    var dep = easeOutBack(deploy.dish);
+    var dep = depOf('dish');
     var r = (9 + parts.dish * 2.5) * dep;
     if (r < 1) return;
     var cy = -bl * 0.06;
@@ -2424,7 +3740,7 @@ SM.vehicle = (function () {
 
   /** Bolted-on hull plating. Thicker outline, visible rivets, chipped corners. */
   function drawArmor(ctx, bw, bl) {
-    var dep = easeOutBack(deploy.armor);
+    var dep = depOf('armor');
     var t = (3 + parts.armor * 2) * dep;
     if (t < 1) return;
     var integ = (SM.adv && SM.adv.getIntegrity) ? SM.adv.getIntegrity() : 1;
@@ -2453,7 +3769,7 @@ SM.vehicle = (function () {
   /* --- exhaust stacks + smoke ------------------------------------------------ */
   function drawExhaust(ctx, bw, bl) {
     var n = 1 + parts.stacks;                 // per side
-    var dep = easeOutBack(deploy.stacks);
+    var dep = depOf('stacks');
     var y0 = bl * 0.32;
     for (var s = -1; s <= 1; s += 2) {
       for (var i = 0; i < n; i++) {
@@ -2667,6 +3983,9 @@ SM.vehicle = (function () {
     getDriveBurnRate: function () { return driveBurn; },
     /** Seconds of drilling standing between the bit and open ground. */
     getLoad: function () { return advLoad; },
+    /** 1 = drilling pace, up to ADV_TRAVEL_MUL in clear air. Fuel/metre is
+     *  unchanged either way — see the ADV_TRAVEL_* note. */
+    getTravelGear: function () { return advTravel; },
     renderPreview: renderPreview,
 
     /* --- speed boost (scattered 'boostcell' blocks) -------------------- */

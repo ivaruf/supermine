@@ -233,7 +233,16 @@ SM.camera = (function () {
   // The fraction of the shaft's full width that must fit across the viewport.
   // 0.45 of 1760 is ~790 units: enough of the shaft to steer in and to see a
   // seam beside you, without shrinking the machine to a chip on a phone.
-  var ADV_FIT_SHAFT = 0.45;
+  /* WORKING WIDTH, IN WORLD UNITS — not a fraction of the mine.
+ * This was `0.45 of the shaft`, which only worked while the shaft was narrower
+ * than a screen. Once the mine is wider than the viewport, a fraction-of-mine
+ * fit means every extra metre of MINE_HALF_WIDTH zooms the player further out to
+ * frame walls that are nowhere near them: at 2600 half-width it drove desktop
+ * scale from 0.72 down to 0.615 and portrait to 0.167.
+ * What the rule was actually protecting is "enough ground across the screen to
+ * drive and aim", which is an absolute distance. 792 is exactly 0.45 x the old
+ * 1760-wide shaft, so every device frames the game precisely as it did before. */
+var ADV_FIT_WIDTH = 792;
   // ...and a hard floor, so a freak viewport cannot zoom out into abstraction.
   // At 0.30 the starting machine is still ~45 px wide.
   var ADV_MIN_SCALE = 0.30;
@@ -477,14 +486,19 @@ SM.camera = (function () {
      * also what keeps particles.js's LOW_DETAIL_ZOOM switch from flipping the
      * whole mine to cheap squares on exactly the devices that most want the
      * detail. */
-    var fit = vpW / (A.MINE_HALF_WIDTH * 2 * ADV_FIT_SHAFT);
+    var fit = vpW / ADV_FIT_WIDTH;
     if (scale > fit) scale = fit;
 
-    // Shaft-fill floor, re-solved against ADV.MINE_HALF_WIDTH: never show more
-    // bedrock than ADV_WALL_VISIBLE either side. Cannot cross the fit above —
-    // its denominator is three times as large.
-    var minScale = vpW / (A.MINE_HALF_WIDTH * 2 + ADV_WALL_VISIBLE * 2);
-    if (scale < minScale) scale = minScale;
+    /* Shaft-fill floor: never show more bedrock than ADV_WALL_VISIBLE either
+     * side. This only means anything when the WALLS ARE ACTUALLY ON SCREEN, so
+     * it is now conditional on that. On a mine wider than the viewport there is
+     * no wall in shot to frame, and applying it anyway would force a zoom IN on
+     * a wide screen to fill the view with a shaft that already fills it. */
+    var visHalfX = (vpW * 0.5) / scale;
+    if (visHalfX > A.MINE_HALF_WIDTH) {
+      var minScale = vpW / (A.MINE_HALF_WIDTH * 2 + ADV_WALL_VISIBLE * 2);
+      if (scale < minScale) scale = minScale;
+    }
 
     if (scale < ADV_MIN_SCALE) scale = ADV_MIN_SCALE;
     if (scale < 0.05) scale = 0.05;

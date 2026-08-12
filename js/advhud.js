@@ -11,9 +11,11 @@
  *              getting home costs (SM.adv.getReserveNeeded()) -> alarm.
  *   CARGO      a fill bar plus a compact manifest of what is actually in the
  *              hold, so "dump the coal" is a decision made from the HUD.
- *   DEPTH      metres, and the distance back to the mouth.
+ *   DEPTH      metres, and the company balance beside it.
  *   HEAT       only once cooling matters — no dead gauge in Old Creek.
- *   INTEGRITY  only once it is damaged.
+ *   HULL       ALWAYS, including at 100%. It carries between descents and it
+ *              costs money to repair, so it has to be checkable before it is a
+ *              problem rather than appearing once you are already in one.
  *   SCANNER    the headline contact from SM.scanner.getBest(), as a bearing and
  *              a distance in metres.
  *
@@ -66,7 +68,7 @@ SM.advhud = (function () {
   var LOW_PCT        = 0.15;   // ...and never look healthy under this either
 
   var HEAT_SHOW      = 0.02;   // heat fraction below which the gauge is absent
-  var INTEG_SHOW     = 0.999;  // integrity above which the gauge is absent
+  // (INTEG_SHOW removed: the hull gauge is now always shown — see update().)
 
   var ALERT_GAP      = 1.2;    // seconds between banners of the same kind
 
@@ -242,9 +244,18 @@ SM.advhud = (function () {
     el('div', 'sm-ah-lbl', dep, 'DEPTH');
     els.depth = el('div', 'sm-ah-val', dep, '0 m');
 
-    var ex = el('div', 'sm-ah-cell sm-ah-exit', strip);
-    el('div', 'sm-ah-lbl', ex, 'TO SURFACE');
-    els.exit = el('div', 'sm-ah-val', ex, '0 m');
+    /* FUNDS, where TO SURFACE used to be.
+     *
+     * TO SURFACE was the same number as DEPTH — the mine mouth is depth zero, so
+     * "how deep am I" and "how far back is the door" are one measurement wearing
+     * two labels, and printing it twice just cost a slot.
+     *
+     * The company balance is genuinely useful down here instead: what the hold is
+     * worth only means something next to what you already have, and it is the
+     * number behind every "push on or go home" call. */
+    var fu = el('div', 'sm-ah-cell sm-ah-funds', strip);
+    el('div', 'sm-ah-lbl', fu, 'FUNDS');
+    els.funds = el('div', 'sm-ah-val', fu, '$0');
 
     // HEAT and INTEGRITY are absent, not zeroed, until they mean something.
     els.heatCell = el('div', 'sm-ah-cell sm-ah-heat', strip);
@@ -733,11 +744,22 @@ SM.advhud = (function () {
       if (dumpTimer <= 0) { dumpArmed = -1; paintDumpArm(); }
     }
 
-    /* --- depth and the way home --------------------------------------- */
+    /* --- depth, and the company balance -------------------------------- */
     var depth = num(a.getDepthM && a.getDepthM(), 0);
     setText('depth', els.depth, fmt(depth) + ' m');
-    var back = num(a.getDistanceToExit && a.getDistanceToExit(), 0) * M_PER_UNIT;
-    setText('exit', els.exit, fmt(back) + ' m');
+    /* Was TO SURFACE, which is the same number as DEPTH — the mouth is depth 0.
+     *
+     * The save record is a FALLBACK on purpose. Every other reading here comes
+     * from one place, but a stale cached adv.js that predates getCash() would
+     * make this the only gauge on the panel silently pinned to $0, and the
+     * company balance is also written on the record, so there is a second
+     * source available for free. */
+    var cashNow = num(a.getCash && a.getCash(), -1);
+    if (cashNow < 0) {
+      var rec = (SM.save && SM.save.get) ? SM.save.get() : null;
+      cashNow = num(rec && rec.cash, 0);
+    }
+    setText('funds', els.funds, '$' + fmt(cashNow));
 
     /* --- FUEL, the gauge the whole mode turns on ----------------------- */
     var cap = num(a.getFuelCap && a.getFuelCap(), 1);
@@ -788,14 +810,18 @@ SM.advhud = (function () {
       setVar('hfill', els.heatBar, '--sm-ah-fill', hpct.toFixed(3));
       setClass('hhot', els.heatCell, 'sm-ah-hot', hpct > 0.8);
     }
+    /* HULL IS ALWAYS ON SHOW, even at 100%.
+     * It used to appear only once damaged, on the same "no dead gauges" rule as
+     * HEAT. That reasoning does not hold for the hull: unlike heat, it does not
+     * reset between descents, repairing it costs money at the surface, and going
+     * down at 100% is a materially different proposition from going down at 40%.
+     * A player needs to be able to check it BEFORE it becomes a problem, and a
+     * gauge that only exists once you are already in trouble cannot be checked. */
     var integ = num(a.getIntegrity && a.getIntegrity(), 1);
-    var integLive = integ < INTEG_SHOW;
-    setClass('ion', els.integCell, 'sm-ah-live', integLive);
-    if (integLive) {
-      setText('ival', els.integ, Math.round(integ * 100) + '%');
-      setVar('ifill', els.integBar, '--sm-ah-fill', integ.toFixed(3));
-      setClass('ihot', els.integCell, 'sm-ah-hot', integ < 0.35);
-    }
+    setClass('ion', els.integCell, 'sm-ah-live', true);
+    setText('ival', els.integ, Math.round(integ * 100) + '%');
+    setVar('ifill', els.integBar, '--sm-ah-fill', integ.toFixed(3));
+    setClass('ihot', els.integCell, 'sm-ah-hot', integ < 0.35);
 
     /* --- the array walkers, on their own clock ------------------------- */
     slowTimer += dt;

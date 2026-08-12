@@ -153,7 +153,8 @@ SM.advui = (function () {
   var fuelUnits = 0;         // slider value on the prep screen
   var countRaf = 0;
   var syncTimer = 0;
-  var nameEditing = -1;      // slot index whose name field is open
+  var nameEditing = -1;
+  var lastSale = 0;            // last banked gross, for the results note line      // slot index whose name field is open
 
   /* =====================================================================
    * DOM + FORMAT HELPERS
@@ -1325,10 +1326,27 @@ SM.advui = (function () {
     els.partBtn = button(s.foot, 'sm-btn-primary sm-btn-big', 'INSTALL');
     onTap(els.partBtn, onBuyPart);
 
+    /* STRAIGHT BACK DOWN FROM HERE TOO.
+     * Fitting a part is something you do BETWEEN descents, on the mine you are
+     * already working — so making the workshop a dead end that only exits to the
+     * world map put the same detour back in that the extraction screen just
+     * lost. Only offered when there is a mine to go back to. */
+    els.garageDive = button(s.foot, '', 'BACK TO MINE');
+    onTap(els.garageDive, onBackToMine);
+
     onTap(button(s.foot, '', 'BACK TO THE MAP'), function () {
       if (SM.adv && SM.adv.backToMap) SM.adv.backToMap();
       else if (SM.adv && SM.adv.openMap) SM.adv.openMap();
     });
+  }
+
+  /** The mine a BACK TO MINE button would descend into, or '' if there is none. */
+  function lastMineId() {
+    var r = (SM.adv && SM.adv.getResults) ? SM.adv.getResults() : null;
+    if (r && r.mineId) return r.mineId;
+    var m = (SM.adv && SM.adv.getMine) ? SM.adv.getMine() : null;
+    if (m && m.id) return m.id;
+    return selMine || '';
   }
 
   function makeHotspot(part) {
@@ -1366,6 +1384,21 @@ SM.advui = (function () {
     }
     paintPart();
     drawRig();
+
+    /* BACK TO MINE only exists when there is somewhere to go back to, and it
+     * says whether the tank can actually do it — the alternative is a button
+     * that drops you into a shaft on an empty tank and ends the run instantly. */
+    if (els.garageDive) {
+      var id = lastMineId();
+      var aboard = advNum('getTank', 0);
+      els.garageDive.style.display = id ? '' : 'none';
+      if (id) {
+        // Label stays put; an empty tank just greys it out. See paintResFooter().
+        els.garageDive.textContent = 'BACK TO MINE';
+        if (aboard < 1) els.garageDive.setAttribute('disabled', 'disabled');
+        else els.garageDive.removeAttribute('disabled');
+      }
+    }
   }
 
   function rigTier(key) { return (SM.rig && SM.rig.getTier) ? num(SM.rig.getTier(key), 0) : 0; }
@@ -1463,19 +1496,42 @@ SM.advui = (function () {
       els.partPips.childNodes[j].className = 'sm-av-pip' + (j <= tier ? ' sm-av-pip-on' : '');
     }
 
+    /* THE BUTTON KEEPS ITS NAME AND GREYS OUT; the REASON goes in the panel.
+     * A control that renames itself to "NOTHING LEFT TO FIT" or "NEED $2 000
+     * MORE" is a status readout wearing a button's clothes, and the label moves
+     * under the player's thumb. INSTALL always says INSTALL and what it costs;
+     * why it is unavailable is written above it, where there is room to say it
+     * properly. */
+    var fit = (SM.rig && SM.rig.fitCheck) ? SM.rig.fitCheck(p.key) : { ok: true };
+    var short = cost >= 0 ? (cost - advNum('getCash', 0)) : 0;
     var b = els.partBtn;
     b.disabled = false;
     b.classList.remove('sm-av-cant');
+    b.textContent = (!maxed && cost >= 0) ? ('INSTALL  ' + money(cost)) : 'INSTALL';
+
+    var block = '';
     if (maxed || cost < 0) {
-      b.textContent = 'NOTHING LEFT TO FIT';
+      block = '';                                  // the pips already say it
       b.disabled = true;
       b.classList.add('sm-av-cant');
-    } else if (advNum('getCash', 0) >= cost) {
-      b.textContent = 'INSTALL  ' + money(cost);
-    } else {
-      b.textContent = 'NEED ' + money(cost - advNum('getCash', 0)) + ' MORE';
+    } else if (!fit.ok) {
+      /* RUNNING GEAR BEFORE POWER. Name the actual part the player has to buy,
+       * not the rule — "REQUIRES WIDE STEEL TRACKS" is a shopping instruction,
+       * "prerequisite not met" is a error message. */
+      var needTitle = fit.needKey ? String(fit.needKey).toUpperCase() : 'RUNNING GEAR';
+      block = 'REQUIRES ' + needTitle +
+              (fit.needName ? (': ' + String(fit.needName).toUpperCase()) : '') +
+              ' — the tracks cannot carry this engine yet.';
       b.disabled = true;
       b.classList.add('sm-av-cant');
+    } else if (short > 0) {
+      block = 'NEED ' + money(short) + ' MORE IN THE ACCOUNT.';
+      b.disabled = true;
+      b.classList.add('sm-av-cant');
+    }
+    if (block) {
+      els.partSell.textContent = block;
+      els.partSell.style.display = '';
     }
   }
 
@@ -1671,7 +1727,11 @@ SM.advui = (function () {
   /** Tank space available, clamped by what the company can actually pay for. */
   function fuelMax() {
     var cap = rigNum('getFuelCap', 100);
-    var have = advNum('getFuel', 0);
+    // getTANK, not getFuel: what is already bought and aboard, NOT the in-run
+    // gauge. getFuel() still reads the level the last descent ended on, so
+    // sizing the purchase against it sold only the fuel the previous run had
+    // burnt — come up on 7% and "fill the tank" bought 7%.
+    var have = advNum('getTank', 0);
     var room = cap - have;
     if (room < 0) room = 0;
     var afford = Math.floor(advNum('getCash', 0) / fuelPrice());
@@ -1686,7 +1746,7 @@ SM.advui = (function () {
 
   function paintFuel() {
     var cap = rigNum('getFuelCap', 100);
-    var have = advNum('getFuel', 0);
+    var have = advNum('getTank', 0);   // aboard already — see fuelMax()
     // mines.fuelCost() owns the rounding; multiplying the unit price by hand
     // is how a slider ends up one dollar away from what the ledger charges.
     var cost = (SM.mines && SM.mines.fuelCost) ? num(SM.mines.fuelCost(fuelUnits), fuelUnits * fuelPrice())
@@ -1799,9 +1859,30 @@ SM.advui = (function () {
     els.resFuel = statCell(grid, 'FUEL LEFT', '0%');
     els.resDay = statCell(grid, 'DAY', '1');
 
+    /* FOUR BUTTONS, ONE JOB EACH.
+     * What a player does at the surface is: bank the load, top the tank up, and
+     * go back down. Selling used to also walk you out to the world map, so the
+     * common case cost a detour through a screen you did not want. Each of these
+     * now does exactly the one thing it is named after, and SELL does not
+     * navigate at all — you stay here and choose. */
     els.resBtn = button(s.foot, 'sm-btn-primary sm-btn-big', 'SELL THE HAUL');
     onTap(els.resBtn, onSell);
-    onTap(button(s.foot, 'sm-av-quiet', 'BACK TO MAP'), function () {
+    /* REFUEL HAPPENS HERE, not on the prep screen.
+     * Sending the player to prep to buy fuel and press DESCEND put a whole
+     * screen in the middle of the one loop they repeat all game: come up, sell,
+     * fill up, go back down. It buys a full tank in place and says what it cost. */
+    els.resFuel2 = button(s.foot, '', 'REFUEL');
+    onTap(els.resFuel2, onRefuelHere);
+
+    /* ...and BACK TO MINE descends straight from here. */
+    els.resDive = button(s.foot, '', 'BACK TO MINE');
+    onTap(els.resDive, onBackToMine);
+    els.resShop = button(s.foot, '', 'WORKSHOP');
+    onTap(els.resShop, function () {
+      if (SM.adv && SM.adv.openGarage) SM.adv.openGarage();
+    });
+    els.resMap = button(s.foot, '', 'MAP');
+    onTap(els.resMap, function () {
       if (SM.adv && SM.adv.backToMap) SM.adv.backToMap();
     });
   }
@@ -1869,28 +1950,42 @@ SM.advui = (function () {
     var sc = screens.results;
     var strand = r.stranded;
 
+    /* ONCE IT IS SOLD, THE HOLD IS EMPTY — so show an empty hold.
+     * This screen used to stay up displaying the pre-sale manifest and total,
+     * because sell() no longer navigates away and the repaint reads the run's
+     * stored payload, which still lists everything that WAS aboard. Leaving the
+     * hold value sitting there after the money had moved read as the sale not
+     * having happened. The figure is not lost: it moves to the note line as the
+     * amount banked, which is the thing worth remembering anyway. */
+    var sold = !strand && !!(SM.adv && SM.adv.isSold && SM.adv.isSold());
+    if (sold) {
+      r.gross = 0;
+      r.lines = [];
+    }
+
     sc.node.classList[strand ? 'add' : 'remove']('sm-av-res-strand');
     sc.kicker.textContent = (strand ? 'THE MINE KEPT IT' : 'EXTRACTION COMPLETE') +
                             (r.mineName ? ('  ·  ' + r.mineName.toUpperCase()) : '');
     sc.title.textContent = strand ? 'STRANDED' : 'THE HAUL';
     els.resHeadline.textContent = strand
       ? reasonLine(r.reason, r.depthM)
-      : (r.lines.length ? 'Back at the surface with the hold intact.'
-                        : 'Back at the surface. The hold is empty.');
+      : (sold ? 'Sold. The hold is empty and the money is in the account.'
+              : (r.lines.length ? 'Back at the surface with the hold intact.'
+                                : 'Back at the surface. The hold is empty.'));
     els.resNote.textContent = strand
       ? 'The load is still down there at ' + fmt(r.depthM) + ' m. Go back for it.'
-      : '';
-    els.resNote.style.display = strand ? '' : 'none';
+      : (sold ? ('BANKED ' + money(lastSale) + ' into the company account.') : '');
+    els.resNote.style.display = (strand || sold) ? '' : 'none';
 
     els.resDepth.textContent = fmt(r.depthM) + ' m';
     els.resTime.textContent = clock(r.runTime >= 0 ? r.runTime : advNum('getRunTime', 0));
     els.resFuel.textContent = Math.round((r.fuelPct >= 0 ? r.fuelPct : advNum('getFuelPct', 0)) * 100) + '%';
     els.resDay.textContent = fmt(r.day >= 0 ? r.day : advNum('getDay', 1));
 
-    els.resBtn.textContent = strand ? 'BACK TO THE OFFICE' : 'SELL THE HAUL';
-    // A strand has nothing to bank, so the button loses the primary treatment
-    // rather than wearing dim text on a bright plate.
-    els.resBtn.classList[strand ? 'remove' : 'add']('sm-btn-primary');
+    /* A strand has nothing to sell, so SELL steps aside and the footer promotes
+     * REFUEL — going straight back down is the whole point of one, because the
+     * load is still lying on the floor where the tank ran dry. */
+    paintResFooter();
 
     buildResultLines(r);
     startCountUp(r);
@@ -1980,10 +2075,105 @@ SM.advui = (function () {
     var res = (SM.adv && SM.adv.sell) ? SM.adv.sell() : null;
     var gained = advNum('getCash', 0) - before;
     if (res && num(res.gross, 0) > 0) gained = num(res.gross, gained);
+    // Remembered for the note line, because the hold itself is zeroed on repaint.
+    if (gained > 0) lastSale = gained;
     if (gained > 0) toast('BANKED', money(gained) + ' into the company account', 2.6);
-    // The state change is adv.js's to make; if it does not come, the watchdog
-    // leaves this screen up and BACK TO MAP is still right there.
+    // sell() deliberately does NOT navigate any more, so repaint in place: the
+    // ledger in the header has moved and SELL has nothing left to sell.
+    paintSold();
+    refresh();
   }
+
+  /** Units of fuel needed to top the tank right up, from what is aboard. */
+  function refuelUnits() {
+    var cap = rigNum('getFuelCap', 100);
+    var have = advNum('getTank', 0);
+    var room = cap - have;
+    return room > 0.5 ? Math.floor(room) : 0;
+  }
+
+  /** Buy a full tank without leaving the extraction screen. */
+  function onRefuelHere() {
+    var want = refuelUnits();
+    if (want <= 0) { toast('TANK FULL', 'Nothing to top up', 1.8); paintResFooter(); return; }
+    var quoted = (SM.mines && SM.mines.fuelCost) ? num(SM.mines.fuelCost(want), 0) : 0;
+    var before = advNum('getCash', 0);
+    var ok = !!(SM.adv && SM.adv.buyFuel && SM.adv.buyFuel(want));
+    var spent = before - advNum('getCash', 0);
+    if (!ok || spent <= 0) {
+      toast('CANNOT REFUEL', 'Not enough in the account for ' + money(quoted), 2.4);
+    } else {
+      // Partial fills are legitimate: adv.buyFuel() buys what the cash reaches.
+      toast('REFUELLED', money(spent) + ' of diesel', 2.2);
+    }
+    paintResFooter();
+    refresh();
+  }
+
+  /**
+   * Straight back down the same shaft, with no screen in between.
+   *
+   * The tank is checked FIRST and the descent refused if it is dry, because
+   * enterMine() will happily launch on nothing and the run would be over before
+   * the player's thumb left the glass — the failure needs to happen up here,
+   * next to the REFUEL button that fixes it.
+   */
+  function onBackToMine() {
+    var id = lastMineId();
+    if (!id) { if (SM.adv && SM.adv.backToMap) SM.adv.backToMap(); return; }
+
+    var aboard = advNum('getTank', 0);
+    if (aboard < 1) {
+      toast('TANK IS EMPTY', 'Refuel before you go back down', 2.6);
+      return;
+    }
+    if (SM.adv && SM.adv.enterMine && SM.adv.enterMine(id, {})) return;
+    toast('CANNOT DESCEND', 'Check the mining rights for this site', 2.4);
+    if (SM.adv && SM.adv.backToMap) SM.adv.backToMap();
+  }
+
+  /**
+   * The footer follows the loop: SELL leads, then REFUEL, then BACK TO MINE.
+   * Whichever step you have not done yet is the one wearing the bright plate, so
+   * the screen always has exactly one obvious next tap.
+   */
+  function paintResFooter() {
+    var sold = !!(SM.adv && SM.adv.isSold && SM.adv.isSold());
+    var r = (SM.adv && SM.adv.getResults) ? SM.adv.getResults() : null;
+    var strand = !!(r && r.kind === 'stranded');
+    var need = refuelUnits();
+    var cost = (need > 0 && SM.mines && SM.mines.fuelCost) ? num(SM.mines.fuelCost(need), 0) : 0;
+
+    function primary(node, on) {
+      if (!node) return;
+      if (on) node.classList.add('sm-btn-primary'); else node.classList.remove('sm-btn-primary');
+    }
+
+    /* A BUTTON KEEPS ITS NAME. An action that is unavailable greys out; it does
+     * not rename itself to a status message. "BANKED" and "TANK FULL" made the
+     * footer's labels move around under the player's thumb, and a control that
+     * says something different every time you look at it is harder to learn than
+     * one that is simply dim. The greying is done in style-adventure.css against
+     * :disabled, so the state lives in one place. */
+    if (els.resBtn) {
+      els.resBtn.textContent = 'SELL THE HAUL';
+      if (sold || strand) els.resBtn.setAttribute('disabled', 'disabled');
+      else els.resBtn.removeAttribute('disabled');
+    }
+    if (els.resFuel2) {
+      els.resFuel2.textContent = need > 0 ? ('REFUEL  ·  ' + money(cost)) : 'REFUEL';
+      if (need > 0) els.resFuel2.removeAttribute('disabled');
+      else els.resFuel2.setAttribute('disabled', 'disabled');
+    }
+
+    var canSell = !sold && !strand;
+    primary(els.resBtn, canSell);
+    primary(els.resFuel2, !canSell && need > 0);
+    primary(els.resDive, !canSell && need <= 0);
+  }
+
+  /** Kept as the old name so existing call sites stay valid. */
+  function paintSold() { paintResFooter(); }
 
   /* =====================================================================
    * SCREEN SWITCHING — driven by adv:state

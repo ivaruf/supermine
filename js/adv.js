@@ -161,6 +161,10 @@ SM.adv = (function () {
   // decision the mode is built around never happens.
   var STORE_WORTHLESS = false;
   var FALLBACK_CARGO_CAP = 40;
+  // Cargo units are fractional, so "is it full" needs a tolerance rather than an
+  // equality test — see offerCargo(), where being a hair under capacity used to
+  // keep the collector running against ore that could never fit.
+  var CARGO_EPS = 0.001;
 
   // --- results ---------------------------------------------------------
   // A strand does not lose the ore, it LEAVES it: one pile per material, at the
@@ -185,6 +189,7 @@ SM.adv = (function () {
   var selectedId = null;               // the mine the prep screen is about
   var tank = 0;                        // fuel bought and waiting in the tank
   var tankPaid = 0;                    // what the last descent launched with
+  var soldThisRun = false;             // this run's hold has been banked
 
   /* --- run state ------------------------------------------------------ */
   var runMineId = null;
@@ -416,18 +421,19 @@ SM.adv = (function () {
     if (offerCargo(p.matIndex)) return;
 
     /* THE HOLD IS FULL AND THIS FRAGMENT HAD ALREADY BEEN SWALLOWED.
-     * vehicle.js drops the collector radius to zero the moment the hold fills,
-     * so nothing NEW is captured — but ore that was already in flight arrives
-     * anyway, and particles.js recycles the slot the instant it announces. Ore
-     * must not evaporate, so the hopper spits it back onto the floor as loose
-     * debris. COLLECT_DELAY plus a zero-radius collector means it cannot be
-     * re-captured, and it is then simply lying there for after the dump. */
-    if (SM.particles.spawnLoose) {
-      var mat = SM.materials ? SM.materials.get(p.matIndex) : null;
-      var r = (mat && mat.radius) ? mat.radius[0] * 0.55 : 4;
-      SM.particles.spawnLoose(p.x, p.y, p.matIndex,
-        (Math.random() * 2 - 1) * 110, (Math.random() * 2 - 1) * 110, r);
-    }
+     *
+     * This used to spit it back onto the floor so that no ore was ever
+     * destroyed. It read as a fault: ore pouring back out of a full hopper,
+     * which is indistinguishable on screen from the collect/refuse loop that
+     * offerCargo() now prevents — and there is nothing the player can do about
+     * it either way, because the collector is already shut off.
+     *
+     * Now it is simply dropped. offerCargo() takes PARTIAL fragments, so the
+     * hold is at exactly capacity by the time anything gets here: the only ore
+     * this can discard is what was already in flight on the step the hold
+     * filled, which is a handful of fragments and never a decision the player
+     * made. A hopper that visibly stops taking things is worth more than
+     * accounting for the last sliver. */
   }
 
   /** Enter the campaign from the classic main menu. ui.js is the only caller. */
@@ -517,7 +523,22 @@ SM.adv = (function () {
     if (!def) return false;
     if (!ownsRights(def.id)) return false;      // the map buys them first
     selectedId = def.id;
-    tank = 0;                                   // the prep screen fills the tank
+    /* THE SELECTED MINE IS NOW THE MINE IN CONTEXT.
+     *
+     * `mineDef` used to be set only by enterMine(), which made getMine() mean
+     * "the mine of the last DESCENT" rather than "the mine we are talking
+     * about". Both the prep screen and its DESCEND button read getMine(), so
+     * buying a new plot and tapping it on the map showed — and then descended
+     * into — the PREVIOUS mine. Setting it here is safe: selectMine() is refused
+     * outright while a run is live, so this can never move the ground out from
+     * under an expedition in progress. */
+    mineDef = def;
+
+    /* The tank is DELIBERATELY not emptied here. Fuel the player paid for and
+     * did not burn is still in the machine — see teardownRun(). Zeroing it on
+     * the way into prep is what made "fill the tank" descend on a fraction of
+     * one: the prep slider sizes the purchase as (capacity - what is already
+     * aboard), so wiping the tank behind it made the two disagree. */
     setState('prep');
     return true;
   }
@@ -573,6 +594,7 @@ SM.adv = (function () {
     heatPctSent = -1;
     dmgPctSent = -1;
     results = null;
+    soldThisRun = false;
     clearHold();
 
     // Piles left in THIS mine on a previous visit. The array identity is kept
@@ -644,6 +666,17 @@ SM.adv = (function () {
     }
     if (SM.particles.clearCollectorTarget) SM.particles.clearCollectorTarget();
     hideRunChrome();
+
+    /* FUEL YOU DID NOT BURN IS STILL YOURS. It goes back into the tank rather
+     * than evaporating at the surface, which is both what a player expects of a
+     * fuel tank and what the prep screen's slider is built against: it sells
+     * (capacity - what is aboard). Without this, coming up with 93% burnt left
+     * `fuel` reading as the tank's contents on the next visit, so "total
+     * refuel" bought the missing 7% and the next descent started on 7%.
+     *
+     * A dry strand leaves this at ~0 on its own, so there is nothing to special
+     * case: run out of fuel and you genuinely have none left. */
+    tank = fuel > 0 ? fuel : 0;
   }
 
   function pilesForSave() {
@@ -894,7 +927,15 @@ SM.adv = (function () {
   /* =====================================================================
    * RUN STATE — read by advhud.js, written by vehicle.js and update()
    * ================================================================== */
-  function getMine() { return mineDef; }
+  /**
+   * The mine currently in context: the one being dug, or — between runs — the
+   * one the player has selected. Falling back to `selectedId` covers the case
+   * where a company is loaded and a mine picked before mineDef has ever been set.
+   */
+  function getMine() {
+    if (mineDef) return mineDef;
+    return selectedId ? resolveMine(selectedId) : null;
+  }
   function getRunTime() { return runTime; }
   function getDepthM() { return depthM; }
   function getMaxDepthM() { return maxDepthM; }
@@ -1009,13 +1050,30 @@ SM.adv = (function () {
 
     var u = fragUnits[mi];
     if (!(u > 0)) return true;
-    if (cargo + u > cargoCap) {
+
+    /* CRAM IN WHAT FITS, rather than refusing anything that does not fit WHOLE.
+     *
+     * These two used to disagree, and the disagreement was a permanent loop.
+     * vehicle.js shuts the collector off at 99.5% of capacity, but this refused
+     * a deposit unless the entire fragment fitted — and a copper deposit is 2
+     * units. With 1 unit of room the hold is only 97.9% full, so the collector
+     * stayed on, swallowed the copper, had it refused, spat it onto the floor,
+     * and swallowed it again: ore visibly raining out of the hopper and being
+     * re-picked-up forever, with the tally ticking on every lap.
+     *
+     * Taking a partial fragment closes it at the source. The hold reaches
+     * EXACTLY capacity, so the collector's own test trips, the radius goes to
+     * zero and nothing is offered again. The sliver of value lost on the last
+     * fragment is worth far less than a hopper that looks broken. */
+    var room = cargoCap - cargo;
+    if (room <= CARGO_EPS) {
       if (!cargoFullSent) {
         cargoFullSent = true;
         SM.events.emit('adv:cargofull', null);
       }
       return false;
     }
+    if (u > room) u = room;
     cargo += u;
 
     var s = slotOf[mi];
@@ -1023,6 +1081,11 @@ SM.adv = (function () {
     var e = manifest[s];
     e.units += u;
     e.value = e.units * price;
+
+    if (cargoCap - cargo <= CARGO_EPS && !cargoFullSent) {
+      cargoFullSent = true;
+      SM.events.emit('adv:cargofull', null);
+    }
     return true;
   }
 
@@ -1192,6 +1255,11 @@ SM.adv = (function () {
     if (state === 'mine' || !SM.rig) return false;
     var cost = SM.rig.nextCost ? SM.rig.nextCost(partKey) : -1;
     if (!(cost >= 0)) return false;
+    /* RUNNING GEAR BEFORE POWER. An engine the tracks cannot carry is refused
+     * outright — rig.js owns the rule (fitCheck), this just enforces it, so the
+     * money cannot move on a fitting that will not happen. Feature-detected:
+     * an older rig.js without fitCheck simply has no prerequisites. */
+    if (SM.rig.canFit && !SM.rig.canFit(partKey)) return false;
     if (!canAfford(cost)) return false;
     var tier = (SM.rig.getTier ? SM.rig.getTier(partKey) : 0) + 1;
     if (SM.rig.setTier) SM.rig.setTier(partKey, tier);
@@ -1253,13 +1321,23 @@ SM.adv = (function () {
   }
 
   /**
-   * Sell the extracted hold and step back to the map. Also the DAY ROLLOVER:
-   * one expedition is one day, and it ticks when the company banks the run
-   * rather than when it starts one, so an aborted descent is not a lost day on
-   * top of a lost hold.
+   * Sell the extracted hold. Also the DAY ROLLOVER: one expedition is one day,
+   * and it ticks when the company banks the run rather than when it starts one,
+   * so an aborted descent is not a lost day on top of a lost hold.
+   *
+   * IT DOES NOT NAVIGATE. Selling used to step straight back to the world map,
+   * which made "sell" and "leave" the same action and forced a trip through the
+   * map to do the thing players do most: bank the load, top the tank up and go
+   * back down the same hole. The extraction screen now stays put and offers
+   * SELL / REFUEL / WORKSHOP / MAP as four separate one-tap choices.
+   *
+   * Selling twice is refused rather than merely empty, because the second call
+   * would roll the day over again on a hold worth nothing.
    */
   function sell() {
     if (state !== 'results') return null;
+    if (soldThisRun) return null;
+    soldThisRun = true;
     var lines = [];
     var gross = 0;
     for (var i = 0; i < manifest.length; i++) {
@@ -1297,9 +1375,13 @@ SM.adv = (function () {
     SM.events.emit('adv:sold', evSold);
 
     flushSave();
-    setState('map');
+    // Deliberately stays on 'results' — see the note above. The screen repaints
+    // off `adv:sold` and the player picks where to go next.
     return { gross: gross, lines: lines };
   }
+
+  /** True once this run's hold has been banked. The screen greys SELL out. */
+  function isSold() { return soldThisRun; }
 
   /** The results payload for the extraction screen. Set by escape()/strand(). */
   function getResults() { return results; }
@@ -1359,6 +1441,7 @@ SM.adv = (function () {
     buyPart: buyPart,
     buyRepair: buyRepair,
     sell: sell,
+    isSold: isSold,
     getResults: getResults,
     isDriving: isDriving,
 

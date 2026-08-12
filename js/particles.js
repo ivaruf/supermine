@@ -1096,6 +1096,34 @@ SM.particles = (function () {
     }
   }
 
+  /**
+   * Free everything OUTSIDE a rectangle. The second deliberate exception to this
+   * file's freeze, and the enabling change for a wide mine.
+   *
+   * despawnBehind/Ahead cut on a Y line only, which forces a streamer to keep the
+   * FULL WIDTH of its world resident and window in one axis. That is why the
+   * adventure shaft was capped at 1760 units: widening it multiplied the resident
+   * particle count until the slab had to be too short to fill the screen.
+   *
+   * A rectangle lets a streamer window in BOTH axes, which makes width almost
+   * free — the camera only ever sees about 2000 units across, so a much wider
+   * mine costs no extra resident particles and no extra draw calls, only a bigger
+   * carve mask (one byte per cell, and that lives in a plain typed array).
+   *
+   * `keepLoose` exists because debris is the player's property: ore tumbling
+   * loose or flying to the collector must not evaporate because the chunk it
+   * happens to be over got recycled. Pass true to spare LOOSE and COLLECTED and
+   * cull only embedded SOLID terrain.
+   */
+  function despawnOutsideRect(minX, minY, maxX, maxY, keepLoose) {
+    for (var k = activeCount - 1; k >= 0; k--) {
+      var i = activeList[k];
+      if (keepLoose && sState[i] !== SOLID) continue;
+      var x = pX[i], y = pY[i];
+      if (x < minX || x > maxX || y < minY || y > maxY) free(i);
+    }
+  }
+
   /* =====================================================================
    * RENDERING
    * Solids are bucketed per material so we hammer one atlas at a time;
@@ -1261,6 +1289,7 @@ SM.particles = (function () {
     // streaming
     despawnBehind: despawnBehind,
     despawnAhead: despawnAhead,
+    despawnOutsideRect: despawnOutsideRect,
 
     // introspection
     getStats: getStats,

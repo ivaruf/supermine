@@ -35,7 +35,18 @@
 // v1.6.0  ADVENTURE MODE: save slots, world map, mining rights, fuel + cargo
 //         pressure, workshop upgrades, free 2D driving on a translucent
 //         joystick, persistent per-mine tunnels
-const VERSION = 'v1.6.0';
+// v1.6.1  Adventure fixes: refuelling a part-full tank, the full-hold collect
+//         loop, finite dumped-ore heaps, FUNDS on the in-mine HUD, and a
+//         one-tap SELL / REFUEL / BACK TO MINE surface loop.
+//         BUMPED DELIBERATELY: this cache is whole-build and cache-first, so a
+//         client that installed v1.6.0 keeps being served v1.6.0 for every file
+//         until this string changes — which is exactly how a new HUD ends up
+//         reading a getter an older adv.js does not export yet.
+// v1.6.2  Mines 3x deeper and ~3x wider (5200 units across) on 2D chunked
+//         streaming; cargo doubles per tier; starter tank nerfed; tracks now
+//         gate the engine; redesigned cargo + drill visuals; slower drilling
+//         with a fast travel gear
+const VERSION = 'v1.6.2';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

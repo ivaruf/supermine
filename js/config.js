@@ -192,13 +192,23 @@ SM.config.ADV = {
   /* --- scale ---------------------------------------------------------- */
   METERS_PER_UNIT: 0.1,        // 10 world units = 1 metre of depth
   MINE_CEILING_Y: 0,           // y of the mine mouth; depth 0 m
-  MINE_HALF_WIDTH: 880,        // shaft spans x in [-880, +880] (wider than the classic lane)
+  MINE_HALF_WIDTH: 2600,       // mines span x in [-2600, +2600] — 5200 units, 520 m across
 
   /* --- terrain window -------------------------------------------------
-   * particles.js only despawns by Y (despawnBehind / despawnAhead), so the
-   * adventure streamer windows in Y and keeps the FULL shaft width resident.
-   * SPACING is coarser than classic TERRAIN_SPACING for exactly that reason:
-   *   (MINE_HALF_WIDTH*2 / SPACING) * (window height / SPACING) <= SOLID_BUDGET
+   * The resident set is a RECTANGLE OF CELLS in both axes, sized from the
+   * camera view plus STREAM_MARGIN and freed with
+   * particles.despawnOutsideRect(). That is what makes a wide mine affordable:
+   * the screen only ever shows ~2000 units across, so width costs no extra
+   * resident particles and no extra draw calls — only a bigger carve mask, one
+   * byte per cell.
+   *
+   * THE LIMIT ON THE WINDOW IS NOT THE POOL, IT IS THE SPATIAL HASH.
+   * particles.js wraps its grid with a bitmask over GRID_COLS x GRID_CELL =
+   * 2944 units in x and GRID_ROWS x GRID_CELL = 5888 in y. Two live particles
+   * further apart than that alias into the same hash cell and collision
+   * detection corrupts silently. js/advterrain.js clamps the live extent to
+   * 2800 x 5600 for that reason. Widening the MINE is free; widening the
+   * WINDOW past those numbers is not, and would need GRID_COLS raised.
    * ------------------------------------------------------------------ */
   SPACING: 21,                 // adventure deposit pitch
   SOLID_BUDGET: 5200,          // hard ceiling on resident SOLID particles

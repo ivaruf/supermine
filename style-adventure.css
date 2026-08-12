@@ -206,7 +206,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* --- row 1: depth, the way home, and the two conditional gauges -------- */
+/* --- row 1: depth, the company balance, and the two conditional gauges -- */
 .sm-ah-strip {
   display: flex;
   align-items: center;
@@ -216,12 +216,9 @@
   min-height: 44px;
 }
 .sm-ah-cell { min-width: 0; }
-.sm-ah-exit .sm-ah-val::before {
-  content: '\2191';             /* up arrow: the surface is -y */
-  color: var(--sm-cyan);
-  margin-right: 4px;
-  font-weight: 800;
-}
+/* The company balance, reading as money rather than as another measurement —
+   it replaced TO SURFACE, which was DEPTH printed a second time. */
+.sm-ah-funds .sm-ah-val { color: var(--sm-gold, #ffbe46); }
 /* HEAT and INTEGRITY are ABSENT until they mean something. A dead gauge in the
    starter mine teaches the player to ignore that corner of the screen. */
 .sm-ah-heat, .sm-ah-integ { display: none; }
@@ -1287,8 +1284,56 @@
 }
 .sm-av-bar-fill.sm-av-bar-bad { background: linear-gradient(90deg, var(--sm-red), #ffc7bf); }
 
-/* DESCEND is the point of no return, and it says so: the hazard stripe from
-   the machinery language, welded to the top edge of the button. */
+/* ===========================================================================
+ * THE DESCEND BUTTON'S LOOK — ON EVERY ADVENTURE BUTTON
+ * ---------------------------------------------------------------------------
+ * The gold plate with the hazard stripe started as DESCEND's own treatment, and
+ * it is the one this machinery deserves, so it is now the default for the whole
+ * mode. That deliberately flattens the colour hierarchy: `sm-btn-primary` stops
+ * meaning "cyan" and just means "the one you probably want", with emphasis
+ * carried by SIZE (`sm-btn-big`) and position instead of hue.
+ *
+ * `.sm-iconbtn` is excluded on purpose — sound and pause are small square glyph
+ * plates, and a gold hazard-striped speaker reads as a warning, not a toggle.
+ * ======================================================================== */
+.sm-adv .sm-btn:not(.sm-iconbtn) {
+  color: #150b02;
+  background: linear-gradient(180deg, #ffd979, var(--sm-gold) 45%, #c98a06 100%);
+  border-color: rgba(255, 240, 168, 0.6);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.30);
+  overflow: hidden;
+}
+.sm-adv .sm-btn:not(.sm-iconbtn)::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--sm-hazard);
+  opacity: 0.9;
+}
+
+/* --- UNAVAILABLE = GREYED OUT, never renamed ----------------------------
+ * There was no disabled styling in this mode at all, which is exactly why
+ * buttons used to rename themselves ("BANKED", "TANK FULL") to say they had
+ * nothing left to do. A control whose text changes under your thumb is harder
+ * to learn than one that is simply dim, so the label now stays put and this
+ * does the talking. */
+.sm-adv .sm-btn:not(.sm-iconbtn):disabled,
+.sm-adv .sm-btn:not(.sm-iconbtn)[disabled] {
+  filter: grayscale(0.9) brightness(0.62);
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.sm-adv .sm-btn:not(.sm-iconbtn):disabled::before,
+.sm-adv .sm-btn:not(.sm-iconbtn)[disabled]::before {
+  opacity: 0.25;
+}
+
+/* DESCEND keeps its own rule as the canonical source of the treatment above. */
 .sm-btn.sm-av-descend {
   color: #150b02;
   background: linear-gradient(180deg, #ffd979, var(--sm-gold) 45%, #c98a06 100%);

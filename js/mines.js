@@ -439,7 +439,7 @@ SM.mines = (function () {
         mapX: 0.16, mapY: 0.60,
         price: 0,
         recDrill: 8,
-        depth: 160,
+        depth: 480,
         seed: 1337,
         common: ['coal', 'copper'],
         rare: ['iron'],
@@ -448,10 +448,10 @@ SM.mines = (function () {
                'and picked over twice already — but the coal is still there ' +
                'and nobody charges you to take it.',
         layers: [
-          { toDepth: 45, name: 'Topsoil', fill: 'dirt',
+          { toDepth: 135, name: 'Topsoil', fill: 'dirt',
             weights: { coal: 5, clay: 3, copper: 1 },
             pocketRate: 1.00, cavernRate: 0.10, hardnessScale: 1.00, heat: 0 },
-          { toDepth: 100, name: 'Creek Gravel', fill: 'clay',
+          { toDepth: 300, name: 'Creek Gravel', fill: 'clay',
             /* No limestone in the ore lottery here. Limestone is spoil, so a
              * pocket that rolls it pays nothing, and the ONE mine where the
              * player cannot afford a wasted pocket is the free one. Dead weight
@@ -459,7 +459,7 @@ SM.mines = (function () {
              * Granite and Frostpeak's Permafrost, which both use it on purpose. */
             weights: { coal: 7, copper: 2, iron: 0.6 },
             pocketRate: 1.15, cavernRate: 0.16, hardnessScale: 1.00, heat: 0 },
-          { toDepth: 160, name: 'Old Workings', fill: 'stone',
+          { toDepth: 480, name: 'Old Workings', fill: 'stone',
             weights: { coal: 5, copper: 3, iron: 1.2 },
             pocketRate: 1.30, cavernRate: 0.24, hardnessScale: 1.00, heat: 0 }
         ]
@@ -474,7 +474,7 @@ SM.mines = (function () {
          * it is the only part of the game where the player has no choices. */
         price: 1600,
         recDrill: 13,
-        depth: 260,
+        depth: 780,
         seed: 20481,
         common: ['copper', 'iron'],
         rare: ['silver', 'gold'],
@@ -489,19 +489,19 @@ SM.mines = (function () {
          * That reads better than an undifferentiated slog anyway — you feel the
          * bench arrive. */
         layers: [
-          { toDepth: 55, name: 'Red Overburden', fill: 'clay',
+          { toDepth: 165, name: 'Red Overburden', fill: 'clay',
             weights: { coal: 4, copper: 4 },
             pocketRate: 1.10, cavernRate: 0.12, hardnessScale: 1.00, heat: 0 },
-          { toDepth: 120, name: 'Sandstone Beds', fill: 'sandstone',
+          { toDepth: 360, name: 'Sandstone Beds', fill: 'sandstone',
             weights: { copper: 5, coal: 3, iron: 2 },
             pocketRate: 1.15, cavernRate: 0.14, hardnessScale: 1.00, heat: 0 },
           /* 2.6 x 1.05 = 2.73: 56% of free speed on a tier-0 auger, 72% on a
            * tier-1 bit. Slow enough to be the reason you buy the bit, never
            * slow enough to be a wall. */
-          { toDepth: 190, name: 'Bench Limestone', fill: 'limestone',
+          { toDepth: 570, name: 'Bench Limestone', fill: 'limestone',
             weights: { copper: 6, iron: 4 },
             pocketRate: 1.00, cavernRate: 0.20, hardnessScale: 1.05, heat: 0.05 },
-          { toDepth: 260, name: 'Ore Benches', fill: 'stone',
+          { toDepth: 780, name: 'Ore Benches', fill: 'stone',
             weights: { copper: 5, iron: 7, silver: 2, gold: 1 },
             pocketRate: 1.35, cavernRate: 0.22, hardnessScale: 1.10, heat: 0.10 }
         ]
@@ -514,7 +514,7 @@ SM.mines = (function () {
         mapX: 0.50, mapY: 0.54,
         price: 18000,
         recDrill: 21,
-        depth: 420,
+        depth: 1260,
         seed: 77345,
         common: ['iron', 'silver'],
         rare: ['gold', 'crystal'],
@@ -523,13 +523,13 @@ SM.mines = (function () {
                'silver. The company that sank this shaft went under paying for ' +
                'the drill bits; the veins they were chasing are still down there.',
         layers: [
-          { toDepth: 90, name: 'Broken Ground', fill: 'stone',
+          { toDepth: 270, name: 'Broken Ground', fill: 'stone',
             weights: { coal: 3, iron: 4 },
             pocketRate: 1.00, cavernRate: 0.18, hardnessScale: 1.00, heat: 0.05 },
-          { toDepth: 230, name: 'Hard Rock', fill: 'granite',
+          { toDepth: 690, name: 'Hard Rock', fill: 'granite',
             weights: { iron: 6, silver: 3 },
             pocketRate: 0.55, cavernRate: 0.10, hardnessScale: 1.05, heat: 0.15 },
-          { toDepth: 340, name: 'Silver Veins', fill: 'granite',
+          { toDepth: 1020, name: 'Silver Veins', fill: 'granite',
             weights: { silver: 7, iron: 4, gold: 1 },
             pocketRate: 1.30, cavernRate: 0.18, hardnessScale: 1.10, heat: 0.30 },
           /* THE STEP. A mine only reads as an upgrade if its bottom layer beats
@@ -539,7 +539,7 @@ SM.mines = (function () {
            * $131/unit against Red Ridge's $36, which is 3.7x. Before this was
            * retuned the two mines paid the same per second and Blackstone was
            * strictly a worse use of an afternoon. */
-          { toDepth: 420, name: 'Gold Pocket', fill: 'stone',
+          { toDepth: 1260, name: 'Gold Pocket', fill: 'stone',
             weights: { gold: 6, silver: 5, crystal: 2.5, gem: 1.5, iron: 3 },
             pocketRate: 2.40, cavernRate: 0.35, hardnessScale: 1.05, heat: 0.40 }
         ]
@@ -553,7 +553,7 @@ SM.mines = (function () {
         /* CHEAPER than Deep Hollow on purpose — see design note 4a. */
         price: 44000,
         recDrill: 35,
-        depth: 560,
+        depth: 1680,
         seed: 31415,
         common: ['silver', 'crystal'],
         rare: ['gem', 'rare'],
@@ -566,19 +566,19 @@ SM.mines = (function () {
            * is the mine that asks for DRILL and FUEL instead of COOLING, so
            * that a player whose cooling is still tier 1 has somewhere to earn.
            * heat is 0 in every layer on purpose — do not add any. */
-          { toDepth: 90, name: 'Permafrost', fill: 'clay',
+          { toDepth: 270, name: 'Permafrost', fill: 'clay',
             weights: { limestone: 3, silver: 1 },
             pocketRate: 0.80, cavernRate: 0.10, hardnessScale: 1.15, heat: 0 },
           /* limestone, not sandstone: this layer's whole job is to be the
            * hardest non-granite rock in the game (2.6 x 1.20 = 3.12, 49% of
            * free speed on a tier-0 auger), and Agent 3's sandstone is soft. */
-          { toDepth: 260, name: 'Ice-Bound Rock', fill: 'limestone',
+          { toDepth: 780, name: 'Ice-Bound Rock', fill: 'limestone',
             weights: { silver: 4, crystal: 2, gem: 1.5 },
             pocketRate: 1.00, cavernRate: 0.14, hardnessScale: 1.20, heat: 0 },
-          { toDepth: 420, name: 'Blue Ice Granite', fill: 'granite',
+          { toDepth: 1260, name: 'Blue Ice Granite', fill: 'granite',
             weights: { crystal: 5, gem: 4, silver: 3 },
             pocketRate: 1.40, cavernRate: 0.30, hardnessScale: 1.10, heat: 0 },
-          { toDepth: 560, name: 'Crystal Vaults', fill: 'stone',
+          { toDepth: 1680, name: 'Crystal Vaults', fill: 'stone',
             weights: { crystal: 8, gem: 6, silver: 4, rare: 1.5, platinum: 1 },
             pocketRate: 2.40, cavernRate: 0.50, hardnessScale: 1.00, heat: 0 }
         ]
@@ -591,7 +591,7 @@ SM.mines = (function () {
         mapX: 0.38, mapY: 0.75,
         price: 48000,
         recDrill: 35,
-        depth: 700,
+        depth: 2100,
         seed: 90210,
         common: ['silver', 'gold'],
         rare: ['platinum', 'ancient'],
@@ -600,23 +600,23 @@ SM.mines = (function () {
                'and then the Hollow itself. Every survey says the same thing: ' +
                'do not come down here without the machine to get back out.',
         layers: [
-          { toDepth: 80, name: 'Collapsed Adit', fill: 'stone',
+          { toDepth: 240, name: 'Collapsed Adit', fill: 'stone',
             weights: { rubble: 4, coal: 2, iron: 1 },
             pocketRate: 0.60, cavernRate: 0.22, hardnessScale: 1.00, heat: 0.05 },
           /* THE POINT OF THE MINE. pocketRate 0.22 over 220 m: at ADV band
            * heights that is a pocket every few hundred metres of driving, and
            * the fill is granite. An under-gunned rig spends its whole tank in
            * here for iron money. Do not "fix" this layer. */
-          { toDepth: 300, name: 'Dead Granite', fill: 'granite',
+          { toDepth: 900, name: 'Dead Granite', fill: 'granite',
             weights: { iron: 1.2, limestone: 1 },
             pocketRate: 0.22, cavernRate: 0.06, hardnessScale: 1.00, heat: 0.15 },
-          { toDepth: 520, name: 'Deeper Granite', fill: 'granite',
+          { toDepth: 1560, name: 'Deeper Granite', fill: 'granite',
             weights: { silver: 1.5, gold: 0.8, crystal: 0.5 },
             pocketRate: 0.35, cavernRate: 0.10, hardnessScale: 1.10, heat: 0.35 },
           /* ...and the payoff. pocketRate 2.60 and cavernRate 0.50 is the
            * highest ore density outside The Rift. This contrast is the mode's
            * defining moment; both halves of it have to stay extreme. */
-          { toDepth: 700, name: 'The Hollow', fill: 'stone',
+          { toDepth: 2100, name: 'The Hollow', fill: 'stone',
             weights: { silver: 6, gold: 5, crystal: 5, gem: 3, platinum: 3,
                        ancient: 0.8 },
             pocketRate: 2.60, cavernRate: 0.50, hardnessScale: 1.00, heat: 0.50 }
@@ -630,7 +630,7 @@ SM.mines = (function () {
         mapX: 0.81, mapY: 0.63,
         price: 185000,
         recDrill: 55,
-        depth: 880,
+        depth: 2640,
         seed: 66613,
         common: ['gold', 'platinum'],
         rare: ['uranium', 'starcore'],
@@ -639,19 +639,19 @@ SM.mines = (function () {
                'metres of it read above 0.8 on the thermal survey, and the ' +
                'cinder core underneath is stiff with platinum and uranium.',
         layers: [
-          { toDepth: 100, name: 'Ash Beds', fill: 'clay',
+          { toDepth: 300, name: 'Ash Beds', fill: 'clay',
             weights: { coal: 5, limestone: 4, copper: 2 },
             pocketRate: 1.00, cavernRate: 0.14, hardnessScale: 1.00, heat: 0.20 },
-          { toDepth: 320, name: 'Basalt Flows', fill: 'granite',
+          { toDepth: 960, name: 'Basalt Flows', fill: 'granite',
             weights: { copper: 3, silver: 2, gold: 2 },
             pocketRate: 0.60, cavernRate: 0.10, hardnessScale: 1.10, heat: 0.55 },
           /* obsidian as a WEIGHT, never as `fill`: pockets of rock the drill
            * cannot touch below tier 3, sitting inside granite you can. Routing
            * around them is the layer's texture. See design note 2. */
-          { toDepth: 600, name: 'Magma Skin', fill: 'granite',
+          { toDepth: 1800, name: 'Magma Skin', fill: 'granite',
             weights: { gold: 5, platinum: 3, uranium: 3, obsidian: 2 },
             pocketRate: 1.20, cavernRate: 0.20, hardnessScale: 1.15, heat: 0.85 },
-          { toDepth: 880, name: 'Cinder Core', fill: 'stone',
+          { toDepth: 2640, name: 'Cinder Core', fill: 'stone',
             weights: { platinum: 5, uranium: 5, gold: 4, starcore: 3, rare: 2 },
             pocketRate: 2.50, cavernRate: 0.50, hardnessScale: 1.05, heat: 1.00 }
         ]
@@ -664,7 +664,7 @@ SM.mines = (function () {
         mapX: 0.92, mapY: 0.37,
         price: 420000,
         recDrill: 84,
-        depth: 1200,
+        depth: 3600,
         seed: 4242,
         common: ['platinum', 'uranium'],
         rare: ['starcore', 'rare', 'ancient'],
@@ -673,19 +673,19 @@ SM.mines = (function () {
                'in any sense a geologist will sign off on. The rights cost more ' +
                'than most companies are worth. It is worth it once.',
         layers: [
-          { toDepth: 120, name: 'Rift Shoulder', fill: 'stone',
+          { toDepth: 360, name: 'Rift Shoulder', fill: 'stone',
             weights: { iron: 3, copper: 2, silver: 1 },
             pocketRate: 0.80, cavernRate: 0.20, hardnessScale: 1.00, heat: 0.10 },
-          { toDepth: 380, name: 'Basalt Column', fill: 'granite',
+          { toDepth: 1140, name: 'Basalt Column', fill: 'granite',
             weights: { silver: 2, platinum: 1 },
             pocketRate: 0.40, cavernRate: 0.10, hardnessScale: 1.15, heat: 0.35 },
-          { toDepth: 700, name: 'Obsidian Locks', fill: 'granite',
+          { toDepth: 2100, name: 'Obsidian Locks', fill: 'granite',
             weights: { obsidian: 6, platinum: 2, uranium: 1.5 },
             pocketRate: 1.10, cavernRate: 0.12, hardnessScale: 1.20, heat: 0.60 },
-          { toDepth: 1000, name: 'Geothermal Vents', fill: 'stone',
+          { toDepth: 3000, name: 'Geothermal Vents', fill: 'stone',
             weights: { uranium: 5, platinum: 4, rare: 2, starcore: 1 },
             pocketRate: 2.00, cavernRate: 0.55, hardnessScale: 1.00, heat: 0.90 },
-          { toDepth: 1200, name: 'The Rift Floor', fill: 'granite',
+          { toDepth: 3600, name: 'The Rift Floor', fill: 'granite',
             weights: { starcore: 6, ancient: 4, rare: 4, uranium: 2,
                        platinum: 2 },
             pocketRate: 3.00, cavernRate: 0.60, hardnessScale: 1.10, heat: 1.00 }
@@ -844,7 +844,7 @@ SM.mines = (function () {
   }
 
   function layersOf(mineOrId) { var m = coerce(mineOrId); return m ? m.layers : []; }
-  function depthOf(mineOrId) { var m = coerce(mineOrId); return m ? m.depth : 0; }
+  function depthOf(mineOrId) { var m = coerce(mineOrId); return m ? m.depth: 0; }
   function recDrillOf(mineOrId) { var m = coerce(mineOrId); return m ? m.recDrill : 0; }
   function seedOf(mineOrId) { var m = coerce(mineOrId); return m ? m.seed : 0; }
   function regions() { return REGIONS; }
