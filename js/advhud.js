@@ -93,7 +93,12 @@ SM.advhud = (function () {
 
   var SLOW_HZ        = 8;      // manifest + scanner refreshes per second
   var ALERT_TIME     = 2.4;    // default banner seconds
-  var MANIFEST_ROWS  = 5;      // rows shown before the "+N MORE" line
+  /* EVERY MATERIAL IN THE HOLD GETS A ROW. There are 12 sellable minerals in the
+   * whole game (js/mines.js), so 12 means the "+N MORE" line is a safety net
+   * that should never actually appear rather than a routine truncation. It used
+   * to be 5, which quietly folded the cheap ore into a summary line — and the
+   * cheap ore is exactly what a dump decision is about. */
+  var MANIFEST_ROWS  = 12;     // rows shown before the "+N MORE" line
   var DUMP_CONFIRM   = 2.6;    // seconds an armed DUMP stays armed
 
   /* Fuel gauge character. RESERVE is what SM.adv says getting home costs; the
@@ -293,7 +298,13 @@ SM.advhud = (function () {
      * The company balance is genuinely useful down here instead: what the hold is
      * worth only means something next to what you already have, and it is the
      * number behind every "push on or go home" call. */
-    var fu = el('div', 'sm-ah-cell sm-ah-funds', strip);
+    /* THE BALANCE IS A SIBLING OF THE STRIP, NOT A CELL INSIDE IT.
+     * On a phone it belongs on its own line UNDER the sound and pause plates,
+     * while HULL and DEPTH sit beside FUEL in the info bar — and a cell cannot be
+     * in two containers at once. Being a direct child of the root lets the
+     * stylesheet put it anywhere in the window without a second DOM node and
+     * without a second guarded write. */
+    var fu = el('div', 'sm-ah-cell sm-ah-funds', els.root);
     el('div', 'sm-ah-lbl', fu, 'FUNDS');
     els.funds = el('div', 'sm-ah-val', fu, '$0');
 

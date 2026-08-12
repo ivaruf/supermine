@@ -2260,6 +2260,13 @@ SM.advterrain = (function () {
    * faint bloom of a motherlode's colour through the rock in front of it.
    * =================================================================== */
   var BG_TILE = 128;
+
+  /* --- worklights at the mine mouth (drawWorkLights) ------------------- */
+  var FESTOON_N = 7;           // bulbs strung down EACH wall of the mouth chamber
+  var FESTOON_GAP = 34;        // world units between bulbs
+  var lampPhase = 0;           // monotonic; drives a deterministic flicker
+  var lampGrads = {};          // radius+colour -> cached radial gradient
+
   var rockPattern = null, wallPattern = null;
   var tileSeed = 0;
 
@@ -2483,6 +2490,96 @@ SM.advterrain = (function () {
     ctx.fillRect(w * 0.5 - 4, ceil - 4, 18, 90);
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fillRect(-w * 0.5, ceil + 4, w, 12);
+
+    drawWorkLights(ctx, ceil, w);
+  }
+
+  /**
+   * WORKLIGHTS ON THE PORTAL — the surface is a WORKSITE.
+   *
+   * Two things this buys beyond decoration. It marks where the exit is from
+   * further away than the timbers do, because a warm point of light survives the
+   * darkness composite while brown wood against brown rock does not. And it makes
+   * the mouth read as somewhere people work, which is the contrast the whole
+   * descent depends on: lit and busy up here, unlit and alone down there.
+   *
+   * Lamps on the headframe, plus a run of festoon bulbs strung down each side
+   * wall that dim as they go — the last thing you see on the way down and the
+   * first thing you see coming back.
+   *
+   * Cheap on purpose: one radial gradient per distinct radius, cached, and no
+   * gradient at all for the small strung bulbs. Only drawn when the mouth is
+   * genuinely on screen, because drawMouth() returns early otherwise.
+   */
+  function drawWorkLights(ctx, ceil, w) {
+    var hx = w * 0.5;
+
+    /* The flicker is a sum of two sines, NOT a random walk: it has to be a pure
+     * function of a monotonic phase so the lamps do not jump when the band
+     * streams out and back in. */
+    lampPhase += 0.016;
+    var flick = 0.90 + 0.10 * Math.sin(lampPhase * 2.3) * Math.sin(lampPhase * 0.7 + 1.1);
+
+    // --- two headframe floods, on brackets over the portal ---
+    var i, lx;
+    for (i = -1; i <= 1; i += 2) {
+      lx = i * (hx + 6);
+      ctx.fillStyle = '#3b3f47';
+      ctx.fillRect(lx - 7, ceil - 34, 14, 9);           // housing
+      ctx.fillStyle = 'rgba(24,26,30,0.9)';
+      ctx.fillRect(lx - 2, ceil - 26, 4, 10);           // stalk
+      lampGlow(ctx, lx, ceil - 27, 116, 'rgba(255,214,138,', 0.52 * flick);
+      ctx.fillStyle = 'rgba(255,236,190,' + (0.95 * flick).toFixed(3) + ')';
+      ctx.fillRect(lx - 5, ceil - 32, 10, 5);           // the lit lens
+    }
+
+    /* --- festoon bulbs down both walls -------------------------------
+     * They fade with depth so the string reads as leaving the daylight behind,
+     * and there are only FESTOON_N of them so they never march past the mouth
+     * chamber into ground the player still has to dig. */
+    for (i = 0; i < FESTOON_N; i++) {
+      var y = ceil + 26 + i * FESTOON_GAP;
+      var dim = 1 - (i / FESTOON_N) * 0.72;
+      var a = 0.85 * dim * flick;
+      for (var s = -1; s <= 1; s += 2) {
+        var bx = s * (hx + 9);
+        ctx.strokeStyle = 'rgba(18,16,14,0.75)';        // the sagging cable
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(bx, y - FESTOON_GAP);
+        ctx.quadraticCurveTo(bx + s * 5, y - FESTOON_GAP * 0.5, bx, y);
+        ctx.stroke();
+        lampGlow(ctx, bx, y, 52, 'rgba(255,196,110,', 0.34 * dim * flick);
+        ctx.fillStyle = 'rgba(255,228,168,' + a.toFixed(3) + ')';
+        ctx.beginPath();
+        ctx.arc(bx, y, 3.1, 0, 6.2831853);
+        ctx.fill();
+      }
+    }
+  }
+
+  /**
+   * One cached radial glow, keyed by colour and ROUNDED radius. Building a
+   * gradient per lamp per frame is exactly the kind of allocation that turns a
+   * decoration into a frame-rate problem, and there are only two distinct radii.
+   */
+  function lampGlow(ctx, x, y, r, rgbPrefix, alpha) {
+    if (!(r > 1) || alpha <= 0.004) return;
+    var key = rgbPrefix + Math.round(r);
+    var g = lampGrads[key];
+    if (!g) {
+      g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      g.addColorStop(0, rgbPrefix + '0.85)');
+      g.addColorStop(0.45, rgbPrefix + '0.30)');
+      g.addColorStop(1, rgbPrefix + '0)');
+      lampGrads[key] = g;
+    }
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = g;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.restore();
   }
 
   function render(ctx) {

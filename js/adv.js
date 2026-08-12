@@ -130,6 +130,11 @@ SM.adv = (function () {
   // These two are the fallbacks for a build where rig.js is still a stub.
   var FALLBACK_LIGHT_BURN = 0.05;
   var FALLBACK_IDLE_BURN = 0.35;
+  /* What counts as PARKED, for the free-idle rule in update(). Both are
+   * deliberately tight: the point is that a deliberately stationary machine is
+   * free, not that a slow one is cheap. */
+  var IDLE_STICK = 0.02;       // stick magnitude below this = not asking to move
+  var IDLE_SPEED = 4;          // world units/sec below this = come to rest
   // Warning thresholds, high to low. Each fires `adv:fuellow` once as it is
   // crossed downward, and re-arms only on a new descent.
   var FUEL_WARN = [0.35, 0.20, 0.10, 0.05];
@@ -836,12 +841,26 @@ SM.adv = (function () {
      * The always-on part of rig.js's published budget. Driving and drilling are
      * vehicle.js's to report, because it is the only module that knows the duty
      * cycle it actually ran this step.
+     *
+     * EXCEPT THAT A PARKED MACHINE BURNS NOTHING. This used to run every step
+     * regardless, so standing still to read the manifest, weigh up a dump, or
+     * just look at where the scanner is pointing quietly cost fuel — and fuel is
+     * the resource the whole mode is about. That taxes THINKING, which is the
+     * one activity a game about risk decisions should never charge for. Idling
+     * is now free, so the tank measures how far you have DRIVEN and how much
+     * rock you have CUT, which is what the player can actually reason about.
+     *
+     * "Working" is deliberately generous: a centred stick and a hull that has
+     * come to rest and a bit that is not in rock. Anything else bills as normal,
+     * so this cannot be exploited by feathering the stick — coasting still burns.
      * ------------------------------------------------------------------ */
-    var standing = rigNum('getIdleBurn', FALLBACK_IDLE_BURN)
-                 + rigNum('getLightBurn', FALLBACK_LIGHT_BURN)
-                 + rigNum('getCoolBurn', 0)
-                 + scanDraw;
-    burnFuel(standing * dt);
+    if (isWorking()) {
+      var standing = rigNum('getIdleBurn', FALLBACK_IDLE_BURN)
+                   + rigNum('getLightBurn', FALLBACK_LIGHT_BURN)
+                   + rigNum('getCoolBurn', 0)
+                   + scanDraw;
+      burnFuel(standing * dt);
+    }
 
     // Smoothed needle. burnAccum is filled by every burnFuel() call this step,
     // including the ones vehicle.js made for driving and drilling.
@@ -959,6 +978,26 @@ SM.adv = (function () {
    * and the whole estimate carries a safety margin, because a reserve gauge
    * that is optimistic is worse than no gauge at all.
    */
+  /**
+   * Is the machine doing anything that should cost fuel?
+   *
+   * Three tests, cheapest first: is the player ASKING for movement, is the hull
+   * still carrying speed, and is the bit in rock. All three feature-detected —
+   * a partial build simply bills as it always did rather than handing out free
+   * fuel it cannot account for.
+   */
+  function isWorking() {
+    if (SM.input && SM.input.getMove) {
+      if (SM.input.getMove().mag > IDLE_STICK) return true;
+    }
+    if (SM.vehicle && SM.vehicle.getVelX && SM.vehicle.getVelY) {
+      var vx = SM.vehicle.getVelX(), vy = SM.vehicle.getVelY();
+      if (vx * vx + vy * vy > IDLE_SPEED * IDLE_SPEED) return true;
+    }
+    if (SM.vehicle && SM.vehicle.isCutting && SM.vehicle.isCutting()) return true;
+    return false;
+  }
+
   function getReserveNeeded() {
     if (state !== 'mine') return 0;
     var speed = rigNum('getSpeed', SM.config.VEHICLE_SPEED);

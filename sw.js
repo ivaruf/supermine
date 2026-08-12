@@ -53,7 +53,17 @@
 // v1.6.4  Compact HUD revision 2: FUEL back on the top bar at half width, HOLD
 //         as a translucent box over the bottom readout. The full-height edge
 //         rails of v1.6.3 cleared the shaft but were far too much furniture.
-const VERSION = 'v1.6.4';
+// v1.6.5  The whole hold is always visible (no collapse drawer); a parked
+//         machine burns NO fuel, so thinking is free; worklights and festoon
+//         bulbs at the mine mouth mark the exit and make the surface a worksite.
+// v1.6.6  Compact HUD is ONE info bar: FUEL (narrower) butted against HULL and
+//         DEPTH side by side, the company balance on its own line under the
+//         sound and pause plates, and the hold alone at the bottom.
+// v1.6.7  Cache-bust only. v1.6.6 already contained the side-by-side HULL and
+//         DEPTH layout, but this cache is whole-build and cache-first, so a
+//         client sitting on an older version keeps being served it until this
+//         string changes. Bumped on request to force the update prompt.
+const VERSION = 'v1.6.7';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [
