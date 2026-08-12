@@ -50,7 +50,10 @@
 //         ore is WORTH rather than by signal strength; mobile HUD moved off the
 //         top of the screen onto side rails so the shaft and the mine mouth are
 //         visible while climbing out.
-const VERSION = 'v1.6.3';
+// v1.6.4  Compact HUD revision 2: FUEL back on the top bar at half width, HOLD
+//         as a translucent box over the bottom readout. The full-height edge
+//         rails of v1.6.3 cleared the shaft but were far too much furniture.
+const VERSION = 'v1.6.4';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

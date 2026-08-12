@@ -2087,3 +2087,192 @@
   text-shadow: 0 2px 0 #000, 0 0 18px rgba(255, 210, 110, 0.75);
 }
 .sm-ah-alert-lode .sm-ah-alert-sub { color: #ffe6a8; }
+
+/* ===========================================================================
+ * 6. COMPACT HUD — REVISION 2: A TOP HALF-BAR AND A BOX OVER THE READOUT
+ * ---------------------------------------------------------------------------
+ * Revision 1 put FUEL and HOLD on two full-height edge rails. That did solve
+ * the original problem — it cleared the top of the screen so the shaft and the
+ * daylight at the mine mouth were visible while climbing out — but it solved it
+ * too hard: a 48 px plate running the whole height of the glass is a lot of
+ * furniture for one number, and it framed the playfield on both sides.
+ *
+ * So the instruments come back off the edges:
+ *
+ *   FUEL   returns to the TOP BAR, but only about HALF the width, running from
+ *          the left gutter towards the sound and pause plates in the right
+ *          corner. The other half of the top stays empty, and the machine is
+ *          centred, so the shaft above it is still clear — which was the point
+ *          of moving it in the first place.
+ *   HOLD   becomes a compact translucent BOX sitting directly on top of the
+ *          bottom readout line, over DEPTH and FUNDS. Translucent because it
+ *          overlaps the rock and the readout beneath it; rectangular because it
+ *          holds a fill bar and two numbers, not a column.
+ *
+ * Everything here RESETS the rail geometry explicitly rather than relying on
+ * the earlier rules not applying, because they are still in the cascade above.
+ * Both layouts remain the same DOM and the same guarded writes in advhud.js —
+ * this is a stylesheet change and nothing else.
+ * ======================================================================== */
+.sm-adv.sm-compact {
+  /* Height reserved for the hold box, so the scanner line clears it. */
+  --sm-ah-hold-h: 42px;
+}
+
+/* --- FUEL: the top half-bar -------------------------------------------- */
+.sm-adv.sm-compact .sm-ah-fuel {
+  position: absolute;
+  top: var(--sm-top-y);
+  left: var(--sm-gutter);
+  right: auto;
+  bottom: auto;
+  /* Stops well short of the icon plates in the right corner. */
+  width: 52%;
+  max-width: 300px;
+  min-width: 168px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 5px 9px 6px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, rgba(9, 12, 17, 0.88), rgba(12, 16, 22, 0.66));
+}
+
+/* Label, percentage and state word back on ONE line, as they are when wide. */
+.sm-adv.sm-compact .sm-ah-fuel .sm-ah-fuel-head {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
+  width: auto;
+  margin-bottom: 3px;
+}
+.sm-adv.sm-compact .sm-ah-fuel .sm-ah-fuel-pct {
+  font-size: 17px;
+  margin-top: 0;
+}
+.sm-adv.sm-compact .sm-ah-fuel .sm-ah-fuel-note {
+  margin-top: 0;
+  margin-left: auto;          /* the state word rides the right edge */
+  font-size: 8.5px;
+  text-align: right;
+  line-height: 1.1;
+}
+
+/* --- HOLD: the box over the readout line -------------------------------- */
+.sm-adv.sm-compact .sm-ah-cargo {
+  position: absolute;
+  left: var(--sm-gutter);
+  right: auto;
+  top: auto;
+  /* Sits ON the readout line's own band, hence "over the counter". */
+  bottom: var(--sm-ah-railbot);
+  width: 52%;
+  max-width: 300px;
+  min-width: 168px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 5px 9px 6px;
+  border-radius: 5px;
+  /* MORE TRANSLUCENT THAN ANY OTHER PLATE, deliberately: it is the only one
+     that overlaps both the rock and another instrument, so the rock has to
+     stay readable through it. */
+  background: rgba(9, 12, 17, 0.52);
+  border: 1px solid rgba(126, 140, 158, 0.20);
+  overflow: visible;
+}
+.sm-adv.sm-compact .sm-ah-cargo .sm-ah-fuel-head {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
+  width: auto;
+  margin-bottom: 3px;
+}
+.sm-adv.sm-compact .sm-ah-cargo .sm-ah-cargo-val {
+  font-size: 15px;
+  margin-top: 0;
+  text-align: left;
+}
+/* '20 / 192' inline again — there is width for it now. */
+.sm-adv.sm-compact .sm-ah-cargo .sm-ah-cargo-cap {
+  display: inline;
+  font-size: 11px;
+}
+.sm-adv.sm-compact .sm-ah-cargo .sm-ah-fuel-note {
+  margin-top: 0;
+  margin-left: auto;
+  font-size: 10px;
+  text-align: right;
+}
+
+/* --- THE BARS GO BACK TO HORIZONTAL ------------------------------------
+ * Undoing revision 1's turned-on-its-side bar: same --sm-ah-fill, same write,
+ * only the axis. The gradients go back to being read from the LEFT edge, and
+ * the reserve mark back to a vertical stroke positioned with margin-left. */
+.sm-adv.sm-compact .sm-ah-bar {
+  width: auto;
+  height: 10px;
+  flex: 0 0 auto;
+  min-height: 0;
+  margin: 0;
+  border-radius: 3px;
+}
+.sm-adv.sm-compact .sm-ah-bar-fill {
+  transform-origin: left center;
+  transform: scaleX(var(--sm-ah-fill, 0));
+  background: linear-gradient(90deg, #ffb01f, #ffe08a);
+}
+.sm-adv.sm-compact .sm-ah-bar-cargo .sm-ah-bar-fill {
+  background: linear-gradient(90deg, #35c7ff, #c4f6ff);
+}
+.sm-adv.sm-compact .sm-ah-fuel.sm-ah-warn .sm-ah-bar-fill {
+  background: linear-gradient(90deg, #ff8c1a, #ffd08a);
+}
+.sm-adv.sm-compact .sm-ah-fuel.sm-ah-crit .sm-ah-bar-fill {
+  background: linear-gradient(90deg, #ff3b22, #ffb3a8);
+}
+.sm-adv.sm-compact .sm-ah-bar-mark {
+  top: -2px;
+  bottom: -2px;
+  left: 0;
+  right: auto;
+  width: 2px;
+  height: auto;
+  margin-left: calc(var(--sm-ah-mark, 0) * 100%);
+  transition: margin-left 0.2s ease, opacity 0.2s ease;
+}
+
+/* --- what the trip home costs: back to one line under the bar ----------- */
+.sm-adv.sm-compact .sm-ah-sub {
+  margin-top: 3px;
+  font-size: 8.5px;
+  text-align: left;
+}
+.sm-adv.sm-compact .sm-ah-sub-k { display: inline; }
+/* There is room for the burn rate again; SECONDS LEFT is the one that would
+   push the line to two rows on a 390 px screen, so it stays out. */
+.sm-adv.sm-compact .sm-ah-sub-burn { display: inline; }
+.sm-adv.sm-compact .sm-ah-sub-left { display: none; }
+
+/* --- the drawer handle, now inside the box's own row -------------------- */
+.sm-adv.sm-compact .sm-ah-holdbtn {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  width: auto;
+  min-width: 40px;
+  min-height: 22px;
+  margin: 0;
+  padding: 0 6px;
+  border-radius: 3px;
+}
+
+/* The scanner line clears the hold box instead of the old rail gap. */
+.sm-adv.sm-compact .sm-ah-scan {
+  left: var(--sm-gutter);
+  right: var(--sm-gutter);
+  bottom: calc(var(--sm-ah-railbot) + var(--sm-ah-hold-h) + 6px);
+}
+
+/* The hold's WORTH shares its row with the absolutely-positioned drawer handle,
+   so the row has to reserve the handle's width or the money disappears under
+   it — which is the one number the dump decision is weighed against. */
+.sm-adv.sm-compact .sm-ah-cargo .sm-ah-fuel-head { padding-right: 48px; }
