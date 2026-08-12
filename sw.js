@@ -63,7 +63,12 @@
 //         DEPTH layout, but this cache is whole-build and cache-first, so a
 //         client sitting on an older version keeps being served it until this
 //         string changes. Bumped on request to force the update prompt.
-const VERSION = 'v1.6.7';
+// v1.6.8  Info bar negotiates its own width (HULL/DEPTH squashed on real Android
+//         but not in DevTools — the font stack resolves wider there); scanner
+//         speaks only through its world arrows, no banners and no HUD line;
+//         warnings moved into the gap between the machine and the hold; new app
+//         icon drawn from the real machine renderer.
+const VERSION = 'v1.6.8';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

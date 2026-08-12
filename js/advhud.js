@@ -281,8 +281,24 @@ SM.advhud = (function () {
 
     els.root = el('div', 'sm-ah', root);
 
+    /* THE INFO BAR WRAPPER.
+     *
+     * On a phone the readings share one bar, and the two halves must be able to
+     * NEGOTIATE width: the strip takes exactly what its text needs and the fuel
+     * slice gives up whatever is left. Absolute positioning with a fixed fuel
+     * width could not do that, and the failure was invisible on a Mac — the font
+     * stack resolves to SF Mono there and to Roboto Mono or Droid Sans Mono on
+     * Android, which are WIDER at the same px size, so HULL and DEPTH squashed on
+     * real hardware while Chrome's device emulation (which swaps the viewport but
+     * not the fonts) looked perfect.
+     *
+     * In the WIDE layout this wrapper is `display: contents`, so the stack sees
+     * exactly the children it always did and nothing about the desktop HUD moves.
+     */
+    els.topbar = el('div', 'sm-ah-top', els.root);
+
     /* --- row 1: where am I, and how far back is the door ---------------- */
-    var strip = el('div', 'sm-panel sm-ah-strip', els.root);
+    var strip = el('div', 'sm-panel sm-ah-strip', els.topbar);
     el('div', 'sm-stripe', strip);
 
     var dep = el('div', 'sm-ah-cell sm-ah-depth', strip);
@@ -322,7 +338,7 @@ SM.advhud = (function () {
     el('div', 'sm-ah-mini-fill', els.integBar);
 
     /* --- row 2: FUEL, the primary gauge -------------------------------- */
-    els.fuelPanel = el('div', 'sm-panel sm-ah-fuel', els.root);
+    els.fuelPanel = el('div', 'sm-panel sm-ah-fuel', els.topbar);
     var fhead = el('div', 'sm-ah-fuel-head', els.fuelPanel);
     el('div', 'sm-ah-lbl', fhead, 'FUEL');
     els.fuelPct = el('div', 'sm-ah-fuel-pct', fhead, '0%');
@@ -711,10 +727,25 @@ SM.advhud = (function () {
   /* =====================================================================
    * THE SCANNER LINE
    * ================================================================== */
+  /**
+   * THE SCANNER HAS NO HUD LINE ANY MORE.
+   *
+   * It used to show the headline contact as a bearing arrow and a distance just
+   * above the hold. Combined with the banner it raised, the instrument spent most
+   * of its time obscuring the very readout you consult in order to act on it.
+   *
+   * Everything it said is now said better in the world: js/scanner.js draws a
+   * labelled arrow out of the machine per contact, boldest for the most valuable,
+   * pointing at where the ore actually is. This function stays as a no-op rather
+   * than being deleted so the slow-timer call site and the element cache do not
+   * have to change shape.
+   */
   function refreshScanner() {
+    if (els.scan) setClass('scanon', els.scan, 'sm-ah-scan-on', false);
+    return;
+    /* eslint-disable no-unreachable */
     var s = SM.scanner;
     var best = (s && s.isEnabled && s.isEnabled() && s.getBest) ? s.getBest() : null;
-    setClass('scanon', els.scan, 'sm-ah-scan-on', !!best);
     if (!best) return;
 
     var d = displayOf(best.matIndex, best.matId);
@@ -779,24 +810,21 @@ SM.advhud = (function () {
         alertKind('layer', String(p.name).toUpperCase(),
                   Math.round(num(p.depthM, 0)) + ' m  ·  new stratum', 2.2);
       });
-      SM.events.on('scan:contact', function (p) {
-        if (!p) return;
-        var d = displayOf(p.matIndex, p.matId);
-        alertKind('scan', (d.name || 'ORE').toUpperCase() + ' SIGNATURE',
-                  Math.round(num(p.dist, 0) * M_PER_UNIT) + ' m away', 2.0);
-      });
-      /* THE MOTHERLODE. advterrain.js fires this when a real formation comes
-       * into range, and it is the moment the whole mode is built to deliver —
-       * so it gets the one piece of celebration the in-mine HUD has: its own
-       * banner treatment and a warm flash across the rock. */
-      SM.events.on('mine:lode', function (p) {
-        if (!p) return;
-        var d = displayOf(p.matIndex, p.matId);
-        var dist = Math.round(num(p.dist, 0) * M_PER_UNIT);
-        alertKind('lode', 'MOTHERLODE  ·  ' + (d.name || 'ORE').toUpperCase(),
-                  dist > 0 ? (dist + ' m — fill the hold') : 'Fill the hold', 3.2);
-        setClass('lode', els.alert, 'sm-ah-alert-lode', true);
-        lodeHold = 3.2;
+      /* NO SCANNER BANNERS. `scan:contact` and `mine:lode` used to raise the
+       * alert banner, and between them they fired often enough to sit over the
+       * hold more or less permanently in ore-rich ground — so the instrument was
+       * covering the readout the player needed in order to act on it.
+       *
+       * The scanner now speaks ONLY through the arrows js/scanner.js draws out of
+       * the machine: direction, mineral and distance, in the world, where the ore
+       * actually is. Nothing about it interrupts the HUD.
+       *
+       * The events are deliberately left un-subscribed rather than deleted at the
+       * source: advterrain.js and scanner.js still emit them, so anything else
+       * (a future log, a sound cue) can listen without re-plumbing. The
+       * motherlode keeps its screen flash, which is in the world and not over the
+       * hold — losing the payoff moment entirely would be a worse trade. */
+      SM.events.on('mine:lode', function () {
         if (SM.effects && SM.effects.screenFlash) SM.effects.screenFlash(0.16, 255, 214, 120);
         if (SM.sound && SM.sound.play) SM.sound.play('ui');
       });

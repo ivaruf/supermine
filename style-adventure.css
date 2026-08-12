@@ -2636,3 +2636,94 @@
 }
 .sm-adv.sm-compact .sm-ah-strip .sm-ah-lbl { display: block; }
 .sm-adv.sm-compact .sm-ah-strip .sm-ah-val { font-size: 14px; line-height: 1.05; }
+
+/* The scanner's HUD line is gone — it spoke over the hold, and the arrows out of
+   the machine say the same thing where the ore is. Hidden in CSS as well as
+   skipped in JS so a stale cached script cannot resurrect it. */
+.sm-adv .sm-ah-scan { display: none !important; }
+
+/* ===========================================================================
+ * 10. THE INFO BAR NEGOTIATES ITS OWN WIDTH  (the real-Android squash)
+ * ---------------------------------------------------------------------------
+ * HULL and DEPTH squashed on an actual phone while Chrome's device emulation
+ * looked correct. The cause was not the viewport, it was the FONT: --sm-mono
+ * resolves to SF Mono on macOS and to Roboto Mono / Droid Sans Mono on Android,
+ * which are wider at the same px size — and DevTools emulation swaps the screen
+ * but keeps the host's fonts, so the overflow could not be seen there.
+ *
+ * Tuning px values against one font's metrics would just move the bug to the
+ * next device. Instead the bar is a flex row that lets the two halves negotiate:
+ *
+ *   STRIP  flex: 0 0 auto  — takes exactly what its text needs, never shrinks,
+ *                            never wraps. Whatever font is in play, the numbers
+ *                            are whole.
+ *   FUEL   flex: 1 1 auto; min-width: 0  — gives up the remainder. A shorter
+ *                            fuel bar is a graceful loss; a clipped readout is
+ *                            not.
+ *
+ * `min-width: 0` is load-bearing: a flex item's default `min-width: auto`
+ * refuses to shrink below its content, which is exactly how a row overflows
+ * instead of redistributing.
+ * ======================================================================== */
+.sm-adv.sm-compact .sm-ah-top {
+  position: absolute;
+  top: var(--sm-top-y);
+  left: var(--sm-gutter);
+  right: var(--sm-ah-icons);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  height: var(--sm-ah-barh);
+  pointer-events: none;
+}
+/* The two halves stop positioning themselves and become flex items. */
+.sm-adv.sm-compact .sm-ah-top > .sm-ah-fuel,
+.sm-adv.sm-compact .sm-ah-top > .sm-ah-strip {
+  position: static;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  height: auto;
+}
+.sm-adv.sm-compact .sm-ah-top > .sm-ah-fuel {
+  order: 1;
+  flex: 1 1 auto;
+  min-width: 64px;          /* below this the bar is not a gauge any more */
+  width: auto;
+  max-width: none;
+}
+.sm-adv.sm-compact .sm-ah-top > .sm-ah-strip {
+  order: 2;
+  flex: 0 0 auto;           /* text width wins, on any font */
+  width: auto;
+  max-width: none;
+}
+/* Nothing in the bar may wrap or hyphenate its way out of trouble. */
+.sm-adv.sm-compact .sm-ah-top .sm-ah-val,
+.sm-adv.sm-compact .sm-ah-top .sm-ah-lbl { white-space: nowrap; }
+
+/* WIDE: the wrapper vanishes and the stack sees its original children. */
+.sm-adv:not(.sm-compact) .sm-ah-top { display: contents; }
+
+/* ===========================================================================
+ * 11. WARNINGS SIT BETWEEN THE MACHINE AND THE HOLD
+ * ---------------------------------------------------------------------------
+ * The banner was pinned just above the bottom readout, which put it straight
+ * over the hold — so CARGO FULL, the one message whose whole purpose is to send
+ * you to the manifest, covered the manifest.
+ *
+ * It now floats in the empty band between the machine (centred) and the hold box
+ * (bottom-left). `max()` guarantees the clearance rather than trusting a
+ * percentage: on a short landscape phone 24% of the height is less than the hold
+ * is tall, and the banner would land back on top of it.
+ *
+ * The scanner's own banners are gone entirely (see advhud.js) — what is left here
+ * is CARGO FULL, the fuel reserve warning, hull damage, heat and a new stratum,
+ * all of which are worth interrupting for.
+ * ======================================================================== */
+.sm-adv.sm-compact .sm-ah-alert {
+  bottom: max(24%, calc(var(--sm-ah-hold-h) + 54px));
+  left: 50%;
+  top: auto;
+}
