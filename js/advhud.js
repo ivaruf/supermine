@@ -19,11 +19,48 @@
  *   SCANNER    the headline contact from SM.scanner.getBest(), as a bearing and
  *              a distance in metres.
  *
- * WHERE IT ALL SITS, AND WHY IT IS ALL AT THE TOP
- *   The whole panel is a stack pinned to the TOP edge, on every viewport. The
- *   bottom two thirds of the screen belong to the thumb: the joystick's origin
- *   floats to wherever it lands, so anything down there is something the
- *   player's own hand is covering at the moment they need to read it.
+ * WHERE IT ALL SITS — TWO LAYOUTS, ONE SET OF INSTRUMENTS
+ *
+ *   This used to read "the whole panel is a stack pinned to the TOP edge, on
+ *   every viewport", and the argument for it was the thumb: the joystick's
+ *   origin floats to wherever it lands, so the bottom of the screen is under
+ *   the player's own hand. That half of the reasoning still holds. The other
+ *   half was wrong, and on a phone it was wrong about the most important thing
+ *   on the screen:
+ *
+ *       THE MINE MOUTH IS UP. -y is the surface. Climbing out means driving
+ *       towards the top of the screen at the exact moment the tank is lowest
+ *       and the decision matters most — and a 210 px full-width stack on an
+ *       844 px phone put a quarter of the glass, opaque, over the shaft the
+ *       player is trying to climb.
+ *
+ *   So the top belongs to the mine and the bottom belongs to the thumb, and
+ *   the instruments go where NEITHER of them is: the two side edges.
+ *
+ *   COMPACT / PORTRAIT — THE RAILS  (.sm-compact, which ui.js publishes for
+ *   any phone in either orientation and for a small desktop window)
+ *     LEFT RAIL    FUEL. A 48 px vertical plate: the percentage, the state
+ *                  word, and a tall bar that fills from the BOTTOM like a tank
+ *                  with the reserve mark struck across it. Long and thin is
+ *                  the right shape for this gauge — the taller the bar, the
+ *                  more precisely you can read the level against the mark.
+ *     RIGHT RAIL   HOLD. Fill level, capacity and worth, always visible; the
+ *                  manifest is behind the count button at its foot and opens
+ *                  INWARDS over the rock (see THE HOLD DRAWER below).
+ *     BOTTOM EDGE  one line: DEPTH · FUNDS · HULL · HEAT, inside the
+ *                  safe-area inset, BELOW where a thumb sits on the stick.
+ *     ABOVE IT     the scanner contact, between the rails.
+ *     TOP EDGE     nothing but the sound and pause plates in the corner. The
+ *                  shaft, and the daylight at the end of it, is clear.
+ *
+ *   WIDE — THE STACK, UNCHANGED. At 1440x900 the stack is a 560 px column
+ *   pinned top-LEFT while the machine is centred: it never covers the shaft,
+ *   it has room for the fuel arithmetic in full (BURN, SECONDS LEFT) and for
+ *   the manifest with no drawer. There was nothing to fix, so nothing changed.
+ *
+ *   Both layouts are the SAME DOM. Everything above is done in the stylesheet
+ *   off ui.js's existing .sm-compact switch; no JS branch, no measuring, and
+ *   no second set of elements to keep in step.
  *
  * HARD RULES INHERITED FROM ui.js — these are not style preferences
  *   1. update() RUNS INSIDE THE FIXED STEP, so it can be called several times
@@ -91,7 +128,10 @@ SM.advhud = (function () {
     sound_on: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
               '<path d="M15.7 9.2a3.9 3.9 0 0 1 0 5.6"/><path d="M18.3 6.5a7.6 7.6 0 0 1 0 11"/>',
     sound_off: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
-               '<path d="m16.2 9.6 5.2 4.8M21.4 9.6l-5.2 4.8"/>'
+               '<path d="m16.2 9.6 5.2 4.8M21.4 9.6l-5.2 4.8"/>',
+    /* The manifest drawer's handle. A stack of lines is the one glyph that
+     * reads as "a list of what is in there" at 12 px on a 48 px rail. */
+    manifest: '<path d="M4.6 6.4h14.8M4.6 12h14.8M4.6 17.6h14.8"/>'
   };
 
   function glyph(inner) {
@@ -281,18 +321,57 @@ SM.advhud = (function () {
     // The reserve MARK is the whole instrument: it turns an abstract percentage
     // into "that much is the way home". Positioned by a CSS var, never by JS.
     els.fuelMark = el('div', 'sm-ah-bar-mark', fbar);
-    els.fuelSub = el('div', 'sm-ah-sub', els.fuelPanel, '');
+
+    /* THE SUB LINE IS FOUR SPANS, NOT ONE STRING.
+     * On a wide screen it reads as one sentence — HOME 5u · BURN 0.5/s · 88s
+     * LEFT — which is the arithmetic the player would otherwise do in their
+     * head. It will not fit in a 48 px rail, and the piece that has to survive
+     * is the FIRST one: what the trip home costs. Splitting it lets the
+     * stylesheet drop BURN and SECONDS LEFT on a phone and stack HOME over its
+     * value, with the separators supplied by CSS ::before so an empty span
+     * leaves no orphaned dot. Still one guarded write per span. */
+    els.fuelSub = el('div', 'sm-ah-sub', els.fuelPanel);
+    el('span', 'sm-ah-sub-k', els.fuelSub, 'HOME ');
+    els.fuelHome = el('span', 'sm-ah-sub-home', els.fuelSub, '');
+    els.fuelBurn = el('span', 'sm-ah-sub-burn', els.fuelSub, '');
+    els.fuelLeft = el('span', 'sm-ah-sub-left', els.fuelSub, '');
 
     /* --- row 3: the hold ----------------------------------------------- */
     els.cargoPanel = el('div', 'sm-panel sm-ah-cargo', els.root);
     var chead = el('div', 'sm-ah-fuel-head', els.cargoPanel);
     el('div', 'sm-ah-lbl', chead, 'HOLD');
-    els.cargoVal = el('div', 'sm-ah-cargo-val', chead, '0 / 0');
+    /* "0 / 48" is two spans for the same reason as the fuel sub line: inline on
+     * a wide screen, and the capacity dropped onto its own line in the rail. */
+    els.cargoVal = el('div', 'sm-ah-cargo-val', chead);
+    els.cargoNow = el('span', 'sm-ah-cargo-now', els.cargoVal, '0');
+    els.cargoCap = el('span', 'sm-ah-cargo-cap', els.cargoVal, ' / 0');
     els.cargoWorth = el('div', 'sm-ah-fuel-note', chead, '');
     var cbar = el('div', 'sm-ah-bar sm-ah-bar-cargo', els.cargoPanel);
     els.cargoFill = el('div', 'sm-ah-bar-fill', cbar);
-    els.manifest = el('div', 'sm-ah-manifest', els.cargoPanel);
-    els.manifestMore = el('div', 'sm-ah-more', els.cargoPanel, '');
+
+    /* THE MANIFEST LIVES IN A DRAWER.
+     * On a wide screen the drawer is an ordinary block and the manifest is just
+     * part of the stack, exactly as it always was. In the rail layout the
+     * stylesheet lifts it out of the 48 px column and opens it inwards across
+     * the rock on a tap — see THE HOLD DRAWER. The wrapper exists so that one
+     * CSS rule moves the rows AND the "+N MORE" line together. */
+    els.drawer = el('div', 'sm-ah-drawer', els.cargoPanel);
+    els.manifest = el('div', 'sm-ah-manifest', els.drawer);
+    els.manifestMore = el('div', 'sm-ah-more', els.drawer, '');
+
+    /* The handle. Hidden on a wide screen, where there is nothing to unfold. */
+    els.holdBtn = el('button', 'sm-ah-holdbtn', els.cargoPanel);
+    els.holdBtn.setAttribute('type', 'button');
+    els.holdBtn.setAttribute('title', 'Manifest — tap a row twice to dump it');
+    els.holdBtn.setAttribute('aria-label', 'Manifest');
+    els.holdIco = el('span', 'sm-ah-holdico', els.holdBtn);
+    els.holdIco.innerHTML = glyph(ICONS.manifest);
+    els.holdCount = el('span', 'sm-ah-holdnum', els.holdBtn, '0');
+    els.holdBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      els.holdBtn.blur();
+      toggleDrawer();
+    }, false);
 
     /* --- the scanner line ----------------------------------------------- */
     els.scan = el('div', 'sm-ah-scan', els.root);
@@ -466,6 +545,39 @@ SM.advhud = (function () {
   }
 
   /* =====================================================================
+   * THE HOLD DRAWER
+   * ---------------------------------------------------------------------
+   * The manifest may collapse on a phone; it may not disappear. The FILL LEVEL
+   * is what you steer by and it is never hidden — bar, units and worth are all
+   * on the rail. The MANIFEST is different: it is only needed at the one moment
+   * you decide to tip the coal out, so it hides behind the count button at the
+   * foot of the rail and opens inwards over the rock when asked.
+   *
+   * The state is a single class on the wrapper. On a wide screen the drawer is
+   * always open because the stylesheet never closes it, so the class is inert
+   * there and a resize between the two layouts needs no bookkeeping.
+   * ================================================================== */
+  var drawerOpen = false;
+
+  function paintDrawer() {
+    setClass('drawon', els.drawer, 'sm-ah-drawer-on', drawerOpen);
+    setClass('drawbtn', els.holdBtn, 'sm-ah-holdbtn-on', drawerOpen);
+  }
+
+  function toggleDrawer() {
+    drawerOpen = !drawerOpen;
+    // Closing it must also disarm a pending DUMP, or the confirm is sitting
+    // there behind a shut door waiting for a tap that means something else now.
+    if (!drawerOpen && dumpArmed >= 0) {
+      dumpArmed = -1;
+      dumpTimer = 0;
+      paintDumpArm();
+    }
+    paintDrawer();
+    if (SM.sound && SM.sound.play) SM.sound.play('ui');
+  }
+
+  /* =====================================================================
    * THE MANIFEST
    * ---------------------------------------------------------------------
    * Rows are pooled and only rebuilt when the SIGNATURE of the hold changes,
@@ -577,6 +689,12 @@ SM.advhud = (function () {
     setClass('mmoreon', els.manifestMore, 'sm-ah-more-on', hiddenUnits > 0);
     setText('mworth', els.cargoWorth, worth > 0 ? ('$' + fmt(worth)) : '');
     setClass('mempty', els.manifest, 'sm-ah-manifest-empty', used === 0);
+    /* The drawer handle says how many DIFFERENT materials are aboard, which is
+     * the number that decides whether opening it is worth a tap. It is written
+     * here, on the slow timer, because it is a by-product of the one array walk
+     * this file does — never a separate count. */
+    setText('hnum', els.holdCount, '' + used);
+    setClass('hbempty', els.holdBtn, 'sm-ah-holdbtn-empty', used === 0);
   }
 
   /* =====================================================================
@@ -719,6 +837,10 @@ SM.advhud = (function () {
     dumpTimer = 0;
     slowTimer = 0;
     if (els.alert) els.alert.classList.remove('sm-ah-alert-on');
+    // A fresh descent starts with the drawer shut over a clear view of the
+    // shaft. paintDrawer() runs AFTER last = {} above, so the write lands.
+    drawerOpen = false;
+    paintDrawer();
   }
 
   /* =====================================================================
@@ -786,10 +908,11 @@ SM.advhud = (function () {
 
     // The sub line is the arithmetic the player would otherwise do in their
     // head: what the trip home costs, and how long the tank lasts at this draw.
-    var sub = 'HOME ' + fmt(reserve) + 'u';
-    if (burn > 0.001) sub += '   ·   BURN ' + burn.toFixed(1) + '/s';
-    if (burn > 0.001) sub += '   ·   ' + Math.round(fuel / burn) + 's LEFT';
-    setText('fsub', els.fuelSub, sub);
+    // Three writes rather than one string, so the rail can keep the first part
+    // and drop the rest — the separators come from CSS (see build()).
+    setText('fhome', els.fuelHome, fmt(reserve) + 'u');
+    setText('fburn', els.fuelBurn, burn > 0.001 ? ('BURN ' + burn.toFixed(1) + '/s') : '');
+    setText('fleft', els.fuelLeft, burn > 0.001 ? (Math.round(fuel / burn) + 's LEFT') : '');
 
     /* --- the hold ------------------------------------------------------ */
     var ccap = num(a.getCargoCap && a.getCargoCap(), 1);
@@ -797,7 +920,8 @@ SM.advhud = (function () {
     var cargo = num(a.getCargo && a.getCargo(), 0);
     var cpct = num(a.getCargoPct && a.getCargoPct(), cargo / ccap);
     if (cpct < 0) cpct = 0; else if (cpct > 1) cpct = 1;
-    setText('cval', els.cargoVal, fmt(cargo) + ' / ' + fmt(ccap));
+    setText('cnow', els.cargoNow, fmt(cargo));
+    setText('ccap', els.cargoCap, ' / ' + fmt(ccap));
     setVar('cfill', els.cargoFill, '--sm-ah-fill', cpct.toFixed(3));
     setClass('cfull', els.cargoPanel, 'sm-ah-full', cpct > 0.995);
 

@@ -31,8 +31,10 @@
  * WHAT IT DRAWS
  *   Called from SM.adv.renderWorld() BEFORE the darkness composite, so marks
  *   read as instrument overlay rather than as lit geometry. A range ring, the
- *   sweep, a bracket per contact, and ONE label: material and distance in
- *   metres on the strongest thing out there.
+ *   sweep, and an ARROW OUT OF THE MACHINE per contact, each labelled with the
+ *   mineral and its distance in metres. The boldest arrow is the MOST VALUABLE
+ *   thing in range, not the strongest signal — see doSweep() and worthOf() for
+ *   why that distinction matters.
  * ========================================================================== */
 
 var SM = SM || {};
@@ -62,8 +64,18 @@ SM.scanner = (function () {
   var DRAW_RANGE_REF = 600;    // ...and the range that figure is quoted at
   var DRAW_SWEEP_SPIKE = 0.5;  // extra fuel, in unit-seconds, per revolution
 
-  var MAX_CONTACTS = 5;        // marks drawn at once, strongest first
+  var MAX_CONTACTS = 4;        // arrows drawn at once, most valuable first
   var LABEL_PX = 13;           // label size in SCREEN pixels (counter-scaled)
+
+  /* Arrow geometry, in SCREEN pixels — converted to world units at draw time so
+   * the instrument is the same physical size on a phone and on a desktop, and
+   * does not grow or shrink with the camera. Deliberately NOT to scale with the
+   * real distance: a to-scale arrow disappears for close ore and shoots off the
+   * screen for distant ore, and the distance is written on it anyway. */
+  var ARROW_START_PX = 52;     // clear of the hull before the shaft begins
+  var ARROW_LEN_PX = 40;
+  var ARROW_HEAD_PX = 14;
+  var ARROW_STAGGER_PX = 30;   // per rank, so near-parallel arrows do not collide
 
   /* ================================================================== */
 
@@ -130,16 +142,26 @@ SM.scanner = (function () {
     var px = machineX(), py = machineY();
     contactN = SM.advterrain.probeAll(px, py, range, contacts);
 
-    /* Strongest first, then keep only MAX_CONTACTS of them. A rich shallow
-     * layer can genuinely have eight ore bodies inside scan range, and drawing
-     * all eight turns a readable instrument into a rash of brackets. Insertion
-     * sort over at most eight live slots, once per revolution — and only over
-     * the live prefix, because the array keeps its slots from bigger sweeps. */
+    /* MOST VALUABLE FIRST, then keep only MAX_CONTACTS. A rich shallow layer can
+     * genuinely have eight ore bodies inside scan range, and drawing all eight
+     * turns a readable instrument into a rash of marks.
+     *
+     * This used to rank by SIGNAL STRENGTH, which is essentially size over
+     * distance — so a big near coal seam outranked a gold pocket just behind it,
+     * and the instrument's headline pointed at the least interesting thing in
+     * range. What the player is actually asking the scanner is "where is the
+     * money", so it ranks by what a deposit of that material is WORTH, with
+     * strength only breaking ties between two of the same mineral.
+     *
+     * Insertion sort over at most eight live slots, once per revolution, and
+     * only over the live prefix — the array keeps slots from bigger sweeps. */
     for (var s = 1; s < contactN; s++) {
       var v = contacts[s], k = s - 1;
-      while (k >= 0 && contacts[k].strength < v.strength) { contacts[k + 1] = contacts[k]; k--; }
+      v.worth = worthOf(v);
+      while (k >= 0 && rankLess(contacts[k], v)) { contacts[k + 1] = contacts[k]; k--; }
       contacts[k + 1] = v;
     }
+    if (contactN > 0 && contacts[0].worth === undefined) contacts[0].worth = worthOf(contacts[0]);
     if (contactN > MAX_CONTACTS) contactN = MAX_CONTACTS;
 
     best = null;
@@ -149,7 +171,8 @@ SM.scanner = (function () {
       // Un-lit until the beam reaches it. A contact discovered behind the beam
       // waits for the next pass, which is what makes the sweep mean anything.
       if (c.lit === undefined) c.lit = FADE;
-      if (!best || c.strength > best.strength) best = c;
+      if (c.worth === undefined) c.worth = worthOf(c);
+      if (!best || rankLess(best, c)) best = c;
     }
     spike = DRAW_SWEEP_SPIKE;
   }
@@ -170,6 +193,35 @@ SM.scanner = (function () {
     evContact.dist = c.dist;
     evContact.bearing = c.bearing;
     SM.events.emit('scan:contact', evContact);
+  }
+
+  /**
+   * What one deposit of this contact's material is worth, in dollars.
+   *
+   * Asks js/mines.js rather than keeping a second price table — that file owns
+   * the economy, and a scanner that ranked by its own idea of value would point
+   * at the wrong rock the moment prices were retuned. Falls back to the
+   * material's own carried value, then to zero, so an incomplete build still
+   * ranks sensibly instead of throwing on the hot path.
+   */
+  function worthOf(c) {
+    var mi = c.matIndex;
+    if (SM.mines && SM.mines.depositValueIndex) {
+      var v = SM.mines.depositValueIndex(mi);
+      if (typeof v === 'number' && v === v && v > 0) return v;
+    }
+    if (SM.mines && SM.mines.priceOfIndex) {
+      var p = SM.mines.priceOfIndex(mi);
+      if (typeof p === 'number' && p === p && p > 0) return p;
+    }
+    var m = SM.materials ? SM.materials.get(mi) : null;
+    return (m && m.value > 0) ? m.value : 0;
+  }
+
+  /** True when `a` should rank BELOW `b`: worth first, signal strength to tie-break. */
+  function rankLess(a, b) {
+    if (a.worth !== b.worth) return a.worth < b.worth;
+    return a.strength < b.strength;
   }
 
   /** Shortest signed angle from a to b. */
@@ -296,60 +348,107 @@ SM.scanner = (function () {
       var fade = 1 - c.lit / FADE;
       if (c === best && fade < MARK_MIN_ALPHA) fade = MARK_MIN_ALPHA;
       if (fade <= 0.02) continue;
-      drawMark(ctx, c, px, py, scale, fade, c === best);
+      drawMark(ctx, c, px, py, scale, fade, c === best, i);
     }
 
     ctx.restore();
   }
 
   /**
-   * One contact: a bracket at its position, sized by how big the formation is,
-   * and a tick on the range ring at its bearing so the direction is readable
-   * even when the mark itself is off the lit area.
+   * ONE CONTACT AS AN ARROW OUT OF THE MACHINE.
+   *
+   * This used to draw corner brackets around the ore body itself plus a tick on
+   * the range ring. It was a fair instrument and a poor direction indicator: a
+   * bracket 400 units away in the dark is off the lit area entirely, so the only
+   * thing actually visible was a tick on a ring, and the player had to work out
+   * which way to drive from where the tick sat on a circle.
+   *
+   * An arrow leaving the hull answers "which way, how far, and is it worth it"
+   * in one glance, and it works no matter how far outside the headlight the ore
+   * is. The most valuable contact in range gets the bold arrow; the rest are
+   * drawn thinner so the hierarchy is the ranking.
+   *
+   * The arrow starts clear of the hull and its length is a FIXED screen distance
+   * rather than the real distance — a to-scale arrow would either vanish for
+   * nearby ore or run off the screen for distant ore. Distance is text, which is
+   * exactly what text is for.
    */
-  function drawMark(ctx, c, px, py, scale, fade, isBest) {
+  function drawMark(ctx, c, px, py, scale, fade, isBest, rank) {
     var col = SM.materials.get(c.matIndex).colors[0];
-    var r = 16 + Math.min(40, c.size * 0.22);
-    var a = fade * (isBest ? 0.95 : 0.7);
+    var ca = Math.cos(c.bearing), sa = Math.sin(c.bearing);
+
+    /* RADIAL STAGGER BY RANK. Two ore bodies can easily sit at almost the same
+     * bearing — a seam pinching along x puts three contacts within a few degrees
+     * of each other — and their labels then land on top of one another and none
+     * of them can be read. Pushing each successive arrow a little further out
+     * separates them along the line of sight instead, which costs nothing and
+     * keeps the richest one nearest the hull where the eye already is. */
+    var stagger = isBest ? 0 : ARROW_STAGGER_PX * rank;
+
+    // Screen-space geometry, converted to world units, so the arrow is the same
+    // size on every zoom and every device.
+    var start = (ARROW_START_PX + stagger) / scale;
+
+    /* ...but never STARTING INSIDE THE MACHINE. A fully upgraded rig is several
+     * times the size of the starter, so a fixed radius that clears the hull at
+     * tier 0 is buried under the ore train at tier 5. Push the tail out past the
+     * hull's own half-span so the arrow always reads as leaving the vehicle. */
+    if (SM.vehicle && SM.vehicle.getWidth) {
+      var hullClear = SM.vehicle.getWidth() * 0.5 + 22 / scale;
+      if (start < hullClear) start = hullClear;
+    }
+    var len = (isBest ? ARROW_LEN_PX : ARROW_LEN_PX * 0.66) / scale;
+    var head = (isBest ? ARROW_HEAD_PX : ARROW_HEAD_PX * 0.72) / scale;
+    var a = fade * (isBest ? 0.95 : 0.5);
+
+    var x0 = px + ca * start, y0 = py + sa * start;
+    var x1 = px + ca * (start + len), y1 = py + sa * (start + len);
 
     ctx.strokeStyle = rgba(col, a);
-    ctx.lineWidth = (isBest ? 2.4 : 1.6) / scale;
-
-    // Corner brackets — an instrument marking a target, not a game icon.
-    var k = r * 0.42;
+    ctx.lineWidth = (isBest ? 3.4 : 2.0) / scale;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(c.x - r, c.y - r + k); ctx.lineTo(c.x - r, c.y - r); ctx.lineTo(c.x - r + k, c.y - r);
-    ctx.moveTo(c.x + r - k, c.y - r); ctx.lineTo(c.x + r, c.y - r); ctx.lineTo(c.x + r, c.y - r + k);
-    ctx.moveTo(c.x + r, c.y + r - k); ctx.lineTo(c.x + r, c.y + r); ctx.lineTo(c.x + r - k, c.y + r);
-    ctx.moveTo(c.x - r + k, c.y + r); ctx.lineTo(c.x - r, c.y + r); ctx.lineTo(c.x - r, c.y + r - k);
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
     ctx.stroke();
 
-    // Bearing tick just inside the ring.
-    var ca = Math.cos(c.bearing), sa = Math.sin(c.bearing);
-    ctx.lineWidth = 4 / scale;
+    // Solid head, so the direction reads at a glance and at small sizes.
+    var wing = head * 0.62;
+    ctx.fillStyle = rgba(col, a);
     ctx.beginPath();
-    ctx.moveTo(px + ca * (range * 0.90), py + sa * (range * 0.90));
-    ctx.lineTo(px + ca * (range * 1.02), py + sa * (range * 1.02));
-    ctx.stroke();
+    ctx.moveTo(x1 + ca * head, y1 + sa * head);
+    ctx.lineTo(x1 - sa * wing, y1 + ca * wing);
+    ctx.lineTo(x1 + sa * wing, y1 - ca * wing);
+    ctx.closePath();
+    ctx.fill();
 
-    if (!isBest) return;
-
-    /* --- the one label ------------------------------------------------
-     * Counter-scaled so it is a fixed number of SCREEN pixels: world-space
-     * text on a camera that zooms is unreadable at one end of the range and
-     * absurd at the other. */
+    /* --- the label rides just past the head ---------------------------
+     * Counter-scaled so it is a fixed number of SCREEN pixels: world-space text
+     * on a camera that zooms is unreadable at one end of the range and absurd at
+     * the other. Every arrow is labelled, not just the best one — an unlabelled
+     * arrow is a direction with no reason to follow it. */
     var m = SM.materials.get(c.matIndex);
     var metres = Math.round(c.dist * A.METERS_PER_UNIT);
     var label = m.name.toUpperCase() + '  ' + metres + ' m';
+    var px2 = ARROW_START_PX + stagger +
+              (isBest ? ARROW_LEN_PX : ARROW_LEN_PX * 0.66) +
+              (isBest ? ARROW_HEAD_PX : ARROW_HEAD_PX * 0.72) + 9;
+
     ctx.save();
-    ctx.translate(c.x, c.y - r - 8 / scale);
+    ctx.translate(px + ca * (px2 / scale), py + sa * (px2 / scale));
     ctx.scale(1 / scale, 1 / scale);
-    ctx.font = 'bold ' + LABEL_PX + 'px ui-monospace, Menlo, Consolas, monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
+    var size = isBest ? LABEL_PX : LABEL_PX - 2;
+    ctx.font = 'bold ' + size + 'px ui-monospace, Menlo, Consolas, monospace';
+    /* The text sits on the far side of the head, so it is LEFT-aligned when the
+     * contact is to the right and RIGHT-aligned when it is to the left —
+     * otherwise a bearing pointing left runs the label back over the machine. */
+    var leftward = ca < 0;
+    ctx.textAlign = leftward ? 'right' : 'left';
+    ctx.textBaseline = 'middle';
     var w = ctx.measureText(label).width;
-    ctx.fillStyle = 'rgba(6,14,12,' + (0.55 * fade) + ')';
-    ctx.fillRect(-w * 0.5 - 6, -LABEL_PX - 4, w + 12, LABEL_PX + 7);
+    var bx = leftward ? -w - 6 : -6;
+    ctx.fillStyle = 'rgba(6,14,12,' + (0.62 * fade) + ')';
+    ctx.fillRect(bx, -size * 0.5 - 4, w + 12, size + 8);
     ctx.fillStyle = rgba(col, fade);
     ctx.fillText(label, 0, 0);
     ctx.restore();

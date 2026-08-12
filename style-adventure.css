@@ -10,11 +10,16 @@
  *    EVERYTHING here is scoped to `.sm-adv`, which is also how the classic
  *    chrome — still in the DOM underneath — is taken down in one block below.
  *
- * 2. MOBILE FIRST, and portrait is not an afterthought. The instrument panel is
- *    a stack pinned to the TOP on every viewport, because the bottom of the
- *    screen belongs to the thumb: the joystick's origin floats to wherever it
- *    lands, and anything down there is something the player's own hand is
- *    covering. Every meta screen is header / scrolling body / FIXED FOOTER, so
+ * 2. MOBILE FIRST, and portrait is not an afterthought. The in-mine panel used
+ *    to be a stack pinned to the TOP on every viewport, on the grounds that the
+ *    bottom of the screen belongs to the thumb. Half of that is still true —
+ *    the joystick's origin floats to wherever it lands — but THE MINE MOUTH IS
+ *    UP, and a 210 px full-width stack on an 844 px phone sat squarely over the
+ *    shaft the player climbs to get home. So on anything compact the
+ *    instruments now hug the two SIDE edges instead, with one readout line
+ *    along the bottom: see §3b. The wide layout is unchanged, because at
+ *    1440x900 the stack is a column top-LEFT and the shaft is centred.
+ *    Every meta screen is header / scrolling body / FIXED FOOTER, so
  *    the primary button is reachable without a scroll on any screen size.
  *
  * The palette, the metal-plate treatment and the type scale come from
@@ -25,7 +30,9 @@
  * ORDER OF THIS FILE
  *   1. classic chrome, hidden
  *   2. the joystick
- *   3. the in-mine HUD + the adventure pause card
+ *   3. the in-mine HUD (wide layout) + the adventure pause card
+ *   3b. the RAIL layout — the same instruments moved to the screen edges on
+ *       anything compact, so the top of the screen stays the mine
  *   4. the meta screens (shell, slots, map, garage, prep, results)
  *   5. responsive: compact / portrait / tiny / short-landscape
  * ========================================================================== */
@@ -156,11 +163,19 @@
 .sm-stick-hold .sm-stick-knob { transition: none; }
 
 /* ===========================================================================
- * 3. THE IN-MINE HUD
+ * 3. THE IN-MINE HUD — THE WIDE LAYOUT
  * ---------------------------------------------------------------------------
- * One column at the top: where am I, how much fuel, what is in the hold. The
- * panel itself does NOT take pointer events — only the two icon buttons and
- * the manifest rows do — so a drag that starts over the gauges still drives.
+ * One column top-LEFT: where am I, how much fuel, what is in the hold. At
+ * 1440x900 that column is 560 px of a 1440 px window and the machine is
+ * centred, so it never covers the shaft — this layout was never the problem
+ * and it is untouched. §3b moves the same elements to the screen edges on
+ * anything compact, where a top stack IS the problem.
+ *
+ * The panel itself does NOT take pointer events — only the two icon buttons,
+ * the manifest rows and the drawer handle do — so a drag that starts over the
+ * gauges still drives. That holds in both layouts and it is load-bearing: in
+ * the rail layout .sm-ah covers the WHOLE window, and it is only harmless
+ * because it is transparent to pointers all the way down.
  * ======================================================================== */
 .sm-ah {
   position: absolute;
@@ -205,6 +220,13 @@
   margin-top: 5px;
   font-variant-numeric: tabular-nums;
 }
+/* THE SEPARATORS ARE CSS, NOT STRING CONCATENATION. advhud.js writes the three
+   halves of the sub line into three spans so the rail can drop the last two;
+   the interpuncts belong to the spans that follow, and :not(:empty) means a
+   dropped or zeroed span never leaves an orphaned dot behind it. */
+.sm-ah-sub-burn:not(:empty)::before,
+.sm-ah-sub-left:not(:empty)::before { content: ' · '; color: var(--sm-dimmer); }
+.sm-ah-sub-k { color: var(--sm-dimmer); }
 
 /* --- row 1: depth, the company balance, and the two conditional gauges -- */
 .sm-ah-strip {
@@ -340,6 +362,12 @@
 }
 .sm-ah-cargo.sm-ah-full { border-color: rgba(102, 226, 255, 0.6); }
 .sm-ah-cargo.sm-ah-full .sm-ah-cargo-val { color: var(--sm-cyan); }
+
+/* The drawer wrapper is layout-NEUTRAL here: a plain block around two blocks
+   that already carry their own margins, so the wide stack looks exactly as it
+   did before it existed. §3b is where it becomes a drawer. The handle beside it
+   has nothing to unfold on a wide screen, so it is not rendered at all. */
+.sm-ah-holdbtn { display: none; }
 
 .sm-ah-manifest {
   display: flex;
@@ -553,6 +581,360 @@
   background: linear-gradient(180deg, #ff9b8c, var(--sm-red) 55%, #b3271a);
   border-color: rgba(255, 200, 190, 0.6);
 }
+
+/* ===========================================================================
+ * 3b. THE RAIL LAYOUT — COMPACT AND PORTRAIT
+ * ---------------------------------------------------------------------------
+ * THE ARGUMENT, because this overturns what §3 used to say.
+ *
+ * The old layout was a stack pinned to the top on EVERY viewport, and the
+ * reason given was the thumb: the joystick's origin floats to wherever it
+ * lands, so the bottom of the screen is under the player's own hand. That is
+ * true, and nothing here disputes it.
+ *
+ * What it missed is that -y is the SURFACE. The mine mouth is UP. Getting home
+ * means driving towards the top of the screen, and you do it with the tank at
+ * its lowest, in the dark, deciding second by second whether you will make it.
+ * On a 390x844 phone the stack was 210 px tall and full width — a quarter of
+ * the glass, opaque, over the one part of the screen the player is steering
+ * towards. Shrinking it would not have helped: a smaller panel in the same
+ * place is the same mistake, quieter.
+ *
+ * So: the top belongs to the mine, the bottom belongs to the thumb, and the
+ * instruments go where neither of them is. THE TWO SIDE EDGES. The machine is
+ * ~75 px wide in the middle of a 390 px screen; the outer 48 px on each side is
+ * peripheral rock you never drill and never look at.
+ *
+ *   LEFT RAIL     FUEL — percentage, state word, a tall bar that fills from the
+ *                 BOTTOM like a tank, the reserve mark struck across it, and
+ *                 what the trip home costs underneath. A long thin bar is the
+ *                 RIGHT shape for this gauge: the taller it is, the finer you
+ *                 can read the level against the mark.
+ *   RIGHT RAIL    HOLD — units, capacity, worth and fill, always visible. The
+ *                 manifest is behind the handle at its foot.
+ *   BOTTOM EDGE   one line: DEPTH · FUNDS · HULL · HEAT. Inside #ui-root's
+ *                 safe-area padding (an absolutely positioned child resolves
+ *                 `bottom` against the PADDING box, so the home indicator is
+ *                 already accounted for) and below where a thumb sits on the
+ *                 stick.
+ *   BETWEEN THEM  the scanner contact, just above that line.
+ *   TOP EDGE      the sound and pause plates in the right corner, and nothing
+ *                 else. The shaft is clear from the machine to the daylight.
+ *
+ * NO BACKDROP BLUR ON ANY OF IT. style.css makes the same call for the classic
+ * score strip and the reason is identical: these plates are full-height and
+ * full-width, and blurring them at DPR 3 is real fill rate spent on an effect
+ * nobody can see against dark rock.
+ *
+ * .sm-ah COVERS THE WHOLE WINDOW in this layout, because its children are
+ * pinned to four different edges. That is only safe because the container and
+ * every gauge in it are pointer-events: none — a drag that starts over a rail
+ * still falls through to the stick layer and drives. The three exceptions are
+ * real controls: the two icon plates, the drawer handle, and the manifest rows.
+ * ======================================================================== */
+.sm-adv.sm-compact {
+  --sm-ah-rail:  48px;   /* width of one edge rail                          */
+  --sm-ah-foot:  30px;   /* height of the bottom readout line               */
+  /* Rails clear the icon plates above and the readout line below. */
+  --sm-ah-railtop: calc(var(--sm-top-y) + var(--sm-btn-size) + 10px);
+  --sm-ah-railbot: calc(var(--sm-top-y) + var(--sm-ah-foot) + 8px);
+}
+
+/* The stack stops being a stack: the container becomes the window and every
+   instrument is positioned against an edge from here down. */
+.sm-adv.sm-compact .sm-ah {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: none;
+  display: block;
+  gap: 0;
+}
+
+/* --- the two rails ----------------------------------------------------- */
+.sm-adv.sm-compact .sm-ah-fuel,
+.sm-adv.sm-compact .sm-ah-cargo {
+  position: absolute;
+  top: var(--sm-ah-railtop);
+  bottom: var(--sm-ah-railbot);
+  width: var(--sm-ah-rail);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 2px 7px;
+  border-radius: 5px;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow:
+    inset 0 1px 0 var(--sm-edge-hi),
+    inset 0 -2px 0 var(--sm-edge-lo),
+    0 0 16px rgba(0, 0, 0, 0.5);
+}
+/* Each rail is darkest at the screen edge and fades towards the rock, so the
+   plate reads as a bezel round the window rather than a lid over it. */
+.sm-adv.sm-compact .sm-ah-fuel {
+  left: var(--sm-gutter);
+  background: linear-gradient(90deg, rgba(9, 12, 17, 0.90), rgba(12, 16, 22, 0.62));
+}
+.sm-adv.sm-compact .sm-ah-cargo {
+  right: var(--sm-gutter);
+  background: linear-gradient(270deg, rgba(9, 12, 17, 0.90), rgba(12, 16, 22, 0.62));
+  /* The drawer opens OUT of this plate, so it cannot be clipped by it. The
+     bars keep their own overflow:hidden, so nothing else escapes. */
+  overflow: visible;
+}
+
+/* --- the head of a rail: label, number, state word, stacked ------------- */
+.sm-adv.sm-compact .sm-ah-fuel-head {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+  margin-bottom: 3px;
+}
+.sm-adv.sm-compact .sm-ah-fuel-head .sm-ah-lbl { align-self: center; }
+.sm-adv.sm-compact .sm-ah-lbl {
+  font-size: 7px;
+  letter-spacing: 1.4px;
+  text-indent: 1.4px;
+}
+.sm-adv.sm-compact .sm-ah-fuel-pct {
+  font-size: 16px;
+  letter-spacing: -0.4px;
+  margin-top: 1px;
+}
+/* 'TURN BACK' and 'RESERVE SPENT' are allowed to wrap: two short lines in a
+   48 px column is exactly how a real gauge would letter them. */
+.sm-adv.sm-compact .sm-ah-fuel-note {
+  margin-left: 0;
+  margin-top: 1px;
+  font-size: 8px;
+  letter-spacing: 0.4px;
+  line-height: 1.12;
+  text-align: center;
+}
+/* The hold's worth is money, not a state word, so it keeps its size and goes
+   gold — it is the number the dump decision is actually weighed against. */
+.sm-adv.sm-compact .sm-ah-cargo .sm-ah-fuel-note {
+  font-size: 9.5px;
+  letter-spacing: 0.6px;
+  color: var(--sm-gold);
+}
+.sm-adv.sm-compact .sm-ah-cargo-val {
+  font-size: 15px;
+  line-height: 1.02;
+  text-align: center;
+  margin-top: 1px;
+}
+/* '0 / 48' is inline on a wide screen and two lines here. */
+.sm-adv.sm-compact .sm-ah-cargo-cap {
+  display: block;
+  font-size: 10px;
+  color: var(--sm-dim);
+}
+
+/* --- THE BARS, TURNED ON THEIR SIDE -----------------------------------
+ * Same --sm-ah-fill, same guarded write in advhud.js, no measuring: only the
+ * axis changes. transform-origin moves to the bottom edge and the gradients
+ * are re-authored to run ACROSS the bar rather than along it, because a
+ * gradient on the scaled axis smears — the wide layout's left-to-right ramp
+ * would stretch and squash as the tank drains. Across the width it is a
+ * lengthwise sheen that scaleY cannot touch. */
+.sm-adv.sm-compact .sm-ah-bar {
+  width: 15px;
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 54px;
+  margin: 3px 0 4px;
+  border-radius: 4px;
+}
+.sm-adv.sm-compact .sm-ah-bar-fill {
+  transform-origin: center bottom;
+  transform: scaleY(var(--sm-ah-fill, 0));
+  background: linear-gradient(90deg, #c8830c, #ffe08a 48%, #d4900f);
+}
+.sm-adv.sm-compact .sm-ah-bar-cargo .sm-ah-bar-fill {
+  background: linear-gradient(90deg, #1b86b4, #c4f6ff 48%, #2295c6);
+}
+.sm-adv.sm-compact .sm-ah-fuel.sm-ah-warn .sm-ah-bar-fill {
+  background: linear-gradient(90deg, #b85406, #ffd08a 48%, #c25c07);
+}
+.sm-adv.sm-compact .sm-ah-fuel.sm-ah-crit .sm-ah-bar-fill {
+  background: linear-gradient(90deg, #a8281a, #ffb3a8 48%, #b62c1d);
+}
+/* THE RESERVE MARK, struck across the bar at the height the trip home costs.
+   `bottom` and not `margin-bottom`: a percentage MARGIN resolves against the
+   containing block's WIDTH, which on a 15 px bar would put the mark 7 px up and
+   silently lie about the one thing this instrument exists to say. */
+.sm-adv.sm-compact .sm-ah-bar-mark {
+  top: auto;
+  left: -3px;
+  right: -3px;
+  width: auto;
+  height: 2px;
+  margin-left: 0;
+  bottom: calc(var(--sm-ah-mark, 0) * 100%);
+  transition: bottom 0.2s ease, opacity 0.2s ease;
+}
+
+/* --- what the trip home costs, under the bar --------------------------- */
+.sm-adv.sm-compact .sm-ah-sub {
+  margin-top: 2px;
+  font-size: 8px;
+  letter-spacing: 0.2px;
+  line-height: 1.15;
+  text-align: center;
+}
+.sm-adv.sm-compact .sm-ah-sub-k { display: block; }
+/* BURN and SECONDS LEFT are the two halves that do not fit and do not have to:
+   the reserve mark on the bar already answers "can I get home", which is what
+   they were arithmetic for. They come back the moment there is room. */
+.sm-adv.sm-compact .sm-ah-sub-burn,
+.sm-adv.sm-compact .sm-ah-sub-left { display: none; }
+
+/* --- THE DRAWER HANDLE, at the foot of the hold rail -------------------
+ * At the FOOT deliberately, not the head. Dumping spoil is done under pressure
+ * with one hand, so the handle has to be inside thumb reach; the head of the
+ * rail is a stretch away on an 844 px phone. It is the only pointer target in
+ * the lower half of the screen and it is 48 px wide at the extreme edge, where
+ * a driving thumb does not sit — a thumb on the stick needs travel room on all
+ * four sides of itself. */
+.sm-adv.sm-compact .sm-ah-holdbtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  min-height: 27px;
+  margin: 3px 0 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(126, 140, 158, 0.34);
+  border-radius: 3px;
+  background: rgba(8, 11, 15, 0.78);
+  color: var(--sm-cyan);
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.sm-adv.sm-compact .sm-ah-holdico { display: block; width: 13px; height: 13px; }
+.sm-adv.sm-compact .sm-ah-holdico svg { display: block; width: 100%; height: 100%; }
+.sm-adv.sm-compact .sm-ah-holdbtn-on {
+  border-color: var(--sm-cyan);
+  background: rgba(18, 62, 82, 0.86);
+  color: var(--sm-cyan-hot);
+}
+/* Nothing aboard: still tappable (it says so when you open it), just not
+   asking for a tap. */
+.sm-adv.sm-compact .sm-ah-holdbtn-empty { color: var(--sm-dimmer); border-color: rgba(126, 140, 158, 0.2); }
+/* A full hold is the moment the manifest matters, so the handle says so. */
+.sm-adv.sm-compact .sm-ah-cargo.sm-ah-full .sm-ah-holdbtn {
+  border-color: rgba(102, 226, 255, 0.7);
+  color: var(--sm-cyan-hot);
+}
+
+/* --- THE DRAWER ITSELF, opening inwards over the rock ------------------ */
+.sm-adv.sm-compact .sm-ah-drawer {
+  display: none;
+  position: absolute;
+  right: calc(100% + 7px);
+  bottom: 0;
+  width: min(250px, 58vw);
+  padding: 7px 8px 8px;
+  border: 1px solid var(--sm-border);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(17, 21, 27, 0.96), rgba(8, 10, 14, 0.97));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
+}
+.sm-adv.sm-compact .sm-ah-drawer.sm-ah-drawer-on { display: block; }
+.sm-adv.sm-compact .sm-ah-manifest { margin-top: 0; }
+/* A 19 px row is a mouse target. Tapping one twice is how a player dumps the
+   coal, so in the drawer it becomes a finger target. */
+.sm-adv.sm-compact .sm-ah-mrow { height: 30px; gap: 8px; padding: 0 8px; }
+.sm-adv.sm-compact .sm-ah-mname { font-size: 9.5px; }
+.sm-adv.sm-compact .sm-ah-munits { font-size: 10.5px; }
+.sm-adv.sm-compact .sm-ah-mval { font-size: 10.5px; min-width: 52px; }
+/* An empty hold has to SAY it is empty, or an opened drawer with nothing in it
+   reads as a bug. */
+.sm-adv.sm-compact .sm-ah-manifest.sm-ah-manifest-empty::before {
+  content: 'HOLD EMPTY';
+  display: block;
+  padding: 7px 2px 6px;
+  text-align: center;
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-dimmer);
+}
+
+/* --- THE BOTTOM READOUT LINE ------------------------------------------
+ * DEPTH, the balance, the hull and — once it means anything — the heat. Four
+ * label/value pairs turned on their side, because a stacked cell needs 30 px of
+ * height and this line has 30 px in total. */
+.sm-adv.sm-compact .sm-ah-strip {
+  position: absolute;
+  top: auto;
+  bottom: var(--sm-top-y);
+  left: var(--sm-gutter);
+  right: var(--sm-gutter);
+  height: var(--sm-ah-foot);
+  min-height: 0;
+  gap: 10px;
+  padding: 0 10px;
+  justify-content: space-between;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* The hazard stripe belongs on the edge that faces the play area. */
+.sm-adv.sm-compact .sm-ah-strip .sm-stripe { top: auto; bottom: 0; }
+.sm-adv.sm-compact .sm-ah-cell { align-items: center; gap: 5px; }
+/* display is set per CELL, never on .sm-ah-cell: HEAT and INTEGRITY switch
+   themselves on with .sm-ah-live, and a blanket display on the shared class
+   would outrank the `display:none` that keeps a dead HEAT gauge off the
+   screen. */
+.sm-adv.sm-compact .sm-ah-depth,
+.sm-adv.sm-compact .sm-ah-funds { display: flex; }
+.sm-adv.sm-compact .sm-ah-heat.sm-ah-live,
+.sm-adv.sm-compact .sm-ah-integ.sm-ah-live { display: flex; }
+.sm-adv.sm-compact .sm-ah-strip .sm-ah-lbl {
+  font-size: 7px;
+  letter-spacing: 1.2px;
+  text-indent: 0;
+  flex: 0 0 auto;
+}
+.sm-adv.sm-compact .sm-ah-val { font-size: 13px; }
+.sm-adv.sm-compact .sm-ah-mini { width: 22px; margin-top: 0; flex: 0 0 auto; }
+
+/* --- the scanner contact, between the rails ---------------------------- */
+.sm-adv.sm-compact .sm-ah-scan {
+  position: absolute;
+  bottom: calc(var(--sm-top-y) + var(--sm-ah-foot) + 6px);
+  left: calc(var(--sm-gutter) + var(--sm-ah-rail) + 8px);
+  right: calc(var(--sm-gutter) + var(--sm-ah-rail) + 8px);
+  padding: 4px 8px;
+}
+
+/* --- the alert banner --------------------------------------------------
+ * It used to hang off the bottom of the stack (top: 100%), which in this layout
+ * is off the bottom of the screen. It moves to just above the scanner line: a
+ * banner is loud, short and gone, and putting it back at the top would be
+ * putting back the thing this whole section exists to remove. */
+.sm-adv.sm-compact .sm-ah-alert {
+  top: auto;
+  bottom: calc(var(--sm-top-y) + var(--sm-ah-foot) + 38px);
+  margin-top: 0;
+  min-width: 0;
+  width: min(320px, calc(100vw - 2 * var(--sm-gutter)));
+  padding: 7px 12px 8px;
+}
+.sm-adv.sm-compact .sm-ah-alert-title { font-size: 13px; letter-spacing: 2.2px; text-indent: 2.2px; }
+.sm-adv.sm-compact .sm-ah-alert-sub { font-size: 8.5px; letter-spacing: 1.1px; }
 
 /* ===========================================================================
  * 4. THE META SCREENS
