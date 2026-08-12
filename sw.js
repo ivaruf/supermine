@@ -46,7 +46,11 @@
 //         streaming; cargo doubles per tier; starter tank nerfed; tracks now
 //         gate the engine; redesigned cargo + drill visuals; slower drilling
 //         with a fast travel gear
-const VERSION = 'v1.6.2';
+// v1.6.3  Scanner draws labelled arrows out of the machine, ranked by what the
+//         ore is WORTH rather than by signal strength; mobile HUD moved off the
+//         top of the screen onto side rails so the shaft and the mine mouth are
+//         visible while climbing out.
+const VERSION = 'v1.6.3';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [
