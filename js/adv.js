@@ -1022,6 +1022,25 @@ SM.adv = (function () {
   /** LIVE array [{matIndex, matId, units, value}], richest last. REUSED. */
   function getManifest() { return manifest; }
 
+  /**
+   * What ONE COLLECTED FRAGMENT of this material is worth, in dollars — 0 for
+   * spoil nobody buys.
+   *
+   * Exists for js/effects.js, whose value popups were accumulating the CLASSIC
+   * value baked into each particle at spawn. That has two problems underground:
+   * dirt and stone popped a score they cannot earn, and ore popped a number that
+   * did not match the price the hold and the extraction screen quote. Both are
+   * answered by asking the run's own economy instead.
+   *
+   * O(1), no allocation: this is called from the `resource:collected` handler,
+   * which is one of the two hottest events in the engine.
+   */
+  function fragValue(mi) {
+    if (!unitPrice || !fragUnits) return 0;
+    if (!(mi >= 0) || mi >= matCount) return 0;
+    return unitPrice[mi] * fragUnits[mi];
+  }
+
   function getHeat() { return heat; }
   function getHeatPct() { return heatCap > 0 ? heat / heatCap : 0; }
   function getIntegrity() { return hull / HULL_POINTS; }
@@ -1462,6 +1481,7 @@ SM.adv = (function () {
     getCargoCap: getCargoCap,
     getCargoPct: getCargoPct,
     getManifest: getManifest,
+    fragValue: fragValue,
     getHeat: getHeat,
     getHeatPct: getHeatPct,
     getIntegrity: getIntegrity,

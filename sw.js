@@ -71,7 +71,11 @@
 // v1.6.9  Stylized app icon: the rig reduced to flat geometry with thick
 //         outlines and a four-colour palette, instead of v1.6.8's literal render
 //         from the in-game vehicle renderer.
-const VERSION = 'v1.6.9';
+// v1.6.10 Value popups underground now come from the RUN's economy, not the
+//         classic value baked into each particle: spoil nobody buys pops nothing
+//         at all (it was ~97% of the floaters), and ore pops the same price the
+//         hold and the extraction screen quote.
+const VERSION = 'v1.6.10';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

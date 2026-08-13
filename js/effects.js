@@ -705,10 +705,29 @@ SM.effects = (function () {
     var m = p.matIndex;
     if (m >= matCount) m = 0;
 
+    /* THE FLOATING SCORE, AND WHOSE MONEY IT IS.
+     *
+     * `p.value` is the CLASSIC value baked into the particle at spawn, which is
+     * the right number in a time attack and the wrong one underground, twice
+     * over: dirt, clay, stone and granite popped a score the adventure economy
+     * will not pay for — spoil goes out the back of the hopper and is worth
+     * nothing — and the ore that DOES sell popped a figure that disagreed with
+     * the price quoted in the hold and on the extraction screen.
+     *
+     * So in adventure the run's own economy is asked instead, and a material
+     * nobody buys is dropped out of the combo entirely: no bucket, no number, no
+     * popup. The visual feedback for spoil is the debris and the dust, which is
+     * exactly what breaking worthless rock should look like.
+     */
     var b = matBucket[m];
+    var gain = p.value * valueMult;
+    if (SM.adv && SM.adv.isInMine && SM.adv.isInMine()) {
+      gain = (SM.adv.fragValue ? SM.adv.fragValue(m) : 0);
+      if (!(gain > 0)) b = -1;          // spoil: it never earns, so it never pops
+    }
     if (b >= 0) {
       if (cbCount[b] === 0) { cbHold[b] = 0; cbOpen++; }
-      cbValue[b] += p.value * valueMult;
+      cbValue[b] += gain;
       cbCount[b]++;
       cbTimer[b] = COMBO_WINDOW;
       comboX = p.x; comboY = p.y;
