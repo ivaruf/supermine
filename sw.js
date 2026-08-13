@@ -68,7 +68,10 @@
 //         speaks only through its world arrows, no banners and no HUD line;
 //         warnings moved into the gap between the machine and the hold; new app
 //         icon drawn from the real machine renderer.
-const VERSION = 'v1.6.8';
+// v1.6.9  Stylized app icon: the rig reduced to flat geometry with thick
+//         outlines and a four-colour palette, instead of v1.6.8's literal render
+//         from the in-game vehicle renderer.
+const VERSION = 'v1.6.9';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

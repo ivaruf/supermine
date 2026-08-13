@@ -98,7 +98,7 @@ SM.ui = (function () {
   /* The build stamp shown on the menu. It lives HERE rather than in
    * config.js because config.js is frozen, and ui.js is the only module that
    * ever displays it. Bump it by hand when the game meaningfully changes. */
-  var GAME_VERSION    = 'v1.6.8';
+  var GAME_VERSION    = 'v1.6.9';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
