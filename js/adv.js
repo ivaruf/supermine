@@ -91,6 +91,44 @@
  *   adv:damage    {integrity, source}
  *   adv:sold      {gross, cash, day}          <- ADDITION: the results screen's
  *                                                "money has actually moved" beat
+ *   lift:bought   {i, price, mineId}          <- a level was bought
+ *   lift:ride     {from, to}                  <- the cage moved (to 0 = surface,
+ *                                                which is an extraction)
+ *
+ * ---------------------------------------------------------------------------
+ * THE LIFT — LEVELS, STATIONS AND WHAT "DEPTH" NOW MEANS
+ *
+ * The mine entrance is a LIFT and the shaft is a vertical column at the mouth's
+ * x. A company buys STATIONS down that column and rides between them for free:
+ * the money was spent when the level was bought, and charging fuel for a cage
+ * the player paid to install would make owning it feel like a tax.
+ *
+ *   LEVEL 0 IS THE SURFACE and comes with the mining rights. Boarding it and
+ *   choosing SURFACE is an extraction, identical to reaching the mouth today —
+ *   and reaching the mouth still extracts on its own, because that IS boarding
+ *   the surface station.
+ *
+ *   A LEVEL SNAPS TO A LAYER BOUNDARY (SM.mines.levelsOf), so buying one buys
+ *   access to a stratum and the geology is the price list. Deeper levels cost
+ *   more, and you may only ever buy the next one down — from the map, from the
+ *   prep screen, or from the bottom of the shaft while a run is live, because
+ *   js/advterrain.js re-cuts the shaft on `lift:bought`.
+ *
+ *   A STATION CAGE is a circle of ADV.EXIT_RADIUS around (mouthX, yOfDepth), and
+ *   getBoardable() answers which one the machine is standing in. The SURFACE is
+ *   ARMED by the old rule — the machine must have LEFT it since arriving, or
+ *   every descent would end on the frame it began — because the surface is the
+ *   one station that acts on contact. Deeper cages need no such guard; see the
+ *   note on `stArmed`, which is where the measurement lives.
+ *
+ *   STRANDING IS UNCHANGED. A dry tank is not rescued by a lift you cannot drive
+ *   to, which is the whole reason the reserve gauge still means something.
+ *
+ *   getDistanceToExit() IS NOW THE DISTANCE TO THE NEAREST OWNED STATION, not to
+ *   the surface — because that is the number every fuel decision is made on, and
+ *   therefore the number getReserveNeeded() and the HUD's TURN BACK warning must
+ *   be built from. getDepthM() keeps meaning ABSOLUTE depth: it is what the
+ *   lift's own display reads.
  * ========================================================================== */
 
 var SM = SM || {};
@@ -188,6 +226,10 @@ SM.adv = (function () {
   var day = 1;
   var hull = HULL_POINTS;              // integrity in points, survives a run
   var rightsHeld = Object.create(null); // mineId -> true. Mirrored into save.js.
+  /* mineId -> HOW MANY levels are owned (1..n, in order). A count, not a set:
+   * js/save.js's header argues the case, and a set would let a lift have a hole
+   * in it that no purchase path can produce. */
+  var levelsHeld = Object.create(null);
   var companyName = '';
 
   /* --- selection / loadout -------------------------------------------- */
@@ -204,7 +246,6 @@ SM.adv = (function () {
   var fuel = 0, fuelCap = 1;
   var heat = 0, heatCap = FALLBACK_HEAT_CAP;
   var cargo = 0, cargoCap = 1;
-  var exitArmed = false;               // must LEAVE the mouth before it counts
   var dryTimer = -1;                   // >= 0 once the tank has run dry
   var warnIndex = 0;                   // next FUEL_WARN threshold to fire
   var cargoFullSent = false;
@@ -232,9 +273,39 @@ SM.adv = (function () {
    * ------------------------------------------------------------------ */
   var piles = [];
 
+  /* --- the lift -------------------------------------------------------
+   * `levels` is the LIVE station table getLevels() hands out: entry 0 is the
+   * surface, entry k is level k. Entry OBJECTS are reused too, because the HUD
+   * and the lift panel hold references across frames and getDistanceToExit()
+   * walks the array every step.
+   *
+   * `stArmed[k]` is the mouth's old arming rule — 0 until the machine has been
+   * further than EXIT_RADIUS * 1.6 away — and it applies to STATION 0 ONLY.
+   * stArmed[0] is literally the old `exitArmed`: auto-extraction at the mouth is
+   * now just "station 0 is boardable".
+   *
+   * DEEPER STATIONS ARE ARMED BY DEFINITION, and this is a deliberate departure
+   * from the letter of the seam contract (which asked for the mouth's rule at
+   * every station). MEASURED, with the rule applied everywhere: a run that
+   * descended to level 2, drilled 200 units, filled the hold and drove back into
+   * the cage could not board it — the machine had never been 320 units away, so
+   * the station it was standing in was still "unarmed", and the only way out was
+   * to drive 320 units into the rock and come back. The rule exists for exactly
+   * one reason: station 0 EXTRACTS ON CONTACT, so without it every descent would
+   * end on the frame it began. A deep station does nothing on contact — riding is
+   * an explicit, free, reversible rideTo() — so arming buys nothing there and
+   * costs that trap. Standing in a cage you paid for means you can use it.
+   * ------------------------------------------------------------------ */
+  var levels = [];
+  var stArmed = [];
+  var lvMineId = null;                 // which mine `levels` describes
+  var lvOwned = -1;                    // ...and how many levels were owned then
+  var lvMouthX = 0;                    // ...and where advterrain put the shaft
+  var runLevel = 0;                    // station this run began at / last rode to
+
   /* --- reused event payloads (never stashed) -------------------------- */
   var evState = { state: '', prev: '' };
-  var evEntered = { mineId: '', depth: 0 };
+  var evEntered = { mineId: '', depth: 0, level: 0 };
   var evExtracted = { gross: 0, cargo: 0, depthM: 0, reason: '' };
   var evStranded = { reason: '', depthM: 0, lost: 0 };
   var evCash = { cash: 0, delta: 0, reason: '' };
@@ -246,6 +317,11 @@ SM.adv = (function () {
   var evHeat = { pct: 0 };
   var evDamage = { integrity: 1, source: '' };
   var evSold = { gross: 0, cash: 0, day: 1 };
+  /* The lift events fire a handful of times a run, so allocation would be fine
+   * here — they are reused anyway, because a codebase with two conventions for
+   * event payloads has one convention nobody trusts. */
+  var evLiftBought = { i: 0, price: 0, mineId: '' };
+  var evLiftRide = { from: 0, to: 0 };
 
   var heatPctSent = -1;                // 1% granularity gate on adv:heat
   var dmgPctSent = -1;                 // ...and on adv:damage
@@ -326,6 +402,264 @@ SM.adv = (function () {
 
   function markDirty() {
     if (SM.save && SM.save.markDirty) SM.save.markDirty();
+  }
+
+  /* =====================================================================
+   * THE LIFT
+   * ---------------------------------------------------------------------
+   * Geometry first: the shaft is a vertical column at the mine mouth's x, and a
+   * station cage is a circle of ADV.EXIT_RADIUS around (mouthX, yOfDepth(m)).
+   * Both readings go through js/advterrain.js when it has them and fall back to
+   * the identities they are defined by, so the ladder works in a build where
+   * that module is still a stub — and the fallbacks are not arbitrary: mouthX 0
+   * is the mine's centre line, and yOfDepth is the depth equation from
+   * ADVENTURE.md §2, which advterrain implements verbatim.
+   * ================================================================== */
+
+  function mouthX() {
+    if (SM.advterrain && SM.advterrain.getMouthX) {
+      var v = SM.advterrain.getMouthX();
+      if (typeof v === 'number' && isFinite(v)) return v;
+    }
+    return 0;
+  }
+
+  function yOfDepth(m) {
+    if (SM.advterrain && SM.advterrain.yOfDepth) {
+      var v = SM.advterrain.yOfDepth(m);
+      if (typeof v === 'number' && isFinite(v)) return v;
+    }
+    return A.MINE_CEILING_Y + (m > 0 ? m : 0) / A.METERS_PER_UNIT;
+  }
+
+  /** The purchasable-level table for a mine: SURFACE EXCLUDED. Never null. */
+  function levelTable(def) {
+    if (def && SM.mines && SM.mines.levelsOf) {
+      var t = SM.mines.levelsOf(def);
+      if (t && t.length) return t;
+    }
+    return null;
+  }
+
+  /**
+   * How many levels this company owns in a mine, clamped to what the catalogue
+   * actually sells. Read through from js/save.js once and then mirrored, exactly
+   * as `rightsHeld` is — the record is authoritative, but a build without a save
+   * module still has to be playable.
+   */
+  function ownedLevels(id) {
+    if (!id) return 0;
+    var n = levelsHeld[id];
+    if (typeof n !== 'number') {
+      n = 0;
+      if (SM.save && SM.save.levelsOwned) {
+        var v = SM.save.levelsOwned(id);
+        if (typeof v === 'number' && v > 0) n = Math.floor(v);
+      }
+      levelsHeld[id] = n;
+    }
+    var t = levelTable(resolveMine(id));
+    var max = t ? t.length : 0;
+    return n > max ? max : n;
+  }
+
+  function setOwnedLevels(id, n) {
+    levelsHeld[id] = n;
+    if (SM.save && SM.save.setLevelsOwned) SM.save.setLevelsOwned(id, n);
+    else {
+      // No dedicated accessor (an older save.js): write the documented field.
+      var ms = mineRecord(id);
+      if (ms) { ms.levels = n; markDirty(); }
+    }
+  }
+
+  /**
+   * Rebuild `levels` if the mine in context, the levels owned in it, or the
+   * shaft's x has changed since the last call. Everything else about a station
+   * is derived, so those three are the whole cache key.
+   *
+   * HOT-ADJACENT: getDistanceToExit() calls this every step through
+   * getReserveNeeded(), so the steady-state path is three comparisons and a
+   * return. The rebuild reuses the array AND the entry objects — a UI that
+   * stashed `getLevels()[2]` keeps a live reference for the whole session.
+   */
+  function ensureLevels() {
+    var def = getMine();
+    var id = def ? def.id : null;
+    var owned = id ? ownedLevels(id) : 0;
+    var mx = mouthX();
+    if (id === lvMineId && owned === lvOwned && mx === lvMouthX) return levels;
+
+    lvMineId = id;
+    lvOwned = owned;
+    lvMouthX = mx;
+
+    var tbl = id ? levelTable(def) : null;
+    var want = id ? 1 + (tbl ? tbl.length : 0) : 0;
+    while (levels.length > want) { levels.pop(); stArmed.pop(); }
+    while (levels.length < want) {
+      levels.push({ i: 0, name: '', depthM: 0, y: 0, price: 0, owned: false });
+      stArmed.push(0);
+    }
+    for (var k = 0; k < want; k++) {
+      var e = levels[k];
+      e.i = k;
+      // Armed by definition below the surface — see the note on stArmed.
+      if (k > 0) stArmed[k] = 1;
+      if (k === 0) {
+        /* The surface station is not in the catalogue's table and never will be:
+         * it is the mine mouth, it costs nothing, and it comes with the rights. */
+        e.name = 'SURFACE';
+        e.depthM = 0;
+        e.price = 0;
+        e.owned = true;
+      } else {
+        var L = tbl[k - 1];
+        e.name = L.name;
+        e.depthM = L.depthM;
+        e.price = L.price;
+        e.owned = k <= owned;
+      }
+      e.y = yOfDepth(e.depthM);
+    }
+    return levels;
+  }
+
+  /**
+   * LIVE array [{i, name, depthM, y, price, owned}] for the mine in context.
+   * Empty when there is no mine to talk about. i === 0 is the surface.
+   */
+  function getLevels() { return ensureLevels(); }
+
+  /** The station this run started from, or — between runs — the one it will. */
+  function getLevel() { return runLevel; }
+
+  /** World x of the lift shaft. vehicle.js parks the machine on it. */
+  function getStationX() { ensureLevels(); return lvMouthX; }
+  /** World y of the CAGE CENTRE of the station the run is based at. */
+  function getStationY() {
+    ensureLevels();
+    var e = levels[runLevel];
+    return e ? e.y : yOfDepth(0);
+  }
+
+  /**
+   * Buy the next level down in the mine in context. -> true if money moved.
+   *
+   * Refused unless `i` is exactly the next unowned level, which is what makes the
+   * stored count (rather than a set) legitimate.
+   *
+   * ALLOWED DURING A RUN, deliberately. This was refused at first, on the grounds
+   * that js/advterrain.js cuts the shaft and the station rooms when the mine
+   * opens — but it does not: it re-reads this table on `lift:bought` and on a
+   * poll, and re-runs the fill for the resident window, so the shaft genuinely
+   * opens on the frame the player pays. Which is the better game by a mile: you
+   * are standing at the bottom of your own lift looking at the sealed
+   * continuation the world draws below it, and the answer is money.
+   */
+  function buyLevel(i) {
+    // ...but not from outside the campaign. close() leaves `mineDef` set, and a
+    // verb that moves money while no company is on screen is a way to spend a
+    // ledger that is no longer being displayed.
+    if (state === 'off') return false;
+    var def = getMine();
+    if (!def || !ownsRights(def.id)) return false;
+    ensureLevels();
+    if (!(i > 0) || i >= levels.length) return false;
+    if (i !== ownedLevels(def.id) + 1) return false;
+    var price = levels[i].price;
+    if (!canAfford(price)) return false;
+
+    moveCash(-price, 'level');
+    setOwnedLevels(def.id, i);
+    ensureLevels();                 // the cache key just changed: refresh `owned`
+    /* BUYING DEPTH IS ASKING TO GO THERE. The prep screen reads getLevel() to
+     * say where the cage is taking you, and a player who has just paid for level
+     * 2 and is then told they are descending to level 1 has been ignored.
+     *
+     * NOT DURING A RUN, though: getLevel() means "the station this run is based
+     * at" while one is live, and the machine is still standing wherever it was.
+     * The cage has to be RIDDEN to, and rideTo() is what moves this. */
+    if (state !== 'mine') runLevel = i;
+
+    evLiftBought.i = i;
+    evLiftBought.price = price;
+    evLiftBought.mineId = def.id;
+    SM.events.emit('lift:bought', evLiftBought);
+    flushSave();
+    return true;
+  }
+
+  /**
+   * The station whose cage the machine is standing in AND which is armed, or -1.
+   * Nearest wins if two ever overlapped; they cannot at ADV.EXIT_RADIUS against
+   * the shallowest layer boundary in the catalogue, but the tie-break costs
+   * nothing and removes a whole class of "which one did it pick" question.
+   */
+  function getBoardable() {
+    if (state !== 'mine' || !SM.vehicle) return -1;
+    ensureLevels();
+    var vx = SM.vehicle.getX(), vy = SM.vehicle.getY();
+    var r2 = A.EXIT_RADIUS * A.EXIT_RADIUS;
+    var best = -1, bestD = 0, dx, dy, d2, k, e;
+    for (k = 0; k < levels.length; k++) {
+      e = levels[k];
+      if (!e.owned || !stArmed[k]) continue;
+      dx = vx - lvMouthX;
+      dy = vy - e.y;
+      d2 = dx * dx + dy * dy;
+      if (d2 > r2) continue;
+      if (best < 0 || d2 < bestD) { best = k; bestD = d2; }
+    }
+    return best;
+  }
+
+  /**
+   * Ride the cage. Free — no fuel, no money, no day.
+   *
+   * Only from a station: the cage is at the shaft, not wherever the machine
+   * happens to be, and "boarding only at stations" is what keeps a level a
+   * place you drove to rather than a menu you opened. Station 0 is the surface,
+   * so riding there IS the extraction — same bank, same results screen, same
+   * hold — which is why it hands straight over to escape().
+   */
+  function rideTo(i) {
+    if (state !== 'mine') return false;
+    var from = getBoardable();
+    if (from < 0) return false;
+    ensureLevels();
+    if (!(i >= 0) || i >= levels.length || !levels[i].owned) return false;
+
+    evLiftRide.from = from;
+    evLiftRide.to = i;
+    SM.events.emit('lift:ride', evLiftRide);
+
+    if (i === 0) return escape();
+
+    runLevel = i;
+    /* The machine, then the camera. vehicle.js reads getStationY() off runLevel,
+     * so the order matters; SM.camera.reset() re-snaps onto the machine (it does
+     * exactly that on a descent) instead of flying 300 m down the shaft, and
+     * js/advterrain.js already treats a window that has jumped clear of what it
+     * holds as a re-entry and regenerates. */
+    if (SM.vehicle && SM.vehicle.parkAtStation) SM.vehicle.parkAtStation();
+    if (SM.camera && SM.camera.reset) SM.camera.reset();
+    return true;
+  }
+
+  /**
+   * Arm the SURFACE station once the machine has driven clear of it. That is the
+   * whole job: every deeper station is armed by definition (see stArmed), and a
+   * run that started at depth arms this one on its first step, 300 m away, which
+   * is exactly right — climbing all the way out must still extract on arrival.
+   */
+  function updateStations() {
+    ensureLevels();
+    if (!SM.vehicle || stArmed[0] || !levels.length) return;
+    var arm = A.EXIT_RADIUS * 1.6;
+    var dx = SM.vehicle.getX() - lvMouthX;
+    var dy = SM.vehicle.getY() - levels[0].y;
+    if (dx * dx + dy * dy > arm * arm) stArmed[0] = 1;
   }
 
   function flushSave() {
@@ -482,6 +816,14 @@ SM.adv = (function () {
   /** A slot is loaded -> adopt its ledger and go to the map. */
   function startCompany() {
     var r = saveRecord();
+    /* THE MIRRORS BELONG TO THE COMPANY, NOT TO THE SESSION. Both of these are
+     * caches of what is in the record, so loading a second slot has to start
+     * from that slot's answer — otherwise slot B inherits slot A's mining rights
+     * and its lift, which is a real bug that `rightsHeld` has always had and
+     * which `levelsHeld` would have copied. Cleared before anything reads them. */
+    rightsHeld = Object.create(null);
+    levelsHeld = Object.create(null);
+    lvMineId = null;                     // ...and so the station table rebuilds
     if (r) {
       cash = typeof r.cash === 'number' ? r.cash : START_CASH;
       day = typeof r.day === 'number' && r.day > 0 ? r.day : 1;
@@ -493,7 +835,11 @@ SM.adv = (function () {
         ? Math.max(0, Math.min(1, r.integrity)) * HULL_POINTS : HULL_POINTS;
       if (r.mines) {
         for (var id in r.mines) {
-          if (r.mines[id] && r.mines[id].owned) rightsHeld[id] = true;
+          if (!r.mines[id]) continue;
+          if (r.mines[id].owned) rightsHeld[id] = true;
+          // `levels` is a count and js/save.js has already clamped it into
+          // range; a record from before the lift simply has no such field.
+          if (r.mines[id].levels > 0) levelsHeld[id] = Math.floor(r.mines[id].levels);
         }
       }
     } else {
@@ -538,6 +884,13 @@ SM.adv = (function () {
      * outright while a run is live, so this can never move the ground out from
      * under an expedition in progress. */
     mineDef = def;
+    /* ...and the lift is now talking about THAT mine. runLevel is set to the
+     * deepest station the company owns, which is both what enterMine() will
+     * default to and what the prep screen should be showing as "descending to"
+     * before the player has touched anything. */
+    lvMineId = null;
+    ensureLevels();
+    runLevel = ownedLevels(def.id);
 
     /* The tank is DELIBERATELY not emptied here. Fuel the player paid for and
      * did not burn is still in the machine — see teardownRun(). Zeroing it on
@@ -560,9 +913,18 @@ SM.adv = (function () {
    * ================================================================== */
 
   /**
-   * Begin a run. `loadout` is {fuel:units} paid for on the prep screen — it is
-   * OPTIONAL: buyFuel() has normally already filled the tank, and the argument
-   * exists so a caller (or a console) can top up in the same breath.
+   * Begin a run.
+   *
+   * `loadout` is OPTIONAL and everything in it has a working default:
+   *   {level: n}    ride the lift straight down to owned station n. DEFAULTS TO
+   *                 THE DEEPEST OWNED STATION, because riding up is free and a
+   *                 player who has paid for depth has no reason to start above
+   *                 it. Clamped to what is owned, so a stale UI cannot descend
+   *                 into a level the company does not have.
+   *   {fuel: units} a top-up bought in the same breath. Historical: the prep
+   *                 screen no longer sells fuel.
+   *   {refuel:false} skip the automatic full tank. restart() is the only caller
+   *                 — see the note there.
    */
   function enterMine(mineId, loadout) {
     if (state === 'mine') return false;
@@ -577,6 +939,35 @@ SM.adv = (function () {
     selectedId = def.id;
     mineDef = def;
 
+    /* --- which station this descent starts from ------------------------ */
+    var owned = ownedLevels(def.id);
+    var want = (loadout && typeof loadout.level === 'number')
+      ? Math.floor(loadout.level) : owned;
+    if (!(want > 0)) want = 0;
+    if (want > owned) want = owned;
+    runLevel = want;
+    // Rebuild the station table for THIS mine before anything reads it —
+    // vehicle.reset() asks for getStationY() a few lines down.
+    lvMineId = null;
+    ensureLevels();
+    /* The mouth has to be earned again on every descent — this is the old
+     * `exitArmed = false`. ensureLevels() has already armed the deep stations. */
+    stArmed[0] = 0;
+
+    /* --- fuel ---------------------------------------------------------
+     * A DESCENT LEAVES WITH A FULL TANK, and the company is charged for what it
+     * takes. Fuel used to be a slider on the prep screen, which made every run
+     * open with the same arithmetic the player had already done once; the
+     * decision that survives is the interesting one (how deep, which level),
+     * not "how many litres". buyFuel() is unchanged and still does the honest
+     * thing when the money is short: it buys what the cash reaches and the run
+     * starts on a part tank. Done HERE rather than in the UI so the flow is
+     * correct even when a caller forgets. */
+    if (!(loadout && loadout.refuel === false)) {
+      var full = rigNum('getFuelCap', 100);
+      if (tank < full) buyFuel(full - tank);
+    }
+
     fuelCap = rigNum('getFuelCap', 100);
     cargoCap = rigNum('getCargoCap', FALLBACK_CARGO_CAP);
     heatCap = rigNum('getHeatCap', FALLBACK_HEAT_CAP);
@@ -587,10 +978,14 @@ SM.adv = (function () {
     tank = 0;
 
     runTime = 0;
-    depthM = 0;
-    maxDepthM = 0;
+    /* Seeded from the STATION, not from zero. update() recomputes this off the
+     * machine on the first step anyway, but a HUD that paints between
+     * setState('mine') and that step would otherwise read 0 m at the bottom of
+     * a 300 m shaft — and the depth readout is the one number in this mode that
+     * is never allowed to lie. */
+    depthM = levels[runLevel] ? levels[runLevel].depthM : 0;
+    maxDepthM = depthM;
     heat = 0;
-    exitArmed = false;
     dryTimer = -1;
     warnIndex = 0;
     cargoFullSent = false;
@@ -636,6 +1031,7 @@ SM.adv = (function () {
 
     evEntered.mineId = def.id;
     evEntered.depth = def.depth || 0;
+    evEntered.level = runLevel;      // ADDITION: which station the cage let us out at
     SM.events.emit('adv:entered', evEntered);
 
     // Chrome comes up AFTER the state event, so an Agent-4 handler that opens
@@ -795,12 +1191,19 @@ SM.adv = (function () {
     if (state !== 'mine' && state !== 'results') return false;
     var id = runMineId;
     var refill = tankPaid;
+    var lvl = runLevel;
     if (state === 'mine') teardownRun();
     clearHold();
     piles.length = 0;
     setState('prep');
     tank = refill;
-    return enterMine(id, null);
+    /* SAME LEVEL, SAME TANK, NO CHARGE. A do-over has to be free, so the
+     * automatic full tank is suppressed: `refuel:false` leaves the tank at
+     * exactly what the run launched with, even when that was a part tank the
+     * company could not afford to fill. And it starts from the station the run
+     * started from rather than the deepest one owned, because R means "that
+     * descent went wrong immediately", not "take me somewhere else". */
+    return enterMine(id, { level: lvl, refuel: false });
   }
 
   /* =====================================================================
@@ -922,14 +1325,16 @@ SM.adv = (function () {
       dryTimer = -1;                    // a dump-and-refuel is not a thing, but
     }                                   // a fuel pile pickup could be one day
 
-    /* --- the mouth ---------------------------------------------------
-     * Auto-extraction, ARMED only once the machine has actually left. Without
-     * the arming step every descent would end on the frame it began.
+    /* --- the lift stations -------------------------------------------
+     * Arm every cage the machine has driven clear of, then auto-extract if it
+     * has driven back into the SURFACE one. Only station 0 does that: a deeper
+     * station is a place you stop, and what happens there is the player's
+     * choice — rideTo() — not the mine's. The arming step is unchanged in
+     * meaning and in constant; without it every descent would end on the frame
+     * it began.
      * ------------------------------------------------------------------ */
-    var dist = getDistanceToExit();
-    if (!exitArmed) {
-      if (dist > A.EXIT_RADIUS * 1.6) exitArmed = true;
-    } else if (dist <= A.EXIT_RADIUS) {
+    updateStations();
+    if (getBoardable() === 0) {
       escape();
       return;
     }
@@ -938,9 +1343,15 @@ SM.adv = (function () {
   /** Inside the world transform, AFTER effects: scanner marks, then darkness. */
   function renderWorld(ctx) {
     if (SM.scanner && SM.scanner.render) SM.scanner.render(ctx);
-    // LAST. The darkness composite has to fall on the terrain, the machine, the
-    // debris AND the scanner overlay, so nothing may draw after it.
+    // The darkness composite falls on the terrain, the machine, the debris AND
+    // the scanner overlay.
     if (SM.effects && SM.effects.renderDarkness) SM.effects.renderDarkness(ctx);
+    /* ...and then the things that are genuinely LIGHTS draw on top of it. The
+     * lift's red level boards live here: drawn under the darkness they were
+     * crushed to near-black at starter lights, which defeated the one job a
+     * level sign has. An LED board is a light source; light sources are exempt
+     * from the dark. */
+    if (SM.advterrain && SM.advterrain.renderLit) SM.advterrain.renderLit(ctx);
   }
 
   /* =====================================================================
@@ -959,12 +1370,61 @@ SM.adv = (function () {
   function getDepthM() { return depthM; }
   function getMaxDepthM() { return maxDepthM; }
 
-  /** World units back to the mine mouth, in a straight line. */
+  /**
+   * World units to the NEAREST OWNED STATION CAGE, in a straight line — the
+   * surface included, because that is a station like any other.
+   *
+   * REDEFINED BY THE LIFT, AND DELIBERATELY THE ONLY PLACE THAT CHANGED. Every
+   * fuel decision is made on "how far is it to somewhere I can leave from", so
+   * getReserveNeeded() and the HUD's TURN BACK warning both inherit the new
+   * meaning by doing nothing at all. For a company that owns no levels this is
+   * bit-for-bit the old measure: station 0 sits at (mouthX, MINE_CEILING_Y).
+   *
+   * Called every step by the reserve estimate, so: no allocation, one sqrt per
+   * owned station, and the table is at most five entries long.
+   */
   function getDistanceToExit() {
     if (!SM.vehicle) return 0;
-    var dx = SM.vehicle.getX();
-    var dy = SM.vehicle.getY() - A.MINE_CEILING_Y;
-    return Math.sqrt(dx * dx + dy * dy);
+    var vx = SM.vehicle.getX(), vy = SM.vehicle.getY();
+    ensureLevels();
+    var best = -1, k, e, dx, dy, d;
+    for (k = 0; k < levels.length; k++) {
+      e = levels[k];
+      if (!e.owned) continue;
+      dx = vx - lvMouthX;
+      dy = vy - e.y;
+      d = Math.sqrt(dx * dx + dy * dy);
+      if (best < 0 || d < best) best = d;
+    }
+    /* No mine in context at all — a console call, or a stub catalogue. Answer
+     * the absolute measure rather than 0: a reserve gauge reading "you are
+     * already home" is the one wrong answer that gets a machine stranded. */
+    if (best < 0) {
+      dx = vx;
+      dy = vy - A.MINE_CEILING_Y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+    return best;
+  }
+
+  /** The same distance in METRES, for gauges. */
+  function getDistanceToExitM() { return getDistanceToExit() * A.METERS_PER_UNIT; }
+
+  /** Index of the nearest owned station — the one you would actually run for. */
+  function getExitLevel() {
+    if (!SM.vehicle) return 0;
+    var vx = SM.vehicle.getX(), vy = SM.vehicle.getY();
+    ensureLevels();
+    var best = 0, bestD = -1, k, e, dx, dy, d2;
+    for (k = 0; k < levels.length; k++) {
+      e = levels[k];
+      if (!e.owned) continue;
+      dx = vx - lvMouthX;
+      dy = vy - e.y;
+      d2 = dx * dx + dy * dy;
+      if (bestD < 0 || d2 < bestD) { bestD = d2; best = k; }
+    }
+    return best;
   }
 
   function getFuel() { return fuel; }
@@ -1517,6 +1977,37 @@ SM.adv = (function () {
     getCompany: getCompany,
     isDry: isDry,
     ownsRights: ownsRights,
-    getFirstMineId: firstMineId
+    getFirstMineId: firstMineId,
+
+    /* --- THE LIFT ------------------------------------------------------
+     * getLevels()     LIVE [{i, name, depthM, y, price, owned}] for the mine in
+     *                 context; i 0 is the surface. Empty with no mine in context.
+     * getLevel()      the station this run started from / last rode to
+     * buyLevel(i)     buy the NEXT unowned level. -> bool. Emits lift:bought.
+     *                 Legal from the map, the prep screen AND from inside the
+     *                 mine: js/advterrain.js re-cuts the shaft on that event, so
+     *                 the way down opens in the frame the money moves. It does
+     *                 not MOVE the machine — ride the cage to the new station.
+     * rideTo(i)       ride the cage. Free. Only while getBoardable() >= 0.
+     *                 i === 0 is the surface, which is an extraction.
+     * getBoardable()  station index the machine is standing in AND has left
+     *                 since arriving, else -1
+     * getStationX/Y() cage centre of the station the run is based at — js/
+     *                 vehicle.js parks the machine on it
+     * getDistanceToExitM()  getDistanceToExit() in metres, for gauges
+     * getExitLevel()  index of the NEAREST owned station: the one you would run
+     *                 for, which is the one the depth gauge is measuring from
+     * ownedLevels(id) how many levels this company holds in a mine
+     */
+    getLevels: getLevels,
+    getLevel: getLevel,
+    buyLevel: buyLevel,
+    rideTo: rideTo,
+    getBoardable: getBoardable,
+    getStationX: getStationX,
+    getStationY: getStationY,
+    getDistanceToExitM: getDistanceToExitM,
+    getExitLevel: getExitLevel,
+    ownedLevels: ownedLevels
   };
 })();

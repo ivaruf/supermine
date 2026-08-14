@@ -150,7 +150,13 @@ SM.advui = (function () {
   var selMine = null;        // mine id shown on the map card
   var selPart = 'drill';     // hotspot shown in the workshop
   var partTags = {};
-  var fuelUnits = 0;         // slider value on the prep screen
+  /* WHICH LIFT STATION THE DESCENT STARTS AT. -1 means "no choice made yet",
+   * which paintPrepLift() resolves to the deepest station the company owns —
+   * the one the player almost always wants, because it is the one they paid to
+   * stop walking back to. It is reset whenever the mine changes. */
+  var prepLevel = -1;
+  var prepLevelMine = '';    // the mine prepLevel was chosen for
+  var prepLevelOwned = -1;   // ...and how many levels were held at the time
   var countRaf = 0;
   var syncTimer = 0;
   var nameEditing = -1;
@@ -284,6 +290,87 @@ SM.advui = (function () {
       if (s) return s;
     }
     return null;
+  }
+
+  /* =====================================================================
+   * THE LIFT — READING THE STATION LIST ACROSS THE SEAM
+   * ---------------------------------------------------------------------
+   * SM.adv.getLevels() answers with the LIVE station table for the mine it has
+   * IN CONTEXT: [{i, name, depthM, y, price, owned}], i = 0 being the surface,
+   * always owned and always free. Its entry objects are reused and mutated in
+   * place, so a picker built off it cannot show a stale price — which is why it
+   * wins whenever it is about the right mine.
+   *
+   * The MAP CARD, though, asks about every pin on the chart, and only one of them
+   * is ever in context. Two other exports cover the rest between them:
+   * SM.mines.levelsOf(id) prices the levels of ANY mine (it is the catalogue's
+   * own price list, excluding the surface) and SM.adv.ownedLevels(id) says how
+   * many of them this company has bought. Assembling the same shape from those
+   * two is honest — it is the same arithmetic adv.js does — and it means the
+   * card can talk about a mine the player has never opened.
+   * ================================================================== */
+  function liftLevels(mineId) {
+    var id = mineId || currentMineId();
+    if (!id) return null;
+
+    if (SM.adv && SM.adv.getLevels && id === currentMineId()) {
+      var live = SM.adv.getLevels();
+      if (live && typeof live.length === 'number' && live.length) return live;
+    }
+
+    var tbl = (SM.mines && SM.mines.levelsOf) ? SM.mines.levelsOf(id) : null;
+    if (!tbl || !tbl.length) return null;
+    var owned = (SM.adv && SM.adv.ownedLevels) ? num(SM.adv.ownedLevels(id), 0) : 0;
+    // Freshly built rather than pooled: these screens are static between clicks
+    // and a shared scratch array aliased between two painters is a bug waiting.
+    var out = [{ i: 0, name: 'SURFACE', depthM: 0, y: 0, price: 0, owned: true }];
+    for (var k = 0; k < tbl.length; k++) {
+      var L = tbl[k] || {};
+      out.push({ i: k + 1, name: L.name || ('LEVEL ' + (k + 1)),
+                 depthM: num(L.depthM, 0), y: num(L.y, 0),
+                 price: num(L.price, 0), owned: (k + 1) <= owned });
+    }
+    return out;
+  }
+
+  /** The mine adv.js is holding: the one being dug, or the one selected. */
+  function currentMineId() {
+    var m = (SM.adv && SM.adv.getMine) ? SM.adv.getMine() : null;
+    return (m && m.id) ? m.id : (selMine || '');
+  }
+
+  /** Deepest station the company owns, or 0 (the mouth) when there are none. */
+  function deepestOwned(levels) {
+    var best = 0;
+    if (!levels) return best;
+    for (var i = 0; i < levels.length; i++) {
+      if (levels[i] && levels[i].owned) best = num(levels[i].i, i);
+    }
+    return best;
+  }
+
+  /** Index of the one station that is purchasable: the first unowned one. */
+  function nextUnowned(levels) {
+    if (!levels) return -1;
+    for (var i = 0; i < levels.length; i++) {
+      if (levels[i] && !levels[i].owned) return i;
+    }
+    return -1;
+  }
+
+  function ownedCount(levels) {
+    var n = 0;
+    if (!levels) return 0;
+    for (var i = 0; i < levels.length; i++) if (levels[i] && levels[i].owned) n++;
+    return n;
+  }
+
+  /** 'LEVEL 3' / 'SURFACE', preferring whatever name adv.js gave the station. */
+  function levelLabel(L) {
+    if (!L) return '';
+    var i = num(L.i, 0);
+    if (L.name) return String(L.name).toUpperCase();
+    return i === 0 ? 'SURFACE' : ('LEVEL ' + i);
   }
 
   /* =====================================================================
@@ -504,6 +591,11 @@ SM.advui = (function () {
      * decision on this screen. It is read off the LAYER TABLE, so it cannot
      * disagree with what the mine actually does to the machine. */
     els.cardProfile = el('div', 'sm-av-profile', c);
+    /* WHAT THE LIFT HAS REACHED. One line, off getLevels(): a mine you have cut
+     * four stations into is a completely different proposition from one you have
+     * only ever entered at the mouth, and that is the difference between a
+     * twenty-second descent and a five-minute climb. */
+    els.cardLift = el('div', 'sm-av-liftline', c, '');
     els.cardWarn = el('div', 'sm-av-warn', c, '');
     els.cardRes = el('div', 'sm-av-chips', c);
     els.cardHaz = el('div', 'sm-av-haz', c, '');
@@ -1174,6 +1266,18 @@ SM.advui = (function () {
 
     paintProfile(m);
 
+    var levels = liftLevels(m.id);
+    if (levels) {
+      var lo = ownedCount(levels), lt = levels.length;
+      var deep = levels[deepestOwned(levels)];
+      els.cardLift.textContent = 'LIFT   ' + fmt(lo) + ' OF ' + fmt(lt) + ' LEVELS' +
+        (deep && num(deep.depthM, 0) > 0 ? ('   ·   DEEPEST STATION ' + fmt(deep.depthM) + ' m') : '');
+      els.cardLift.style.display = '';
+    } else {
+      els.cardLift.textContent = '';
+      els.cardLift.style.display = 'none';
+    }
+
     /* "You can enter, but it will hurt" — the honest message, not a locked
      * door. Under-gunned is slow and expensive, never refused. */
     var warn = '';
@@ -1673,38 +1777,30 @@ SM.advui = (function () {
     els.prepMeta = el('div', 'sm-av-card-region', top, '');
     els.prepStrata = el('div', 'sm-av-strata', top);
 
-    var fp = el('div', 'sm-panel sm-av-prep-fuel', s.body);
-    el('div', 'sm-stripe', fp);
-    var fhead = el('div', 'sm-av-card-head', fp);
-    el('div', 'sm-av-card-name', fhead, 'FUEL');
-    els.fuelCost = el('div', 'sm-av-card-region', fhead, '$0');
-    els.fuelRange = el('input', 'sm-av-range', fp);
-    els.fuelRange.setAttribute('type', 'range');
-    els.fuelRange.setAttribute('min', '0');
-    els.fuelRange.setAttribute('max', '100');
-    els.fuelRange.setAttribute('step', '1');
-    els.fuelRange.addEventListener('input', function () {
-      fuelUnits = num(parseFloat(els.fuelRange.value), 0);
-      paintFuel();
-    }, false);
-    // Shield the slider's arrow keys from js/input.js (frozen), which reads
-    // them as driving input.
-    els.fuelRange.addEventListener('keydown', function (e) { e.stopPropagation(); }, false);
-    els.fuelRange.addEventListener('keyup', function (e) { e.stopPropagation(); }, false);
-    els.fuelLine = el('div', 'sm-av-sub', fp, '');
-    var fbtns = el('div', 'sm-av-btnrow', fp);
-    onTap(button(fbtns, 'sm-av-quiet', 'EMPTY'), function () { setFuel(0); });
-    onTap(button(fbtns, 'sm-av-quiet', 'HALF'), function () { setFuel(fuelMax() * 0.5); });
-    onTap(button(fbtns, 'sm-av-quiet', 'FILL THE TANK'), function () { setFuel(fuelMax()); });
+    /* NO FUEL WIDGET. There used to be a slider here, with EMPTY / HALF / FILL
+     * THE TANK under it and a line of arithmetic under that — four controls and
+     * a readout for a decision nobody was ever really making. Descending on a
+     * part tank is not a strategy, it is a way to lose a run, and the one number
+     * that mattered (what the trip costs) is on the DESCEND button anyway.
+     *
+     * So the descent buys the tank out, adv.enterMine() does the buying, and the
+     * screen went from three panels to two. What is left here is the two things
+     * a player genuinely chooses between runs: WHERE THE LIFT DROPS THEM, and
+     * whether to weld the hull up first. */
+    buildPrepLift(s);
 
-    var hp = el('div', 'sm-panel sm-av-prep-hull', s.body);
-    el('div', 'sm-stripe', hp);
-    var hhead = el('div', 'sm-av-card-head', hp);
-    el('div', 'sm-av-card-name', hhead, 'HULL');
-    els.hullPct = el('div', 'sm-av-card-region', hhead, '100%');
-    var hbar = el('div', 'sm-av-bar', hp);
+    /* THE HULL IS ONE ROW, AND ONLY WHEN IT IS BROKEN.
+     * A full panel — heading, percentage, bar, button — for a gauge that reads
+     * 100% on most visits is furniture. Damaged, it is a decision; intact, it is
+     * not even a sentence. So it collapses to a single line that is simply
+     * absent at full integrity, and the HUD carries the reading underground. */
+    els.repairRow = el('div', 'sm-panel sm-av-repair', s.body);
+    el('div', 'sm-stripe', els.repairRow);
+    el('div', 'sm-av-repair-lbl', els.repairRow, 'HULL');
+    els.hullPct = el('div', 'sm-av-repair-pct', els.repairRow, '100%');
+    var hbar = el('div', 'sm-av-bar sm-av-repair-bar', els.repairRow);
     els.hullFill = el('div', 'sm-av-bar-fill', hbar);
-    els.repairBtn = button(hp, '', 'REPAIR');
+    els.repairBtn = button(els.repairRow, 'sm-av-repair-btn', 'REPAIR');
     onTap(els.repairBtn, function () {
       var ok = !!(SM.adv && SM.adv.buyRepair && SM.adv.buyRepair());
       toast(ok ? 'HULL REPAIRED' : 'REPAIR REFUSED',
@@ -1724,13 +1820,21 @@ SM.advui = (function () {
     return p > 0 ? p : FALLBACK_FUEL_PRICE;
   }
 
-  /** Tank space available, clamped by what the company can actually pay for. */
+  /**
+   * How much fuel the descent is about to buy: the room left in the tank,
+   * clamped by what the company can actually pay for.
+   *
+   * The clamp is what keeps DESCEND honest. adv.buyFuel() already buys what the
+   * money reaches rather than refusing outright, so quoting the price of a FULL
+   * tank to a player who cannot afford one would put a number on the button that
+   * the ledger never charges.
+   *
+   * getTANK, not getFuel: what is bought and aboard, NOT the in-run gauge.
+   * getFuel() still reads the level the last descent ended on, so sizing the
+   * purchase against it would top up only what the previous run had burnt.
+   */
   function fuelMax() {
     var cap = rigNum('getFuelCap', 100);
-    // getTANK, not getFuel: what is already bought and aboard, NOT the in-run
-    // gauge. getFuel() still reads the level the last descent ended on, so
-    // sizing the purchase against it sold only the fuel the previous run had
-    // burnt — come up on 7% and "fill the tank" bought 7%.
     var have = advNum('getTank', 0);
     var room = cap - have;
     if (room < 0) room = 0;
@@ -1738,34 +1842,162 @@ SM.advui = (function () {
     return Math.min(room, afford);
   }
 
-  function setFuel(u) {
-    fuelUnits = Math.max(0, Math.min(fuelMax(), Math.round(u)));
-    els.fuelRange.value = '' + fuelUnits;
-    paintFuel();
+  /** What the tank costs to fill. mines.fuelCost() owns the rounding. */
+  function descendCost() {
+    var u = fuelMax();
+    if (u <= 0) return 0;
+    return (SM.mines && SM.mines.fuelCost) ? num(SM.mines.fuelCost(u), u * fuelPrice())
+                                           : u * fuelPrice();
   }
 
-  function paintFuel() {
-    var cap = rigNum('getFuelCap', 100);
-    var have = advNum('getTank', 0);   // aboard already — see fuelMax()
-    // mines.fuelCost() owns the rounding; multiplying the unit price by hand
-    // is how a slider ends up one dollar away from what the ledger charges.
-    var cost = (SM.mines && SM.mines.fuelCost) ? num(SM.mines.fuelCost(fuelUnits), fuelUnits * fuelPrice())
-                                               : fuelUnits * fuelPrice();
-    els.fuelCost.textContent = money(cost);
-    var after = Math.min(cap, have + fuelUnits);
-    /* ENDURANCE, not just litres. rig.js solves how many seconds of ordinary
-     * working a full tank buys, which is the number the player actually needs
-     * before committing to a 700 m shaft. */
-    var endur = rigNum('getEndurance', 0);
-    var mins = endur > 0 ? (endur * (after / Math.max(1, cap))) / 60 : 0;
-    els.fuelLine.textContent =
-      fmt(fuelUnits) + 'u BOUGHT   ·   TANK ' + fmt(after) + ' / ' + fmt(cap) +
-      '   ·   ' + money(fuelPrice()) + ' PER UNIT' +
-      (mins > 0 ? ('   ·   ~' + (mins < 10 ? mins.toFixed(1) : fmt(mins)) + ' MIN UNDER') : '');
-    els.fuelRange.style.setProperty('--sm-av-fill', (cap > 0 ? (fuelUnits / Math.max(1, fuelMax())) : 0).toFixed(3));
-    // Committing to a full tank is a real decision, so the button says what it
-    // is actually going to cost.
-    els.descend.textContent = cost > 0 ? ('DESCEND  ·  ' + money(cost)) : 'DESCEND';
+  /* ---------------------------------------------------------------------
+   * THE LEVEL PICKER
+   * ---------------------------------------------------------------------
+   * The mine entrance is a LIFT, and the levels are the stations cut into it at
+   * the geological boundaries. Buying one is the campaign's real progression:
+   * it is not a stat, it is 200 m of climbing you never have to do again.
+   *
+   * So this panel does two jobs and keeps them visibly separate. The rows a
+   * company OWNS are a choice — tap one and the descent starts there. The first
+   * row it does NOT own is a purchase, with its price and a BUY beside it, and
+   * nothing past it is offered at all: a lift is dug downwards, so skipping a
+   * station is not a thing you can pay for.
+   * ------------------------------------------------------------------ */
+  function buildPrepLift(s) {
+    els.prepLift = el('div', 'sm-panel sm-av-prep-lift', s.body);
+    el('div', 'sm-stripe', els.prepLift);
+    var head = el('div', 'sm-av-card-head', els.prepLift);
+    el('div', 'sm-av-card-name', head, 'THE LIFT');
+    els.liftCount = el('div', 'sm-av-card-region', head, '');
+    els.liftList = el('div', 'sm-av-levels', els.prepLift);
+    /* THE PANEL TEXT, WHICH IS WHERE EVERY REASON GOES.
+     * Where the descent starts, and — when BUY is greyed — why. The button keeps
+     * its name and dims; it never renames itself into a status message. */
+    els.liftNote = el('div', 'sm-av-sub sm-av-lift-note', els.prepLift, '');
+  }
+
+  function paintPrepLift(m) {
+    var id = (m && m.id) ? m.id : selMine;
+    var levels = liftLevels(id);
+    els.liftList.innerHTML = '';
+
+    /* NO LIFT TABLE, NO PANEL. adv.js may not have levels for this mine yet (or
+     * at all, while the lift is still being built), and an empty box that says
+     * nothing is worse than no box. The descent still works: enterMine() with no
+     * level starts at the mouth, exactly as it always did. */
+    if (!levels) {
+      els.prepLift.style.display = 'none';
+      els.liftNote.textContent = '';
+      return;
+    }
+    els.prepLift.style.display = '';
+
+    var owned = ownedCount(levels);
+    var deepest = deepestOwned(levels);
+    var nextI = nextUnowned(levels);
+
+    /* WHEN THE SELECTION GOES BACK TO THE DEEPEST STATION.
+     *
+     * A choice the player made by hand is worth keeping between visits — but only
+     * while it still means the same thing. Two events invalidate it:
+     *
+     *   THE MINE CHANGED. Level 3 of Old Creek is not level 3 of The Rift, and
+     *   carrying the index across would silently descend into the wrong hole.
+     *
+     *   A LEVEL WAS BOUGHT OR LOST. Somebody who has just paid for a station
+     *   at 1 140 m wants to start there, not at whatever they picked last time;
+     *   and a slot switch or a reload can take a level away again. Comparing the
+     *   OWNED COUNT catches both, and it catches purchases made anywhere — the
+     *   BUY on this screen, a future one on the map — without either caller
+     *   having to remember to reset anything.
+     */
+    if (prepLevelMine !== id || prepLevelOwned !== owned) {
+      prepLevelMine = id;
+      prepLevelOwned = owned;
+      prepLevel = deepest;
+    }
+    // Belt and braces: never leave the selection on ground that is not held.
+    if (prepLevel < 0 || !levels[prepLevel] || !levels[prepLevel].owned) prepLevel = deepest;
+
+    els.liftCount.textContent = fmt(owned) + ' OF ' + fmt(levels.length) + ' LEVELS';
+
+    var cash = advNum('getCash', 0);
+    var blocked = '';
+    for (var i = 0; i < levels.length; i++) {
+      var L = levels[i];
+      if (!L) continue;
+      var state = L.owned ? 'owned' : (i === nextI ? 'next' : 'locked');
+      var short = makeLevelRow(L, i, state, cash);
+      if (short) blocked = short;
+    }
+
+    var selL = levels[prepLevel] || levels[0];
+    // "START AT SURFACE · 0 m DOWN" is a sentence with nothing in it. The mouth
+    // gets its own wording, because starting there means the whole shaft on tracks.
+    var line = (prepLevel === 0)
+      ? 'START AT THE MOUTH   ·   THE WHOLE SHAFT ON TRACKS'
+      : ('START AT ' + levelLabel(selL) + '   ·   ' + fmt(num(selL.depthM, 0)) + ' m DOWN');
+    if (nextI < 0) line += '   ·   THE SHAFT IS FULLY CUT';
+    els.liftNote.textContent = blocked ? (line + '\n' + blocked) : line;
+  }
+
+  /**
+   * One station. Returns the blocking reason when its BUY had to be greyed out,
+   * so the caller can put it in the panel text rather than on the button.
+   */
+  function makeLevelRow(L, i, state, cash) {
+    var row = el('div', 'sm-av-level sm-av-level-' + state, els.liftList);
+    if (state === 'owned' && i === prepLevel) row.classList.add('sm-av-level-sel');
+
+    var go = el('button', 'sm-av-level-go', row);
+    go.setAttribute('type', 'button');
+    el('span', 'sm-av-level-i', go, i === 0 ? 'SURF' : ('L' + i));
+    el('span', 'sm-av-level-name', go, levelLabel(L));
+    el('span', 'sm-av-level-depth', go, fmt(num(L.depthM, 0)) + ' m');
+    var tag = el('span', 'sm-av-level-tag', go, '');
+
+    if (state === 'owned') {
+      tag.textContent = (i === prepLevel) ? 'START' : 'HELD';
+      onTap(go, function () {
+        prepLevel = i;
+        paintPrep();
+      });
+      return '';
+    }
+
+    // Not owned: the row is a read, not a control. Only its BUY takes a tap.
+    go.disabled = true;
+    var price = num(L.price, 0);
+    if (state === 'locked') {
+      tag.textContent = 'SEALED';
+      return '';
+    }
+    tag.textContent = money(price);
+
+    /* BUY keeps its name and greys out; the shortfall goes in the panel text.
+     * :disabled does the greying (see the stylesheet's UNAVAILABLE rule), so the
+     * older sm-av-cant class is deliberately not used here — one mechanism. */
+    var b = button(row, 'sm-av-level-buy', 'BUY');
+    onTap(b, function () { onBuyLevel(i, L); });
+    var short = price - cash;
+    if (short > 0) {
+      b.disabled = true;
+      return 'NEED ' + money(short) + ' MORE TO CUT ' + levelLabel(L) + '.';
+    }
+    return '';
+  }
+
+  function onBuyLevel(i, L) {
+    var ok = !!(SM.adv && SM.adv.buyLevel && SM.adv.buyLevel(i));
+    if (ok) {
+      toast('LEVEL CUT', levelLabel(L) + ' at ' + fmt(num(L.depthM, 0)) + ' m is open', 2.6);
+      if (SM.effects && SM.effects.screenFlash) SM.effects.screenFlash(0.10, 255, 210, 120);
+      // The new station is almost certainly where the player now wants to start.
+      prepLevel = i;
+    } else {
+      toast('THE CUT WAS REFUSED', 'The ledger will not cover it', 2.0);
+    }
+    refresh();
   }
 
   function paintPrep() {
@@ -1808,36 +2040,57 @@ SM.advui = (function () {
       line.textContent = bits.join('   ·   ') || 'NO SURVEY ON FILE';
     }
 
+    paintPrepLift(m);
+
+    /* THE HULL ROW, WHICH IS ABSENT AT FULL INTEGRITY.
+     * mines.repairCost() takes the 0..1 fraction adv.js reports and returns the
+     * dollars for a FULL repair — the units are easy to get wrong by hand
+     * (integrity is 0..100 points inside mines.js), so let it do it. */
     var integ = advNum('getIntegrity', 1);
-    els.hullPct.textContent = Math.round(integ * 100) + '%';
-    els.hullFill.style.setProperty('--sm-av-fill', integ.toFixed(3));
-    els.hullFill.className = 'sm-av-bar-fill' + (integ < 0.4 ? ' sm-av-bar-bad' : '');
     var needsRepair = integ < 0.999;
-    els.repairBtn.style.display = needsRepair ? '' : 'none';
+    els.repairRow.style.display = needsRepair ? '' : 'none';
     if (needsRepair) {
-      /* mines.repairCost() takes the 0..1 integrity fraction adv.js reports and
-       * returns the dollars for a FULL repair — the units are easy to get wrong
-       * by hand (integrity is 0..100 points inside mines.js), so let it do it. */
+      els.hullPct.textContent = Math.round(integ * 100) + '%';
+      els.hullFill.style.setProperty('--sm-av-fill', integ.toFixed(3));
+      els.hullFill.className = 'sm-av-bar-fill' + (integ < 0.4 ? ' sm-av-bar-bad' : '');
+      els.repairRow.classList[integ < 0.4 ? 'add' : 'remove']('sm-av-repair-bad');
       var full = (SM.mines && SM.mines.repairCost) ? num(SM.mines.repairCost(integ), 0)
         : Math.round((1 - integ) * 100 * ((SM.mines && SM.mines.repairPrice) ? num(SM.mines.repairPrice(), 0) : 0));
-      els.repairBtn.textContent = full > 0 ? ('REPAIR HULL  ' + money(full)) : 'REPAIR HULL';
+      els.repairBtn.textContent = full > 0 ? ('REPAIR  ' + money(full)) : 'REPAIR';
+      // Label stays, the plate greys: the reason is the percentage next to it.
+      if (full > advNum('getCash', 0)) els.repairBtn.setAttribute('disabled', 'disabled');
+      else els.repairBtn.removeAttribute('disabled');
     }
 
-    els.fuelRange.setAttribute('max', '' + Math.max(1, fuelMax()));
-    setFuel(fuelUnits > 0 ? fuelUnits : fuelMax());
+    /* DESCEND CARRIES THE WHOLE BILL, because there is nothing else left to
+     * price: the tank is bought out on the way down, so this is the entire cost
+     * of the expedition and the player commits to it with one tap. */
+    var cost = descendCost();
+    els.descend.textContent = cost > 0 ? ('DESCEND  ·  ' + money(cost)) : 'DESCEND';
   }
 
   function onDescend() {
     var m = (SM.adv && SM.adv.getMine) ? SM.adv.getMine() : null;
     var id = (m && m.id) ? m.id : selMine;
-    /* Snapshot the order FIRST. buyFuel() moves money, which emits `adv:cash`,
-     * which repaints this very screen — and the repaint re-clamps the slider to
-     * the room left in a tank that is now full, i.e. to zero. Reading fuelUnits
-     * after the purchase would descend with an empty tank you had just paid for. */
-    var units = fuelUnits;
-    if (units > 0 && SM.adv && SM.adv.buyFuel) SM.adv.buyFuel(units);
-    fuelUnits = 0;
-    if (SM.adv && SM.adv.enterMine) SM.adv.enterMine(id, { fuel: units });
+    /* THE TANK IS FILLED BY THE DESCENT, not by this screen.
+     * `fuel` is passed anyway and adv.enterMine() clamps it to the room left, so
+     * whichever side of the seam does the topping up, the money moves exactly
+     * once — and the descent is never launched on the empty tank a part-built
+     * enterMine() would have given it.
+     *
+     * The order is snapshotted BEFORE the call because buying moves money, which
+     * emits `adv:cash`, which repaints this very screen and re-clamps fuelMax()
+     * against a tank that is now full. */
+    var units = fuelMax();
+    /* `level` IS ALWAYS SENT, INCLUDING ZERO.
+     * enterMine() defaults an absent level to the DEEPEST station the company
+     * owns, which is the right default for BACK TO MINE — but on this screen the
+     * player has just picked one, and a player who picked the mouth on purpose
+     * (to work the shallow layers, or because the hold fills before the lift is
+     * worth it) must not be dropped 300 m down instead. Omitting a legitimate 0
+     * would have been indistinguishable from not choosing. */
+    var opts = { fuel: units, level: (prepLevel > 0 ? prepLevel : 0) };
+    if (SM.adv && SM.adv.enterMine) SM.adv.enterMine(id, opts);
   }
 
   /* ---------------------------------------------------------------------
@@ -2264,6 +2517,12 @@ SM.advui = (function () {
       SM.events.on('adv:rig', refresh);
       SM.events.on('adv:rights', refresh);
       SM.events.on('adv:day', refresh);
+      /* A LEVEL BOUGHT ANYWHERE REPAINTS EVERY SCREEN THAT COUNTS THEM.
+       * The purchase can come from this screen's own BUY or from the in-mine lift
+       * panel, and the map card and the prep picker both show a count — so the
+       * event is what keeps them in step rather than either caller remembering to
+       * ask for a repaint. */
+      SM.events.on('lift:bought', refresh);
       window.addEventListener('resize', onResize, false);
       window.addEventListener('orientationchange', onResize, false);
 

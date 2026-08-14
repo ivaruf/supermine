@@ -186,6 +186,40 @@
  *    after ~57 runs and has a maxed machine after ~62, which is about 95 minutes
  *    of in-mine time.
  *
+ * 4c. LEVELS — THE LIFT'S PRICE LIST, AND WHY THE GEOLOGY SETS IT
+ *
+ *    The mine entrance is a LIFT. A company buys STATIONS down the shaft and
+ *    rides to them for free, so a purchased level is not a shortcut: it is the
+ *    only way to spend a whole tank WORKING a stratum instead of driving to it.
+ *
+ *    A station snaps to a LAYER BOUNDARY, so buying level 3 buys access to the
+ *    third stratum and the layer table becomes the price list. levelsOf() prices
+ *    each one at
+ *
+ *        LEVEL_K x refHold(mine) x rateOfLayer(stratum) x LEVEL_GROWTH^(i-1)
+ *
+ *    which reads, in words: a level costs a fraction of ONE FULL HOLD of the
+ *    rock it opens, and each level deeper costs half again as much on top. Both
+ *    halves matter:
+ *
+ *      the rate term   makes a rich stratum expensive and a dead one cheap.
+ *                      Deep Hollow's Dead Granite carries almost nothing, so the
+ *                      station into it is nearly free — which is honest, and it
+ *                      is the mine telling you the truth about itself.
+ *      the growth term keeps the ladder rising even where two strata pay the
+ *                      same, so "the next level down" is always a bigger
+ *                      decision than the last one.
+ *
+ *    refHold is the CARGO CAPACITY at the rig tier this mine's recDrill implies
+ *    (design note 4's own assumption, read straight off js/rig.js rather than
+ *    copied), so the ladder tracks the workshop instead of drifting from it.
+ *
+ *    MEASURED, at 48 units of hold and Old Creek's own rates: the two Old Creek
+ *    levels cost $200 and $380, and a hold worked out of the deeper one grosses
+ *    ~$570 — so a company that buys both is inside Red Ridge's $1 600 of rights
+ *    after three or four runs, which is the ladder the brief asks for. Every
+ *    mine's table is in audit() under `levels`; re-read it after any retune.
+ *
  * 5. DEVICE HARDNESS COMPENSATION — the trap in this file
  *
  *    js/materials.js REWRITES `hardness` at load (applyWorldDensity) because a
@@ -322,6 +356,18 @@ SM.mines = (function () {
    * is what makes COOLING read as a mine unlock rather than as a stat. */
   var HEAT_AMBIENT = 9.5;
   var HEAT_DRILL = 2.2;
+
+  /* LEVELS. See design note 4c — these two numbers are the whole lift economy.
+   * LEVEL_K is what one station costs as a fraction of one full hold of the
+   * stratum it opens; LEVEL_GROWTH is the compounding step per level down. */
+  var LEVEL_K = 0.45;
+  var LEVEL_GROWTH = 1.5;
+  var LEVEL_MIN = 50;        // a station is infrastructure; none of them is free
+  /* Fallback reference hold per mine, index-aligned with LIST, for a build where
+   * js/rig.js has not landed. These ARE the current cargo tiers (48/96/192/384/
+   * 384/768/1536) at the drill tier each mine's recDrill names — refHoldOf()
+   * reads them out of rig.js when it can, so this is only ever a stand-in. */
+  var REF_HOLD = [48, 96, 192, 384, 384, 768, 1536];
 
   var LIST = [];          // the catalogue, built in init()
   var BY_ID = {};
@@ -922,6 +968,103 @@ SM.mines = (function () {
     return dollars((1 - f) * 100 * REPAIR_PRICE);
   }
 
+  /* =====================================================================
+   * LEVELS — the lift's price list (design note 4c)
+   * ================================================================== */
+
+  var EMPTY_LEVELS = [];      // shared, frozen-by-convention: never written to
+
+  /**
+   * Round money to two significant figures. A price list is read, compared and
+   * remembered by the player, so $26 000 is worth more than $25 525 even though
+   * it is less precise — every hand-picked price in this file is already a round
+   * number and a derived ladder has no business looking calculated.
+   */
+  function niceMoney(v) {
+    if (!(v > 0)) return 0;
+    var mag = Math.pow(10, Math.floor(Math.log(v) / Math.LN10) - 1);
+    if (!(mag >= 1)) mag = 1;
+    return Math.round(v / mag) * mag;
+  }
+
+  /** The drill tier whose power is nearest `power`. Used only for refHoldOf(). */
+  function drillTierFor(power) {
+    var maxT = (SM.rig && SM.rig.maxTier) ? SM.rig.maxTier('drill') : 0;
+    var best = 0, bestD = -1, t, p, d;
+    for (t = 0; t <= maxT; t++) {
+      p = statAtTier('drill', t, 'power');
+      if (!(p > 0)) continue;
+      d = p > power ? p - power : power - p;
+      if (bestD < 0 || d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  }
+
+  /**
+   * The hold size this mine's prices are quoted against: the cargo capacity at
+   * the rig tier its recDrill names. recDrillBase, not recDrill — the latter is
+   * device-compensated and money never is (design note 5).
+   */
+  function refHoldOf(m) {
+    var cap = statAtTier('cargo', drillTierFor(m.recDrillBase || m.recDrill), 'cap');
+    if (cap > 0) return cap;
+    var f = REF_HOLD[m.index];
+    return f > 0 ? f : 48;
+  }
+
+  /**
+   * The LIFT STATIONS a company can buy in this mine, shallowest first, SURFACE
+   * EXCLUDED (js/adv.js prepends that one, free and always owned). Entry `k` is
+   * level k+1 and opens layer k+1, so the names read as the strata they are:
+   *
+   *     [{ name: 'Silver Veins', depthM: 690, price: 7800,
+   *        layerIndex: 2, rate: 60.4 }, ...]
+   *
+   * LIVE array, cached on the mine: js/adv.js holds the reference and walks it
+   * every step through getDistanceToExit(), so this must not allocate on the
+   * hot path. Cached LAZILY rather than in init(), because refHoldOf() reads
+   * js/rig.js and mines.init() runs before it exists.
+   */
+  function levelsOf(mineOrId) {
+    var m = coerce(mineOrId);
+    if (!m || !m.layers || m.layers.length < 2) return EMPTY_LEVELS;
+    if (m.levelTable) return m.levelTable;
+
+    var hold = refHoldOf(m);
+    var out = [], j, L, d, rate, price;
+    for (j = 1; j < m.layers.length; j++) {
+      L = m.layers[j];
+      d = L.fromDepth;
+      /* A boundary at the surface IS the surface station, and a boundary past
+       * the floor is not a place. Both are skipped rather than clamped: a level
+       * you cannot stand in is worse than a level that does not exist. */
+      if (!(d > 0) || d >= m.depth) continue;
+      rate = rateOfLayer(L);
+      price = niceMoney(LEVEL_K * hold * rate * Math.pow(LEVEL_GROWTH, out.length));
+      if (price < LEVEL_MIN) price = LEVEL_MIN;
+      out.push({
+        name: L.name,
+        depthM: d,
+        price: price,
+        /* Extras, for the map card and for audit(): which stratum this opens and
+         * what a unit of hold out of it is worth. */
+        layerIndex: j,
+        rate: Math.round(rate * 10) / 10
+      });
+    }
+    m.levelTable = out;
+    return out;
+  }
+
+  /** Dollars for level `i` (1-based) of a mine, or 0 if there is no such level. */
+  function levelPriceOf(mineOrId, i) {
+    var t = levelsOf(mineOrId);
+    return (i >= 1 && i <= t.length) ? t[i - 1].price : 0;
+  }
+
+  /** How many levels below the surface this mine sells. */
+  function levelCountOf(mineOrId) { return levelsOf(mineOrId).length; }
+
   /** Ordered list of sellable material ids, most valuable last. */
   function sellables() { return SELLABLES; }
 
@@ -1028,6 +1171,14 @@ SM.mines = (function () {
         recDrill: m.recDrill,
         shallowRate: Math.round(rateOfLayer(m.layers[0]) * 10) / 10,
         deepRate: Math.round(rateOfLayer(m.layers[m.layers.length - 1]) * 10) / 10,
+        /* THE LIFT LADDER (design note 4c). refHold is the hold these prices are
+         * quoted against and holdRun is one full hold of the deepest stratum —
+         * the run a company that owns every level is working, and therefore the
+         * number every price below should be read against. */
+        refHold: refHoldOf(m),
+        holdRun: Math.round(refHoldOf(m) *
+                            rateOfLayer(m.layers[m.layers.length - 1])),
+        levels: levelsOf(m),
         layers: layers
       });
     }
@@ -1062,6 +1213,15 @@ SM.mines = (function () {
     /* --- Agent-2 additions (documented in the report) ------------------- */
     layerIndexAt: layerIndexAt,
     layersOf: layersOf,
+    /* --- the lift (design note 4c) -------------------------------------
+     * levelsOf()      LIVE, cached [{name, depthM, price, layerIndex, rate}],
+     *                 shallowest first, SURFACE EXCLUDED. Entry k is level k+1.
+     * levelPriceOf()  dollars for level i (1-based)
+     * levelCountOf()  how many levels this mine sells
+     */
+    levelsOf: levelsOf,
+    levelPriceOf: levelPriceOf,
+    levelCountOf: levelCountOf,
     depthOf: depthOf,
     recDrillOf: recDrillOf,
     seedOf: seedOf,

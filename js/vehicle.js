@@ -857,9 +857,10 @@ SM.vehicle = (function () {
   }
 
   /**
-   * Park the machine at the mine mouth, facing DOWN into the shaft, stopped.
-   * Called from the tail of reset(); everything it touches is invisible to
-   * classic mode except the three lines guarded by advMode().
+   * Park the machine at the lift station the descent starts from, facing DOWN
+   * into the shaft, stopped. Called from the tail of reset(); everything it
+   * touches is invisible to classic mode except the parkAtStation() call, which
+   * returns immediately outside adventure.
    */
   function advReset() {
     heading = Math.PI;           // facing +y == deeper
@@ -882,10 +883,65 @@ SM.vehicle = (function () {
     advTravel = 1;
 
     if (!advMode()) return;
-    x = 0;
-    y = A.MINE_CEILING_Y + ADV_SPAWN_Y;
-    speed = 0;
+    parkAtStation();
     syncRig();
+  }
+
+  /**
+   * ADVENTURE ONLY: set the machine down in the cage of the lift station
+   * SM.adv currently reports, stopped and pointing down the shaft.
+   *
+   * TWO CALLERS, ONE OFFSET. A descent gets here through reset(), and a LIFT
+   * RIDE calls it directly — a ride cannot reset the whole machine, because
+   * reset() would also throw away the rig sync, the deploy animations and the
+   * hold. Keeping both on one function is what stops the spawn offset from
+   * existing in two places: ADV_SPAWN_Y is how far INSIDE the stratum the cage
+   * sets you down (120 units, well within ADV.EXIT_RADIUS's 200), so SM.adv's
+   * getBoardable() still finds you standing in the station you arrived at.
+   *
+   * The station is asked for, never assumed: a build without the level ladder
+   * (or a console call before a mine is in context) answers the mine mouth,
+   * which is exactly what this used to hard-code.
+   */
+  function parkAtStation() {
+    if (!advMode()) return false;
+    x = advStationX();
+    y = advStationY() + ADV_SPAWN_Y;
+    speed = 0;
+    vx = 0;
+    dvx = 0; dvy = 0;
+    heading = Math.PI;
+    // A ride must not arrive mid-stall, mid-lurch or mid-cut: every one of those
+    // is a statement about rock that is no longer in front of the bit.
+    stalled = false;
+    cutting = false;
+    advLoad = 0;
+    loadPeak = 0;
+    stallHold = 0;
+    stallFxTimer = 0;
+    stallPrev = false;
+    ramCool = 0;
+    lurchCool = 0;
+    blockedMat = -1;
+    blockedHard = 0;
+    driveBurn = 0;
+    return true;
+  }
+
+  function advStationX() {
+    if (SM.adv && SM.adv.getStationX) {
+      var v = SM.adv.getStationX();
+      if (typeof v === 'number' && isFinite(v)) return v;
+    }
+    return 0;
+  }
+
+  function advStationY() {
+    if (SM.adv && SM.adv.getStationY) {
+      var v = SM.adv.getStationY();
+      if (typeof v === 'number' && isFinite(v)) return v;
+    }
+    return A.MINE_CEILING_Y;
   }
 
   /**
@@ -3969,7 +4025,9 @@ SM.vehicle = (function () {
      *                   adv.js's reserve estimate needs it
      * getLoad()         seconds of work between the bit and open ground — the
      *                   readable version of "how hard is this rock for ME"
-
+     * parkAtStation()   put the machine in the cage of SM.adv's current lift
+     *                   station, stopped. Adventure only; a no-op (false) in
+     *                   classic. SM.adv.rideTo() is the caller.
      * renderPreview()   draw the current build into a garage transform
      * ---------------------------------------------------------------- */
     getHeading: function () { return heading; },
@@ -3986,6 +4044,7 @@ SM.vehicle = (function () {
     /** 1 = drilling pace, up to ADV_TRAVEL_MUL in clear air. Fuel/metre is
      *  unchanged either way — see the ADV_TRAVEL_* note. */
     getTravelGear: function () { return advTravel; },
+    parkAtStation: parkAtStation,
     renderPreview: renderPreview,
 
     /* --- speed boost (scattered 'boostcell' blocks) -------------------- */

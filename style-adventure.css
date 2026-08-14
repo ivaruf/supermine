@@ -1554,7 +1554,7 @@
 /* ---------------------------------------------------------------------------
  * PREP
  * ------------------------------------------------------------------------ */
-.sm-av-prep-mine, .sm-av-prep-fuel, .sm-av-prep-hull {
+.sm-av-prep-mine, .sm-av-prep-lift {
   flex: 0 0 auto;
   padding: 11px 12px 12px;
 }
@@ -1603,50 +1603,188 @@
   text-overflow: ellipsis;
 }
 
-/* The fuel slider. A real commitment, so it gets a real control. */
-.sm-av-range {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 26px;
-  margin: 10px 0 6px;
-  background: none;
-  pointer-events: auto;
+/* ---------------------------------------------------------------------------
+ * THE LEVEL PICKER  (and the fuel widget that used to be here)
+ * ---------------------------------------------------------------------------
+ * The fuel slider is GONE, along with EMPTY / HALF / FILL THE TANK and the line
+ * of arithmetic under them — about seventy lines of stylesheet for a control
+ * that only ever had one correct setting. The descent buys the tank out and
+ * DESCEND carries the bill.
+ *
+ * What takes its place is the decision that IS worth a panel: which station the
+ * lift drops you at. Rows, not cells, because they are a list of places in
+ * depth order and the order is the whole point — the shaft reads top to bottom
+ * exactly as it is dug.
+ *
+ * A row is `[grid] tag | name | depth | state`, and it negotiates: the NAME
+ * yields (min-width: 0, ellipsis) and the two numbers never do. Every other box
+ * in this file learned that lesson on real Android, where --sm-mono resolves to
+ * a font wider than SF Mono at the same px size; tuning a column to the metrics
+ * of one font is how a picker that looks perfect here clips "GRANITE FLOOR" to
+ * "GRANI…" there.
+ * ------------------------------------------------------------------------ */
+.sm-av-levels {
+  margin-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.sm-av-range::-webkit-slider-runnable-track {
-  height: 10px;
+.sm-av-level {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+/* The row's own body: everything except BUY, and the whole of it is the tap
+   target for riding/selecting. */
+.sm-av-level-go {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-left: 3px solid rgba(126, 140, 158, 0.35);
   border-radius: 3px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.5));
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-.sm-av-range::-moz-range-track {
-  height: 10px;
-  border-radius: 3px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.5));
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-.sm-av-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 26px;
-  height: 26px;
-  margin-top: -9px;
-  border-radius: 4px;
-  background: linear-gradient(180deg, var(--sm-gold-hot), var(--sm-gold) 55%, #b4820c);
-  border: 1px solid rgba(255, 240, 168, 0.7);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.6);
+  background: rgba(10, 13, 17, 0.6);
+  font-family: var(--sm-mono);
+  color: var(--sm-text);
+  text-align: left;
   cursor: pointer;
 }
-.sm-av-range::-moz-range-thumb {
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: linear-gradient(180deg, var(--sm-gold-hot), var(--sm-gold) 55%, #b4820c);
-  border: 1px solid rgba(255, 240, 168, 0.7);
-  cursor: pointer;
+.sm-av-level-go:hover { background: rgba(30, 38, 48, 0.72); }
+.sm-av-level-i {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  color: var(--sm-dimmer);
+  font-variant-numeric: tabular-nums;
 }
-.sm-av-btnrow { display: flex; gap: 7px; margin-top: 8px; }
-.sm-av-btnrow .sm-btn { flex: 1 1 0; min-height: 38px; font-size: 9px; }
+.sm-av-level-name {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sm-av-level-depth {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--sm-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sm-av-level-tag {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  color: var(--sm-dimmer);
+  min-width: 40px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* HELD ground is live and green-edged; the SELECTED one wears the gold plate,
+   because it is the one the DESCEND button is about to act on. */
+.sm-av-level-owned .sm-av-level-go { border-left-color: var(--sm-green); }
+.sm-av-level-owned .sm-av-level-tag { color: var(--sm-green); }
+.sm-av-level-sel .sm-av-level-go {
+  border-color: rgba(255, 240, 168, 0.45);
+  border-left-color: var(--sm-gold);
+  background: linear-gradient(90deg, rgba(90, 66, 8, 0.55), rgba(14, 18, 24, 0.6) 70%);
+}
+.sm-av-level-sel .sm-av-level-tag { color: var(--sm-gold); }
+.sm-av-level-sel .sm-av-level-name { color: #fff3cf; }
+
+/* The one purchasable station: gold price, and its own BUY beside it. */
+.sm-av-level-next .sm-av-level-go {
+  border-left-color: var(--sm-gold);
+  cursor: default;
+}
+.sm-av-level-next .sm-av-level-go:hover { background: rgba(10, 13, 17, 0.6); }
+.sm-av-level-next .sm-av-level-tag { color: var(--sm-gold); }
+.sm-av-level-next .sm-av-level-name { color: var(--sm-text); }
+
+/* Ground below it is not for sale at any price — a shaft is cut downwards. */
+.sm-av-level-locked .sm-av-level-go {
+  cursor: default;
+  opacity: 0.42;
+  border-left-color: rgba(126, 140, 158, 0.2);
+}
+.sm-av-level-locked .sm-av-level-go:hover { background: rgba(10, 13, 17, 0.6); }
+
+/* BUY is a real plate, sized to the row rather than to the footer. */
+.sm-btn.sm-av-level-buy {
+  flex: 0 0 auto;
+  min-height: 34px;
+  min-width: 58px;
+  padding: 0 12px;
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  margin: 0;
+}
+
+/* Where the descent starts, and — when BUY is greyed — why. `pre-line` because
+   the reason is written on its own line under the selection. */
+.sm-av-lift-note {
+  margin-top: 9px;
+  white-space: pre-line;
+}
+
+/* ---------------------------------------------------------------------------
+ * THE HULL, WHEN IT IS BROKEN
+ * ---------------------------------------------------------------------------
+ * One row, and only present under 100%. It used to be a full panel with a
+ * heading, a percentage, a bar and a button, which on most visits was four
+ * pieces of furniture around the word "fine".
+ *
+ * The bar is the flexible column and the two numbers and the button are not, so
+ * a wider font eats the bar rather than the reading — the same negotiation the
+ * level rows and the in-mine info bar use.
+ * ------------------------------------------------------------------------ */
+.sm-av-repair {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 9px;
+}
+.sm-av-repair-lbl {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 2.4px;
+  color: var(--sm-dimmer);
+  flex: 0 0 auto;
+}
+.sm-av-repair-pct {
+  font-family: var(--sm-mono);
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--sm-text);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.sm-av-repair-bar {
+  flex: 1 1 auto;
+  min-width: 24px;
+  margin: 0;
+}
+.sm-btn.sm-av-repair-btn {
+  flex: 0 0 auto;
+  min-height: 34px;
+  min-width: 96px;
+  padding: 0 12px;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  margin: 0;
+}
+.sm-av-repair.sm-av-repair-bad .sm-av-repair-pct { color: var(--sm-red); }
 
 .sm-av-bar {
   position: relative;
@@ -2073,6 +2211,20 @@
 .sm-av-prof-bad .sm-av-prof-value { color: #ff8f80; }
 .sm-av-prof-ore { border-left-color: var(--sm-av-chip, var(--sm-gold)); }
 .sm-av-prof-ore .sm-av-prof-value { color: var(--sm-av-chip, var(--sm-gold)); }
+
+/* --- HOW FAR THE LIFT HAS BEEN CUT -------------------------------------
+ * One line on the mine card, under the profile row. It is the difference
+ * between a mine you have to climb out of and a mine with a station at the
+ * bottom, which is the largest single difference between two entries in the
+ * catalogue — and it costs one call to getLevels() to say. */
+.sm-av-liftline {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  color: var(--sm-gold);
+  margin-top: 9px;
+}
 
 /* ===========================================================================
  * THE MOTHERLODE BANNER
@@ -2726,4 +2878,284 @@
   bottom: max(24%, calc(var(--sm-ah-hold-h) + 54px));
   left: 50%;
   top: auto;
+}
+
+/* ===========================================================================
+ * 12. THE LIFT PANEL — IN THE BAND BETWEEN THE MACHINE AND THE HOLD
+ * ---------------------------------------------------------------------------
+ * The mine mouth is a lift with stations cut at the strata boundaries, and this
+ * is the panel that appears when the machine is standing on one: SURFACE at the
+ * top (which is the sale and the end of the run), then the stations the company
+ * holds, then the one it can buy.
+ *
+ * THREE THINGS DECIDE WHERE IT GOES.
+ *
+ * 1. IT MAY NOT COVER THE HOLD. The manifest is what the "ride up and sell"
+ *    decision is weighed against, so hiding it behind the panel that offers the
+ *    ride would be exactly backwards. The hold box is bottom-left and it GROWS
+ *    UPWARD as minerals come aboard, so the clearance cannot be a fixed number
+ *    and it cannot be measured (advhud.js may not read layout). Instead
+ *    refreshManifest() publishes the row count as --sm-ah-hold-rows on this
+ *    element — a number it already had in hand — and `bottom` adds it up. 24px
+ *    is one manifest row plus its gap (see .sm-ah-mrow in §7).
+ *
+ * 2. IT MAY NOT EAT THE BANNER. CARGO FULL and the fuel reserve warning live in
+ *    this same band, so while the panel is up the banner moves to just under the
+ *    info bar. advhud.js puts .sm-ah-lift-on on the HUD root as well as on the
+ *    panel for exactly this — one class, two jobs, no measuring.
+ *
+ * 3. ONLY THE CONTROLS TAKE POINTERS. The container is pointer-events:none and
+ *    the rows, BUY and the cross opt back in, so a drag that starts on the
+ *    panel's own plate still reaches the stick layer (z-index 3) and drives.
+ *    z-index 7 puts the buttons above that layer, so a tap that lands on a row
+ *    is a row press and not a lurch sideways.
+ *
+ * The panel is a SIBLING of .sm-ah in #ui-root, not a child, because in the wide
+ * layout .sm-ah is a content-height column pinned top-left and an absolute child
+ * of it cannot reach the bottom of the window. One containing block, both
+ * layouts. Same reason the pause card is a sibling.
+ * ======================================================================== */
+.sm-adv .sm-ah-lift {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  width: min(340px, calc(100% - var(--sm-gutter) * 2 - 4px));
+  padding: 7px 9px 8px;
+  border-radius: 5px;
+  /* No backdrop blur, for the reason given in §3b: these plates sit over dark
+     rock at DPR 3 and the blur is fill rate spent on an effect nobody sees. */
+  background: linear-gradient(180deg, rgba(9, 12, 17, 0.94), rgba(12, 16, 22, 0.88));
+  border: 1px solid rgba(255, 194, 31, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 10px 30px rgba(0, 0, 0, 0.62);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(10px);
+  transition: opacity 0.18s ease, transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 7;
+}
+.sm-adv .sm-ah-lift.sm-ah-lift-on {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%);
+}
+
+.sm-ah-lift-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-right: 26px;           /* clear of the cross */
+}
+.sm-ah-lift-where {
+  margin-left: auto;
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  color: var(--sm-gold);
+  white-space: nowrap;
+}
+/* THE CROSS. The panel is an offer, not a mode: a player parked at a station may
+   simply want to keep drilling, and driving off the platform also dismisses it. */
+.sm-ah-lift-close {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--sm-dim);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.sm-ah-lift-close svg { display: block; width: 13px; height: 13px; }
+.sm-ah-lift-close:hover { color: var(--sm-text); background: rgba(255, 255, 255, 0.07); }
+
+.sm-ah-lift-list { display: flex; flex-direction: column; gap: 3px; }
+
+.sm-ah-liftrow {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 0;
+}
+/* The ride target. Same negotiation as everything else in this stylesheet: the
+   NAME yields and the depth and the tag never do, so a wider font on real
+   hardware shortens "GRANITE FLOOR" instead of clipping "240 m". */
+.sm-ah-liftgo {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-left: 3px solid rgba(126, 140, 158, 0.35);
+  border-radius: 2px;
+  background: rgba(10, 13, 17, 0.72);
+  font-family: var(--sm-mono);
+  color: var(--sm-text);
+  text-align: left;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.sm-ah-liftgo:hover { background: rgba(30, 38, 48, 0.78); }
+/* A disabled row is the one you are STANDING on, or one that is a price rather
+   than a destination — neither is "broken", so neither is greyed. Only the
+   cursor changes; the row's own dress says what it is. */
+.sm-ah-liftgo:disabled { cursor: default; }
+.sm-ah-liftgo:disabled:hover { background: rgba(10, 13, 17, 0.72); }
+
+/* The station marker. Green is the default because a HELD station is the common
+   case; the surface, the current platform and the one for sale each override it
+   BELOW this rule, which is the only reason they win — every one of them is two
+   classes deep, so the cascade is decided by order here, not by specificity. */
+.sm-ah-liftsw {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--sm-green);
+  box-shadow: 0 0 6px rgba(90, 226, 140, 0.5);
+}
+.sm-ah-liftname {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 1.3px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sm-ah-liftdep {
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--sm-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sm-ah-lifttag {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  color: var(--sm-dimmer);
+  min-width: 34px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* SURFACE leads and wears the gold, because it is the one row that ends the
+   expedition — it should never be mistaken for one more station. */
+.sm-ah-liftrow-surface .sm-ah-liftgo {
+  border-left-color: var(--sm-gold);
+  background: linear-gradient(90deg, rgba(94, 68, 8, 0.62), rgba(14, 18, 24, 0.74) 72%);
+}
+.sm-ah-liftrow-surface .sm-ah-liftsw { background: var(--sm-gold); box-shadow: 0 0 6px var(--sm-gold); }
+.sm-ah-liftrow-surface .sm-ah-liftname { color: #fff3cf; }
+.sm-ah-liftrow-surface .sm-ah-liftdep { color: #e6cf95; }
+.sm-ah-liftrow-surface .sm-ah-lifttag { color: var(--sm-gold); }
+
+/* The station under the machine is cyan and reads HERE, so "where am I on this
+   shaft" is answered without reading a number. */
+.sm-ah-liftrow-here .sm-ah-liftgo {
+  border-left-color: var(--sm-cyan);
+  background: rgba(16, 34, 44, 0.82);
+}
+.sm-ah-liftrow-here .sm-ah-liftsw { background: var(--sm-cyan); box-shadow: 0 0 6px var(--sm-cyan); }
+.sm-ah-liftrow-here .sm-ah-lifttag { color: var(--sm-cyan-hot); }
+
+/* The one station for sale. Dimmer than the held ones — it is not somewhere you
+   can go yet — with its price where the other rows carry their state. */
+.sm-ah-liftrow-next .sm-ah-liftgo {
+  border-left-color: var(--sm-gold);
+  opacity: 0.8;
+}
+.sm-ah-liftrow-next .sm-ah-liftsw {
+  background: none;
+  border: 1px solid var(--sm-gold);
+  box-shadow: none;
+}
+.sm-ah-liftrow-next .sm-ah-lifttag { color: var(--sm-gold); }
+
+/* BUY IS HAND-ROLLED, NOT AN .sm-btn. The shared plate carries a 40px minimum
+   height, a 74px minimum width and a backdrop blur, none of which belong on a
+   30px row inside the mine. The gold treatment and the disabled greying are
+   copied from §"THE DESCEND BUTTON'S LOOK" so it still reads as the same
+   family — and the label stays BUY whatever happens. */
+.sm-ah-liftbuy {
+  flex: 0 0 auto;
+  min-width: 54px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 240, 168, 0.6);
+  background: linear-gradient(180deg, #ffd979, var(--sm-gold) 45%, #c98a06 100%);
+  color: #150b02;
+  font-family: var(--sm-mono);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.sm-ah-liftbuy:hover { filter: brightness(1.2); }
+.sm-ah-liftbuy:disabled {
+  filter: grayscale(0.9) brightness(0.62);
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
+.sm-ah-lift-note {
+  font-family: var(--sm-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  line-height: 1.5;
+  color: var(--sm-dimmer);
+  margin-top: 7px;
+}
+
+/* --- COMPACT: stack it on top of the hold, by arithmetic ----------------
+ * --sm-ah-hold-base is the height of an EMPTY hold box: padding, the units/worth
+ * line, the fill bar and the shut drawer. Measured at 67 px on a 390x844 phone,
+ * carried at 78 px, and the 11 px of slack is deliberate rather than sloppy —
+ * that box's height is a stack of text lines, and --sm-mono is SF Mono here and
+ * Roboto Mono on Android, where the same px size is a taller line box. Slack
+ * costs a panel sitting a few pixels higher; a tight fit costs the manifest.
+ *
+ * --sm-ah-hold-rows is written by advhud.js's refreshManifest() as a plain
+ * number, and 24 px is one manifest row (22) plus its gap (2). This is the term
+ * that actually matters: a twelve-mineral hold is 288 px taller than an empty
+ * one, which no fixed offset could have covered.
+ *
+ * NOT --sm-ah-hold-h, which is the 42 px the scanner line reserved back in
+ * revision 2 and is not the box's real height. */
+.sm-adv.sm-compact {
+  --sm-ah-hold-base: 78px;
+}
+.sm-adv.sm-compact .sm-ah-lift {
+  width: min(320px, calc(100% - var(--sm-gutter) * 2));
+  bottom: calc(var(--sm-top-y) + var(--sm-ah-hold-base)
+               + var(--sm-ah-hold-rows, 0) * 24px + 10px);
+}
+
+/* --- ...and the banner gets out of its way ------------------------------
+ * Under the info bar rather than over the panel. A banner is on screen for two
+ * seconds; the panel is a decision being made. */
+.sm-adv.sm-compact .sm-ah.sm-ah-lift-on .sm-ah-alert {
+  top: calc(var(--sm-top-y) + var(--sm-ah-barh) + 10px);
+  bottom: auto;
 }

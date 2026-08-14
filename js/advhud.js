@@ -136,7 +136,10 @@ SM.advhud = (function () {
                '<path d="m16.2 9.6 5.2 4.8M21.4 9.6l-5.2 4.8"/>',
     /* The manifest drawer's handle. A stack of lines is the one glyph that
      * reads as "a list of what is in there" at 12 px on a 48 px rail. */
-    manifest: '<path d="M4.6 6.4h14.8M4.6 12h14.8M4.6 17.6h14.8"/>'
+    manifest: '<path d="M4.6 6.4h14.8M4.6 12h14.8M4.6 17.6h14.8"/>',
+    /* Dismiss the lift panel. A cross, because the panel is an OFFER and the
+     * player is allowed to ignore it and keep drilling. */
+    close: '<path d="m6.6 6.6 10.8 10.8M17.4 6.6 6.6 17.4"/>'
   };
 
   function glyph(inner) {
@@ -163,6 +166,12 @@ SM.advhud = (function () {
   var manifestRows = [];     // pooled row elements
   var manifestSig = '';
   var lodeHold = 0;          // seconds the banner keeps its motherlode dress
+
+  var liftRows = [];         // pooled station rows
+  var liftSig = '';
+  var liftAt = -2;           // getBoardable() as of the last slow tick, -2 = never asked
+  var liftOpen = false;
+  var liftDismissed = -1;    // station whose panel the player waved away
 
   /* =====================================================================
    * DOM helpers — the ui.js discipline, one cache per module
@@ -301,8 +310,25 @@ SM.advhud = (function () {
     var strip = el('div', 'sm-panel sm-ah-strip', els.topbar);
     el('div', 'sm-stripe', strip);
 
-    var dep = el('div', 'sm-ah-cell sm-ah-depth', strip);
-    el('div', 'sm-ah-lbl', dep, 'DEPTH');
+    /* THE CELL COUNTS TO THE DOOR, NOT DOWN FROM THE SURFACE.
+     *
+     * It read DEPTH — absolute metres below the mouth — and that was the right
+     * number when the mouth was the only way out. The lift changed what "out"
+     * means: with a station bought at 240 m, a machine at 260 m is twenty metres
+     * from a ride home, and printing "260 m" invited exactly the wrong call at
+     * exactly the wrong moment.
+     *
+     * So this is now the distance to the NEAREST OWNED STATION, which is the
+     * number every fuel decision is actually made against — the same number the
+     * reserve mark on the fuel bar is measured from. The label says EXIT so it
+     * cannot be read as depth, and absolute depth has a better home: the lift's
+     * own display in the world, where it belongs.
+     *
+     * `sm-ah-depth` stays on the element. Six stylesheet rules place this cell by
+     * that name and renaming it would be a cosmetic change with a layout bug in
+     * it; `sm-ah-exit` is added alongside for anything that wants the new name. */
+    var dep = el('div', 'sm-ah-cell sm-ah-depth sm-ah-exit', strip);
+    el('div', 'sm-ah-lbl', dep, 'EXIT');
     els.depth = el('div', 'sm-ah-val', dep, '0 m');
 
     /* FUNDS, where TO SURFACE used to be.
@@ -414,6 +440,48 @@ SM.advhud = (function () {
     els.alert = el('div', 'sm-ah-alert', els.root);
     els.alertTitle = el('div', 'sm-ah-alert-title', els.alert, '');
     els.alertSub = el('div', 'sm-ah-alert-sub', els.alert, '');
+
+    /* --- THE LIFT PANEL -------------------------------------------------
+     * It appears when the machine is standing on a station platform, which is
+     * the only moment any of it can be acted on, and it is a SIBLING of .sm-ah
+     * rather than a child for the same reason the pause card is: in the wide
+     * layout .sm-ah is a content-height column pinned top-left, so an absolute
+     * child of it cannot reach the bottom of the window. Hanging off #ui-root
+     * gives the panel one containing block in both layouts.
+     *
+     * IT IS AN OFFER, NOT A MODE. A player parked at a station may simply want
+     * to carry on drilling, so there is a cross on it, driving off the platform
+     * takes it away by itself, and the container is pointer-events:none — only
+     * the rows and the cross accept a tap, so a drag that starts anywhere else
+     * on it still falls through to the stick layer and drives.
+     *
+     * WHERE IT SITS. Bottom-centre, in the band between the machine and the
+     * hold, and it clears the hold by arithmetic rather than by hope: the hold
+     * box grows upward as minerals come aboard, so refreshManifest() publishes
+     * the row count as --sm-ah-hold-rows and the stylesheet adds it to this
+     * panel's `bottom`. No measuring, one guarded write, and the manifest is
+     * never covered by the thing that offers to sell it. */
+    els.lift = el('div', 'sm-ah-lift', root);
+    var lhead = el('div', 'sm-ah-lift-head', els.lift);
+    el('div', 'sm-ah-lbl', lhead, 'LIFT');
+    els.liftWhere = el('div', 'sm-ah-lift-where', lhead, '');
+    els.liftClose = el('button', 'sm-ah-lift-close', lhead);
+    els.liftClose.setAttribute('type', 'button');
+    els.liftClose.setAttribute('title', 'Dismiss — keep drilling');
+    els.liftClose.setAttribute('aria-label', 'Dismiss the lift');
+    els.liftClose.innerHTML = glyph(ICONS.close);
+    els.liftClose.addEventListener('click', function (e) {
+      e.preventDefault();
+      els.liftClose.blur();
+      liftDismissed = liftAt;
+      hideLift();
+      if (SM.sound && SM.sound.play) SM.sound.play('ui');
+    }, false);
+    els.liftList = el('div', 'sm-ah-lift-list', els.lift);
+    /* The panel text. Where the reason lives when BUY is greyed out, and where
+     * SURFACE says what it actually does — the row is one tap from ending the
+     * run, so it had better not be a surprise. */
+    els.liftNote = el('div', 'sm-ah-lift-note', els.lift, '');
 
     /* --- top-right controls --------------------------------------------- */
     var btns = el('div', 'sm-ah-btns', root);
@@ -722,6 +790,238 @@ SM.advhud = (function () {
      * this file does — never a separate count. */
     setText('hnum', els.holdCount, '' + used);
     setClass('hbempty', els.holdBtn, 'sm-ah-holdbtn-empty', used === 0);
+    /* HOW TALL THE HOLD BOX IS, PUBLISHED AS A NUMBER OF ROWS.
+     * The lift panel has to sit clear above the hold, and the hold grows upward
+     * with every new mineral. Measuring it is forbidden in this file and would
+     * be wrong anyway (the box is animated), but the row count is already in
+     * hand here — so the stylesheet does the arithmetic off a var instead. One
+     * guarded write on the slow timer, no layout read. */
+    setVar('liftrows', els.lift, '--sm-ah-hold-rows', '' + used);
+  }
+
+  /* =====================================================================
+   * THE LIFT PANEL
+   * ---------------------------------------------------------------------
+   * The mine mouth is a lift and the levels are stations cut at the strata
+   * boundaries. Standing on a platform is the only place any of this can be
+   * acted on, so SM.adv.getBoardable() is what raises the panel — polled on the
+   * SLOW timer, because it is a question about position that changes at walking
+   * pace, not per fixed step.
+   *
+   * Everything about the API is feature-detected. Until adv.js exports the lift
+   * there is no panel, nothing is polled, and this section costs one `if` per
+   * eighth of a second.
+   * ================================================================== */
+  function liftLabel(L, i) {
+    if (L && L.name) return String(L.name).toUpperCase();
+    return i === 0 ? 'SURFACE' : ('LEVEL ' + i);
+  }
+
+  function liftRow(i) {
+    var r = liftRows[i];
+    if (r) return r;
+    var node = el('div', 'sm-ah-liftrow', els.liftList);
+    r = { node: node, level: -1 };
+    /* THE ROW IS A BUTTON WITH A BUTTON BESIDE IT, not a button inside one.
+     * The ride action and BUY are two different verbs on one station, and nesting
+     * them would be invalid markup that behaves differently in every browser. */
+    r.go = el('button', 'sm-ah-liftgo', node);
+    r.go.setAttribute('type', 'button');
+    r.sw = el('span', 'sm-ah-liftsw', r.go);
+    r.name = el('span', 'sm-ah-liftname', r.go, '');
+    r.dep = el('span', 'sm-ah-liftdep', r.go, '');
+    r.tag = el('span', 'sm-ah-lifttag', r.go, '');
+    r.buy = el('button', 'sm-ah-liftbuy', node, 'BUY');
+    r.buy.setAttribute('type', 'button');
+    r.go.addEventListener('click', function (e) {
+      e.preventDefault();
+      r.go.blur();
+      onLiftRide(r);
+    }, false);
+    r.buy.addEventListener('click', function (e) {
+      e.preventDefault();
+      r.buy.blur();
+      onLiftBuy(r);
+    }, false);
+    liftRows[i] = r;
+    return r;
+  }
+
+  function onLiftRide(r) {
+    var a = A();
+    if (!a || !a.rideTo || r.level < 0) return;
+    if (SM.sound && SM.sound.play) SM.sound.play('ui');
+    if (!a.rideTo(r.level)) {
+      alert('THE LIFT WILL NOT MOVE', 'Drive onto a station platform first', 2.0);
+      return;
+    }
+    /* rideTo(0) IS THE EXTRACTION. adv.js changes state and onState() takes the
+     * whole HUD down, so there is deliberately nothing to repaint here. Riding to
+     * a station instead leaves the machine standing on a different platform, and
+     * forcing the poll makes the next slow tick redraw the list around it. */
+    liftAt = -2;
+    liftSig = '';
+  }
+
+  /**
+   * NOT REACHABLE TODAY, AND KEPT ANYWAY.
+   *
+   * adv.buyLevel() refuses during a run (advterrain.js carves the station rooms
+   * when the mine opens, so a level bought at depth would have no room around
+   * it), so refreshLift() greys this button unconditionally and a disabled button
+   * fires no click. The handler stays because it is the CORRECT behaviour for the
+   * control: if the seam is ever closed at the other end, enabling the plate is a
+   * one-line change and this already does the right thing — including reporting a
+   * refusal rather than silently doing nothing.
+   */
+  function onLiftBuy(r) {
+    var a = A();
+    if (!a || !a.buyLevel || r.level < 0) return;
+    if (SM.sound && SM.sound.play) SM.sound.play('ui');
+    if (a.buyLevel(r.level)) {
+      alert('LEVEL CUT', String(r.name.textContent || '') + ' is open', 2.2);
+      if (SM.effects && SM.effects.screenFlash) SM.effects.screenFlash(0.12, 255, 210, 120);
+    } else {
+      alert('THE CUT WAS REFUSED', 'The ledger will not cover it', 2.0);
+    }
+    liftSig = '';
+  }
+
+  function showLift() {
+    if (liftOpen) return;
+    liftOpen = true;
+    setClass('lifton', els.lift, 'sm-ah-lift-on', true);
+    // The banner has to move: it lives in this same band, and CARGO FULL over
+    // the lift panel would cover the row that answers it.
+    setClass('liftbump', els.root, 'sm-ah-lift-on', true);
+    if (SM.sound && SM.sound.play) SM.sound.play('ui');
+  }
+
+  function hideLift() {
+    if (!liftOpen) return;
+    liftOpen = false;
+    setClass('lifton', els.lift, 'sm-ah-lift-on', false);
+    setClass('liftbump', els.root, 'sm-ah-lift-on', false);
+  }
+
+  function refreshLift() {
+    var a = A();
+    // No lift in this build: no panel, and nothing else in here ever runs.
+    if (!a || !a.getBoardable || !a.getLevels) { hideLift(); return; }
+
+    var at = num(a.getBoardable(), -1);
+    if (at !== liftAt) {
+      liftAt = at;
+      // Driving off a platform, or onto a different one, is a NEW offer — a
+      // dismissal only ever applies to the station it was made at.
+      liftDismissed = -1;
+      liftSig = '';
+    }
+    if (at < 0 || liftDismissed === at) { hideLift(); return; }
+
+    var levels = a.getLevels();
+    if (!levels || typeof levels.length !== 'number' || !levels.length) { hideLift(); return; }
+    showLift();
+
+    var cash = num(a.getCash && a.getCash(), 0);
+    var i, L, next = -1;
+    for (i = 0; i < levels.length; i++) {
+      if (levels[i] && !levels[i].owned) { next = i; break; }
+    }
+    var nextPrice = (next >= 0 && levels[next]) ? num(levels[next].price, 0) : 0;
+
+    /* The change-detector, same discipline as the manifest: one cheap string
+     * covering everything a repaint could alter, so the array walk below only
+     * happens when the list has actually moved. Affordability is in it because
+     * BUY greys out on cash, which the player can change from this very panel. */
+    var sig = at + '/' + levels.length + '/' + next + '/' + (cash >= nextPrice ? 'y' : 'n') + '/';
+    for (i = 0; i < levels.length; i++) {
+      L = levels[i];
+      if (!L) continue;
+      sig += (L.owned ? 'o' : 'x') + Math.round(num(L.depthM, 0)) + ':' + Math.round(num(L.price, 0)) + '|';
+    }
+    if (sig === liftSig) return;
+    liftSig = sig;
+
+    setText('liftwhere', els.liftWhere, 'AT ' + liftLabel(levels[at], at));
+
+    var used = 0, r;
+
+    /* SURFACE IS THE FIRST ROW, ALWAYS, and it is the one that ends the run.
+     * It is rideTo(0) like any other station, but it is also the sale, the day
+     * counter and the end of the expedition — so it leads, it is styled apart,
+     * and the note line spells out what it does. */
+    r = liftRow(used++);
+    r.level = 0;
+    r.node.style.display = '';
+    r.node.className = 'sm-ah-liftrow sm-ah-liftrow-surface';
+    setText('lfn0', r.name, 'SURFACE');
+    setText('lfd0', r.dep, 'SELL THE HOLD');
+    setText('lft0', r.tag, 'UP');
+    r.go.disabled = false;
+    r.buy.style.display = 'none';
+
+    // Then the stations the company holds, shallowest first — the same order the
+    // shaft is dug in, so the list reads as a lift and not as a menu.
+    for (i = 1; i < levels.length; i++) {
+      L = levels[i];
+      if (!L || !L.owned) continue;
+      r = liftRow(used++);
+      r.level = i;
+      r.node.style.display = '';
+      r.node.className = 'sm-ah-liftrow' + (i === at ? ' sm-ah-liftrow-here' : '');
+      setText('lfn' + (used - 1), r.name, liftLabel(L, i));
+      setText('lfd' + (used - 1), r.dep, fmt(num(L.depthM, 0)) + ' m');
+      setText('lft' + (used - 1), r.tag, i === at ? 'HERE' : '');
+      // You cannot ride to where you are standing.
+      r.go.disabled = (i === at);
+      r.buy.style.display = 'none';
+    }
+
+    // ...and the one station that can be bought. Nothing past it is offered: a
+    // shaft is cut downwards, so there is no skipping ahead to pay for.
+    var note = 'SURFACE SELLS THE HOLD AND ENDS THE RUN.';
+    if (next >= 0) {
+      L = levels[next];
+      r = liftRow(used++);
+      r.level = next;
+      r.node.style.display = '';
+      r.node.className = 'sm-ah-liftrow sm-ah-liftrow-next';
+      setText('lfn' + (used - 1), r.name, liftLabel(L, next));
+      setText('lfd' + (used - 1), r.dep, fmt(num(L.depthM, 0)) + ' m');
+      setText('lft' + (used - 1), r.tag, '$' + fmt(nextPrice));
+      r.go.disabled = true;
+      r.buy.style.display = '';
+      /* A LEVEL *CAN* BE CUT FROM UNDERGROUND. This block briefly said the
+       * opposite, quoting a refusal that adv.js had by then already removed —
+       * the classic parallel-work skew, fixed at integration. The seam that
+       * makes it legal: js/advterrain.js listens for `lift:bought` and re-cuts
+       * the shaft and the new station room through the RESIDENT rows in the
+       * same frame (its reopenLift), which Agent A verified end-to-end — buy at
+       * depth, drive the fresh void, board the new cage, ride out.
+       *
+       * So BUY is live whenever the money is there. It greys only on cash, the
+       * label never changes, and the reason goes in the note line — the same
+       * rule the workshop and the results footer follow. Buying while parked at
+       * a cage is also the diegetic ideal: you are AT the lift, paying to make
+       * it go deeper. Note getLevel() deliberately does not move — the new
+       * station has to be RIDDEN to, and the repaint (sig includes ownership)
+       * puts the ridable row up the moment the purchase lands. */
+      var short = nextPrice - cash;
+      r.buy.disabled = short > 0;
+      if (short > 0) note = 'NEED $' + fmt(short) + ' MORE TO CUT ' + liftLabel(L, next) + '.';
+      else note = liftLabel(L, next) + ' COSTS $' + fmt(nextPrice) + ' — CUT IT FROM HERE.';
+    } else {
+      note = 'THE SHAFT IS FULLY CUT.  ' + note;
+    }
+    setText('liftnote', els.liftNote, note);
+
+    for (i = used; i < liftRows.length; i++) {
+      if (liftRows[i]) {
+        liftRows[i].node.style.display = 'none';
+        liftRows[i].level = -1;
+      }
+    }
   }
 
   /* =====================================================================
@@ -862,6 +1162,8 @@ SM.advhud = (function () {
     if (!built) return;
     visible = false;
     closePause(true);
+    // The lift panel is a SIBLING of .sm-ah, so it does not fade out with it.
+    hideLift();
     els.root.classList.remove('sm-ah-on');
     els.btns.classList.remove('sm-ah-on');
   }
@@ -880,6 +1182,19 @@ SM.advhud = (function () {
     // shaft. paintDrawer() runs AFTER last = {} above, so the write lands.
     drawerOpen = false;
     paintDrawer();
+    /* THE LIFT STARTS THE RUN CLOSED AND UNASKED.
+     * -2 rather than -1 so the very first poll always registers as a change and
+     * the panel is painted from scratch. It matters less than it looks: adv.js
+     * ARMS a station only once the machine has driven clear of it, so the cage the
+     * run began in reports -1 until the player has actually gone somewhere — which
+     * is the right behaviour, and the reason the panel never greets a descent.
+     * liftOpen is forced true so the hideLift() below writes through the
+     * freshly-cleared `last` cache instead of being guarded out. */
+    liftAt = -2;
+    liftSig = '';
+    liftDismissed = -1;
+    liftOpen = true;
+    hideLift();
   }
 
   /* =====================================================================
@@ -905,9 +1220,20 @@ SM.advhud = (function () {
       if (dumpTimer <= 0) { dumpArmed = -1; paintDumpArm(); }
     }
 
-    /* --- depth, and the company balance -------------------------------- */
-    var depth = num(a.getDepthM && a.getDepthM(), 0);
-    setText('depth', els.depth, fmt(depth) + ' m');
+    /* --- how far back the door is, and the company balance -------------- */
+    /* THREE SOURCES, BEST FIRST. adv.js exports getDistanceToExitM() precisely
+     * so a gauge does not have to know about METERS_PER_UNIT; getDistanceToExit()
+     * in world units is the same number needing one multiply; and DEPTH is the
+     * last resort, because a partial adv.js without either getter would otherwise
+     * pin this cell to 0 m and quietly tell the player they are standing in the
+     * doorway. Before the lift the two were the same thing anyway — the mouth was
+     * the only exit. */
+    var exitM = num(a.getDistanceToExitM && a.getDistanceToExitM(), -1);
+    if (exitM < 0) {
+      var toExit = num(a.getDistanceToExit && a.getDistanceToExit(), -1);
+      exitM = (toExit >= 0) ? toExit * M_PER_UNIT : num(a.getDepthM && a.getDepthM(), 0);
+    }
+    setText('depth', els.depth, fmt(exitM) + ' m');
     /* Was TO SURFACE, which is the same number as DEPTH — the mouth is depth 0.
      *
      * The save record is a FALLBACK on purpose. Every other reading here comes
@@ -991,6 +1317,12 @@ SM.advhud = (function () {
     if (slowTimer >= 1 / SLOW_HZ) {
       slowTimer = 0;
       refreshManifest();
+      /* THE LIFT IS POLLED HERE AND NOWHERE ELSE. getBoardable() is a question
+       * about where the machine is standing; asking it 60 times a second would
+       * cost an array walk per fixed step to answer a question that changes at
+       * crawling speed. refreshManifest() runs first on purpose — it publishes
+       * the hold's height, which is what keeps the panel off the hold. */
+      refreshLift();
       refreshScanner();
       if (pauseOpen) paintPauseStats();
     }

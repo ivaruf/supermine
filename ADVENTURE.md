@@ -169,7 +169,11 @@ input.update -> (adv.update | level.update) -> terrain.update -> vehicle.update
 
 // render, inside the world transform
 terrain -> particles -> [upgrades if classic] -> vehicle -> effects
-   -> [adv.renderWorld if adventure]        <- LAST: darkness falls on everything
+   -> [adv.renderWorld if adventure]
+      = scanner.render -> effects.renderDarkness -> advterrain.renderLit
+        (renderLit is the EMISSIVE pass: the lift's red level boards draw AFTER
+         the darkness because a lit sign is a light source, not lit geometry —
+         drawn before it they were crushed to black at starter lights)
 ```
 
 * `SM.adv.holdsSim()` zeroes the fixed-step accumulator on every meta screen.
@@ -189,6 +193,37 @@ active. `SM.ui.leaveAdventure()` puts the menu back — `SM.adv.close()` must
 call it.
 
 ---
+
+## 2b. The lift (depth levels) — seams as shipped
+
+The mine entrance is a lift; purchasable stations snap to the geological
+strata. Station cage: circle of radius `ADV.EXIT_RADIUS` at
+`(getMouthX(), yOfDepth(depthM))`.
+
+```
+SM.adv.getLevels()            LIVE [{i,name,depthM,y,price,owned}], i=0 surface
+SM.adv.getLevel()             station the run is based at
+SM.adv.buyLevel(i)            next unowned level only; LEGAL MID-RUN — advterrain
+                              re-cuts the shaft through resident rows on
+                              `lift:bought` (reopenLift), verified end-to-end
+SM.adv.rideTo(i)              free; i=0 extracts; needs getBoardable() >= 0
+SM.adv.getBoardable()         deep cages boardable by definition; only the
+                              SURFACE keeps the leave-first arming rule (a deep
+                              station acts only on explicit rideTo, so arming
+                              would just lock a returning machine out)
+SM.adv.getDistanceToExit[M]() distance to the NEAREST OWNED station — the
+                              reserve maths and TURN BACK follow automatically
+SM.mines.levelsOf(id)         [{name,depthM,price,layerIndex,rate}]
+SM.save                       mines[id].levels = integer count (no holes)
+Events: lift:bought {i,price,mineId}   lift:ride {from,to}
+```
+
+Machine spawn/park at a station sits `ADV_SPAWN_Y` (120 units = 12 m) below the
+station centre — remember it when asserting depth in tests. Descending
+auto-buys a full tank (partial if cash is short); the prep fuel widget is gone.
+The shaft is STRUCTURAL carving derived from ownership at generation time — it
+must never be written into the player mask (mask ones == carved count is the
+regression check).
 
 ## 3. Module contracts
 

@@ -35,6 +35,11 @@ PRESSURE LOCK → THE MOTHERLODE → THE CORE. Paired upgrade gates offer a SAFE
 HARD route — harder rock, rarer loot, stronger upgrades. 13 upgrade effects, all
 repeatable with tiered falloff, all visible on the machine.
 
+## Roadmap
+
+Adventure mode's design backlog lives in `ROADMAP.md` — the lift/depth-level
+plan, station infrastructure, level events, and the unbuilt machine upgrades.
+
 ## Code
 
 Plain ES5-style JavaScript on a single `SM` namespace, classic script tags (works

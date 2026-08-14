@@ -75,7 +75,15 @@
 //         classic value baked into each particle: spoil nobody buys pops nothing
 //         at all (it was ~97% of the floaters), and ore pops the same price the
 //         hold and the extraction screen quote.
-const VERSION = 'v1.6.10';
+// v1.7.0  DEPTH LEVELS: the mine entrance is a lift. Stations snap to the
+//         geological strata and are purchased progressively (each mine's levels
+//         finance the next mine's rights); riding is free; boarding at the
+//         surface extracts. Big red LED depth boards at every station — drawn
+//         as light sources above the darkness composite. HUD depth gauge is now
+//         EXIT distance (nearest owned station), which the fuel reserve and
+//         TURN BACK follow. Prep fuel widget removed: DESCEND buys the tank.
+//         Also: loading a slot no longer inherits another slot's mining rights.
+const VERSION = 'v1.7.0';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

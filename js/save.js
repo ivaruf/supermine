@@ -17,6 +17,7 @@
  *     mines: {
  *       old_creek: {
  *         owned: true,
+ *         levels: 2,                          // LIFT STATIONS bought, see below
  *         visits: 12,
  *         deepestM: 173,                      // best depth reached, for the map card
  *         mask: '<rle>',                      // carved cells, see below
@@ -26,6 +27,19 @@
  *     seen: { foothills: 1, ... },  // world-map regions surveyed (js/advui.js)
  *     stats: { hauled: 0, bestHaul: 0, runs: 0 }
  *   }
+ *
+ * LIFT STATIONS — `levels` IS A COUNT, NOT A SET
+ *   A company buys the levels of a mine strictly in order, cheapest (shallowest)
+ *   first, so the only thing worth storing is HOW MANY: `levels: 3` means levels
+ *   1, 2 and 3 are owned and 4 is the next one for sale. A set would let a save
+ *   describe a lift with a hole in it, which no purchase path can produce and
+ *   which every consumer would then have to defend against.
+ *
+ *   Level 0 is the SURFACE station. It is not stored: it is owned by definition
+ *   the moment the company holds the mining rights, exactly as a price-0 mine is
+ *   always `owned`. A missing or nonsense `levels` migrates to 0 — no levels
+ *   bought — which is the only safe direction and is what every record written
+ *   before the lift existed says.
  *
  * HULL INTEGRITY — MIND THE UNITS
  *   Stored here as a 0..1 FRACTION, because that is what SM.adv.getIntegrity()
@@ -136,6 +150,10 @@ SM.save = (function () {
   var MAX_CASH = 1e12;
   var MAX_SEEN = 64;           // world-map region keys; the catalogue has 7
   var MAX_KEY = 40;            // characters in any id used as an object key
+  /* Lift stations bought in one mine. The deepest mine in the catalogue sells 4,
+   * so this is a paranoia ceiling on a hand-edited save, not a game rule —
+   * SM.adv clamps to what SM.mines.levelsOf() actually offers. */
+  var MAX_LEVELS = 16;
 
   /* Set true to have every key validateRecord() discards printed once. Left OFF
    * because the build's bar is zero console output, but the list is always
@@ -507,7 +525,7 @@ SM.save = (function () {
 
   var RECORD_KEYS = ['v', 'company', 'day', 'cash', 'integrity', 'rig',
                      'mines', 'seen', 'stats'];
-  var MINE_KEYS = ['owned', 'visits', 'deepestM', 'mask', 'piles'];
+  var MINE_KEYS = ['owned', 'levels', 'visits', 'deepestM', 'mask', 'piles'];
 
   function knownMine(id) {
     if (!SM.mines || !SM.mines.count || SM.mines.count() === 0) return true;
@@ -515,7 +533,7 @@ SM.save = (function () {
   }
 
   function blankMineState() {
-    return { owned: false, visits: 0, deepestM: 0, mask: '', piles: [] };
+    return { owned: false, levels: 0, visits: 0, deepestM: 0, mask: '', piles: [] };
   }
 
   function validateMineState(o) {
@@ -523,6 +541,10 @@ SM.save = (function () {
     if (!o || typeof o !== 'object') return out;
     auditKeys(o, MINE_KEYS, 'mines[]');
     out.owned = !!o.owned;
+    /* LIFT STATIONS BOUGHT, as a count. Missing -> 0: a company from before the
+     * lift existed owns the surface station and nothing else, which is exactly
+     * how it played. See the header note. */
+    out.levels = Math.floor(num(o.levels, 0, 0, MAX_LEVELS));
     out.visits = Math.floor(num(o.visits, 0, 0, 1e7));
     out.deepestM = Math.floor(num(o.deepestM, 0, 0, 1e6));
     out.mask = (typeof o.mask === 'string' && o.mask.length <= MASK_MAX_CHARS)
@@ -865,6 +887,28 @@ SM.save = (function () {
 
   function ownedCount() { return ownedIn(record); }
 
+  /* --- lift stations ---------------------------------------------------
+   * Named levelsOwned/setLevelsOwned rather than get/setLevels on purpose:
+   * SM.adv.getLevels() returns the STATION TABLE and these return a COUNT, and
+   * two functions one namespace apart with the same name and different units is
+   * how a bug gets written twice. */
+
+  /** How many lift levels are bought in this mine. 0 when nothing is loaded. */
+  function levelsOwned(id) {
+    var m = record && record.mines ? record.mines[id] : null;
+    if (!m) return 0;
+    var n = Math.floor(num(m.levels, 0, 0, MAX_LEVELS));
+    return n;
+  }
+  /** Persist the count. SM.adv is the only caller; it clamps to the catalogue. */
+  function setLevelsOwned(id, n) {
+    var m = mineState(id);
+    if (!m) return false;
+    m.levels = Math.floor(num(n, 0, 0, MAX_LEVELS));
+    markDirty();
+    return true;
+  }
+
   /* --- hull integrity -------------------------------------------------
    * js/adv.js may keep writing record.integrity directly; these exist so that
    * nothing ELSE has to know whether the stored unit is a fraction or a point.
@@ -979,6 +1023,8 @@ SM.save = (function () {
     isSeen: isSeen,
     setSeen: setSeen,
     ownedCount: ownedCount,
+    levelsOwned: levelsOwned,
+    setLevelsOwned: setLevelsOwned,
     storeMask: storeMask,
     loadMask: loadMask,
     setPiles: setPiles,

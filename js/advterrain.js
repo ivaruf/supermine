@@ -83,6 +83,14 @@
  *
  *   MOUTH CHAMBER   an excavated portal at the top so the machine is not born
  *                   buried, and so EXIT_RADIUS is reachable.
+ *   THE LIFT        the one piece of geology that is not geology: a vertical
+ *                   shaft at the mouth's x, carved down to the deepest STATION
+ *                   the player owns, with a chamber, a platform, worklights, a
+ *                   cage and a big red depth readout at each of them. It is
+ *                   INFRASTRUCTURE — derived from SM.adv.getLevels() at
+ *                   GENERATION time and never written into the carve mask, so it
+ *                   exists in bands nobody has visited and vanishes again in a
+ *                   save that never bought the level. See "THE LIFT" below.
  *   BEDROCK FLOOR   below the mine's stated depth. The bottom of a mine is
  *                   expressed as HARDNESS (26), not as an invisible wall.
  *   MOTHERLODE      the money shot. A big natural cavern whose far WALL is
@@ -232,6 +240,76 @@ SM.advterrain = (function () {
   var SKY_DEPTH = 300;         // world units of daylight ramp above the mouth
   var FLOOR_PAD_M = 60;        // metres of bedrock modelled below the bottom
 
+  /* --- THE LIFT: the shaft, the stations, and the red readout ----------
+   * The mine mouth is a LIFT. The player buys STATIONS at depth, rides between
+   * the ones they own for free, and drills OUTWARD from them — so the vertical
+   * axis stops being a journey to be re-driven at the start of every run and
+   * becomes something they own.
+   *
+   * All of it is INFRASTRUCTURE, which in this file means one specific thing:
+   * it is carved by the GENERATOR out of the set of owned stations, and never
+   * through the carve mask. The mask persists what the PLAYER dug and is saved
+   * with the company (see the header); the shaft has to be there in bands
+   * nobody has ever visited, and it has to be absent again in a save that never
+   * bought the level. Ownership in, geology out, no history in between — which
+   * is also exactly what keeps generation deterministic: same ownership set,
+   * same band, same result, whether the band is met on the way down or refilled
+   * from the side an hour later.
+   * ------------------------------------------------------------------ */
+  var SHAFT_HALF = 150;        // half-width of the carved column. 300 units is
+                               // twice the starting cutter, clears the widest
+                               // hull in the workshop, and is wide enough to
+                               // hang the level board across — so "drive down
+                               // your own shaft" never degrades into "grind
+                               // down your own shaft".
+  var SHAFT_SET_PITCH = 112;   // world units between the shaft's timber sets
+  /* THE STATION CHAMBER IS A ROOM, NOT A BUBBLE. The mouth chamber is a circle
+   * and reads as a hole blasted into a hillside, which is what it is. A station
+   * is excavated to hold a platform, so it is a SUPERELLIPSE (exponent 4):
+   * square-ish walls, rounded corners, full width right up to the ceiling.
+   *
+   * 600 x 400 is sized off THE MACHINE, which is about 340 units long with its
+   * drill out and 150 wide — a room that only just contains it reads as a
+   * cupboard and leaves nowhere to put the sign. It also means the whole
+   * EXIT_RADIUS (200) cage zone is inside the excavation, so the lift is always
+   * reachable from anywhere in the room. */
+  var STATION_RX = 300;
+  var STATION_RY = 200;
+  var STATION_MAX = 16;        // stations one mine may hold
+  var LIFT_POLL = 8;           // steps between ownership re-reads (see update)
+  /* THE SUMP. The shaft is carved this much past the deepest station's floor,
+   * and it is where the story of the NEXT level is told: boards across the
+   * bottom, and the same depth board switched off. Without it the "closed
+   * continuation" would be painted behind solid rock, where nobody can see it —
+   * and a station platform with no shaft opening under it does not read as a
+   * landing on a shaft at all. */
+  var SHAFT_SUMP = 150;
+  var HINT_H = 215;            // how far the boarded continuation fades on down
+  /* HOW HIGH THE LEVEL BOARD HANGS, as the distance from the station centre to
+   * the board's BOTTOM edge.
+   *
+   * THIS NUMBER IS SET BY THE DARKNESS COMPOSITE, NOT BY THE CARPENTRY. The board
+   * used to hang clear above the excavation (STATION_RY + 18 + its own height, so
+   * ~330 up), which looked right in a lit screenshot and was invisible in the
+   * game: js/effects.js paints a black radial gradient centred on the machine and
+   * everything past SM.rig.getLightRadius() is 94% black. A new company's lights
+   * are 380, the machine parks ~120 BELOW the station centre and the pool leans
+   * another ~60 the way the drill points, so a board 330 above the centre sat
+   * ~510 from the light — flat 6% transmission. Measured on a 390-wide phone at
+   * the default light tier: the figures were a dark red smear and the stratum row
+   * was gone entirely.
+   *
+   * 120 puts the board's centre ~356 from the pool's centre, which is the SAME
+   * BAND THE TWO STATION WORKLIGHTS ARE IN (354) — so it reads as one of the
+   * lamps rather than as something painted behind them, which is exactly the
+   * brief. It cannot go lower: the parked hull's top is ~30 above the station
+   * centre and the cage's roof plate ~35, so this leaves 85-90 units of daylight
+   * under the board and the machine still never stands in front of it. It is
+   * still IN THE SHAFT and still read from above on the way down; it now simply
+   * overlaps the headframe's cap beam, which is where a real level board is
+   * bolted anyway (drawStation paints the board after the frame). */
+  var BOARD_RISE = 120;
+
   /* --- structure grids -----------------------------------------------
    * Every structure family owns a grid of cells; a cell either contains one
    * structure or does not, decided by one hash of its integer index. That is
@@ -364,6 +442,31 @@ SM.advterrain = (function () {
   var peakSolid = 0, lowFree = 1e9;
   var peakWinW = 0, peakWinH = 0; // measured window extent, for the hash audit
   var peakLiveW = 0, peakLiveH = 0;
+
+  /* ----- the LIFT ------------------------------------------------------
+   * Resolved from SM.adv.getLevels() and FEATURE-DETECTED, because Agent 1 owns
+   * that array: a build where it is absent must behave exactly as this file did
+   * before the lift existed — the mouth, and nothing else.
+   *
+   * The arrays are sorted SHALLOWEST FIRST, so stY[stN-1] is the deepest owned
+   * station and therefore the bottom of the carved shaft.
+   * ------------------------------------------------------------------ */
+  var liftApi = false;            // getLevels() answered at all
+  var stN = 0;
+  var stY = new Float32Array(STATION_MAX);
+  var stDepthM = new Float32Array(STATION_MAX);
+  var stLevel = new Int32Array(STATION_MAX);
+  var stArt = [];                 // the pre-rendered readout panel, per station
+  var shaftBotY = 0;              // the shaft is carved from the ceiling to here
+  var liftReach = 0;              // no cell with |x| past this can be lift void.
+                                  // 0 means nothing is carved at all, and it is
+                                  // the one test the hot path pays for.
+  var nextOn = false;             // is there an unowned level below the last?
+  var nextY = 0, nextArt = null;
+  var liftSig = -2;               // ownership signature, for the poll
+  var liftTick = 0;
+  var liftPhase = 0;              // monotonic; drives the station lamp flicker
+  var liftFlick = 1;             // last drawLift flicker, reused by renderLit()
 
   /* ----- focus override (diagnostics / scripted tests) ---------------- */
   var focusOn = false, focusFX = 0, focusFY = 0;
@@ -519,6 +622,180 @@ SM.advterrain = (function () {
     dimsOut.x0 = x0; dimsOut.y0 = y0;
     dimsOut.length = cols * rows;
     return dimsOut;
+  }
+
+  /* ======================================================================
+   * THE LIFT — resolving which stations exist, and opening them
+   *
+   * THE SEAM. js/adv.js owns the level definitions and publishes them as a LIVE
+   * array of {i, name, depthM, y, price, owned}, i = 0 being the surface (the
+   * mouth itself, which this module has always drawn). This side of the seam
+   * does two things with that: it resolves the OWNED entries into flat arrays
+   * once, and it notices when the set changes.
+   *
+   * IT NOTICES TWICE, ON PURPOSE. `lift:bought` is the fast path — the frame the
+   * player presses BUY, the shaft opens. The poll in update() is the backstop,
+   * because the alternative to a redundant integer compare eight times a second
+   * is a player staring at solid rock where a station they just paid for should
+   * be, and that is not a failure mode worth being tidy about.
+   * =================================================================== */
+
+  /** The live level array, or null while Agent 1's API is absent. */
+  function levelsArray() {
+    if (!SM.adv || typeof SM.adv.getLevels !== 'function') return null;
+    var ls = null;
+    try { ls = SM.adv.getLevels(); } catch (e) { ls = null; }
+    if (!ls || typeof ls.length !== 'number') return null;
+    return ls;
+  }
+
+  /**
+   * A cheap integer signature of WHICH levels are owned. No allocation and no
+   * strings: this runs on a poll, and the answer is nearly always "unchanged".
+   * -1 means "there is no levels API", which is itself a state worth detecting.
+   */
+  function levelsSig() {
+    var ls = levelsArray();
+    if (!ls) return -1;
+    var s = ls.length | 0;
+    for (var i = 0; i < ls.length; i++) {
+      var L = ls[i];
+      if (!L || !L.owned) continue;
+      s = (Math.imul(s, 33) + (((L.i | 0) * 1013) ^ (Math.round(num(L.depthM, 0)) | 0))) | 0;
+    }
+    return s;
+  }
+
+  /** Insert one owned station, keeping the arrays sorted shallowest first. */
+  function insertStation(y, depthM, level, name) {
+    if (stN >= STATION_MAX) return;
+    var k = stN;
+    while (k > 0 && stY[k - 1] > y) {
+      stY[k] = stY[k - 1]; stDepthM[k] = stDepthM[k - 1];
+      stLevel[k] = stLevel[k - 1]; stArt[k] = stArt[k - 1];
+      k--;
+    }
+    stY[k] = y; stDepthM[k] = depthM; stLevel[k] = level;
+    stArt[k] = readoutFor(level, depthM, name, true);
+    stN++;
+  }
+
+  /**
+   * Re-read the level table and rebuild everything derived from it.
+   *
+   * Cheap enough to call on an event and idempotent enough to call on a poll.
+   * The readout panels come out of a cache keyed by what is printed on them, so
+   * buying the fourth level does not re-bake the first three.
+   */
+  function resolveLevels() {
+    stN = 0;
+    liftApi = false;
+    nextOn = false;
+    nextArt = null;
+    liftReach = 0;
+    // With no station owned there is no shaft; the mouth chamber's own floor
+    // stands in as "how far down the lift reaches" for the tests below.
+    shaftBotY = A.MINE_CEILING_Y + MOUTH_CY + MOUTH_R * 0.74;
+    liftSig = levelsSig();
+
+    var ls = levelsArray();
+    if (!ls) return;
+    liftApi = true;
+
+    /* A station may not punch into the bedrock floor: the bottom of a mine is
+     * expressed as hardness, and a lift landing carved through it would be a
+     * hole in the one thing that is not supposed to have holes in it. */
+    var botLimit = floorY - STATION_RY - SP;
+    var topLimit = A.MINE_CEILING_Y + MOUTH_R;
+    var i, L, y;
+
+    for (i = 0; i < ls.length; i++) {
+      L = ls[i];
+      if (!L || !L.owned) continue;
+      if ((L.i | 0) <= 0) continue;                 // i = 0 is the surface
+      y = num(L.y, NaN);
+      if (!(y === y)) y = yOfDepth(num(L.depthM, 0));
+      if (!(y > topLimit) || y > botLimit) continue;
+      insertStation(y, num(L.depthM, depthOfY(y)), L.i | 0, L.name || '');
+    }
+
+    if (stN) {
+      shaftBotY = stY[stN - 1] + STATION_RY + SHAFT_SUMP;
+      if (shaftBotY > floorY - SP) shaftBotY = floorY - SP;
+      liftReach = (SHAFT_HALF > STATION_RX ? SHAFT_HALF : STATION_RX) + 2;
+    }
+
+    /* THE NEXT LEVEL DOWN, unowned: the shallowest one below what the shaft
+     * already reaches. Drawn as a closed continuation (see drawHint) so "there
+     * is more down there, and it is for sale" is a thing the WORLD says, not
+     * only a row in a menu.
+     *
+     * Only when at least one station is owned, because the hint is drawn in the
+     * SUMP and there is no sump until there is a shaft. Before the first
+     * purchase the boards would be painted behind solid rock, and the "there is
+     * more to buy" job belongs to the UI at that point anyway. */
+    if (!stN) return;
+    for (i = 0; i < ls.length; i++) {
+      L = ls[i];
+      if (!L || L.owned || (L.i | 0) <= 0) continue;
+      y = num(L.y, NaN);
+      if (!(y === y)) y = yOfDepth(num(L.depthM, 0));
+      if (!(y > shaftBotY)) continue;
+      if (nextOn && y >= nextY) continue;
+      nextOn = true;
+      nextY = y;
+      nextArt = readoutFor(L.i | 0, num(L.depthM, depthOfY(y)), L.name || '', false);
+    }
+  }
+
+  /**
+   * True where the lift's own excavation has removed the rock. Kept as one
+   * function so the generator, the scanner and the renderer cannot disagree
+   * about where the shaft is — the same argument driftOfCell() makes.
+   */
+  function inLiftVoid(x, y) {
+    if (!liftReach) return false;
+    if (x < -liftReach || x > liftReach) return false;
+    if (y < shaftBotY && x > -SHAFT_HALF && x < SHAFT_HALF) return true;
+    for (var i = 0; i < stN; i++) {
+      var dy = (y - stY[i]) / STATION_RY;
+      if (dy < -1 || dy > 1) continue;
+      var dx = x / STATION_RX;
+      // The ROOM: |dx|^4 + |dy|^4 < 1. Squaring twice keeps it to multiplies.
+      dx *= dx; dy *= dy;
+      if (dx * dx + dy * dy < 1) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A LEVEL WAS BOUGHT WHILE ITS BAND IS ALREADY RESIDENT.
+   *
+   * THE WHOLE RESIDENT WINDOW, NOT A PATCH. The window is a rectangle of
+   * GENERATED cells and generation is what decides where the shaft is, so the
+   * honest way to re-open a band that was filled under the old ownership is to
+   * throw the resident set away and re-run the fill under the new one:
+   * flushAll() frees every particle (and un-flags the dumped heaps, so they come
+   * straight back), then the one-shot streamPass refills exactly what the camera
+   * wants. Patching only the shaft's own columns would mean despawning a
+   * sub-rectangle, and particles.js frees OUTSIDE a rect and not inside one — a
+   * partial cut is precisely the double-density bug the header warns about.
+   *
+   * It costs one full fill in the frame the player pressed BUY, which is a frame
+   * they are looking at a menu in. Entering a mine already does the same thing.
+   */
+  function reopenLift() {
+    if (!active || !haveN) return;
+    flushAll();
+    streamPass(1e9);
+    spawnReadyPiles();
+    SM.particles.rebuildGrid();
+  }
+
+  function onLiftBought() {
+    if (!loaded) return;
+    resolveLevels();
+    reopenLift();
   }
 
   /* ======================================================================
@@ -1137,6 +1414,20 @@ SM.advterrain = (function () {
       return M_BEDROCK;
     }
 
+    /* --- THE LIFT: the shaft column and the station chambers ----------
+     * Deliberately BELOW the floor test — bedrock wins, always — and above the
+     * blobs, because the shaft was cut through whatever was in the way and a
+     * cavern's ore shell crossing it was taken out a long time ago.
+     *
+     * Cheap on the hot path, which matters: this function runs once per cell.
+     * `liftReach` is 0 until a station is actually owned, and past that the
+     * x-range compare inlined here rejects every cell in a 5200-unit-wide mine
+     * that is nowhere near the shaft — which is 95% of them. Only the survivors
+     * pay for the call, and the call is shared with the scanner and the renderer
+     * so the three can never disagree about where the shaft is.
+     * ---------------------------------------------------------------- */
+    if (liftReach && px > -liftReach && px < liftReach && inLiftVoid(px, py)) return -1;
+
     /* --- blobs: motherlode, then cavern, then pocket ------------------ */
     for (i = 0; i < bbN; i++) {
       dx = (px - bbX[i]) / bbRX[i];
@@ -1606,16 +1897,45 @@ SM.advterrain = (function () {
     var kT = yT - LOOSE_KEEP_PAD, kB = yB + LOOSE_KEEP_PAD;
     var mx = focusX(), my = focusY();
     var hx = WIN_MAX_W * 0.5, hy = WIN_MAX_H * 0.5;
-    if (kL < mx - hx) kL = mx - hx;
-    if (kR > mx + hx) kR = mx + hx;
-    if (kT < my - hy) kT = my - hy;
-    if (kB > my + hy) kB = my + hy;
+
+    /* THE HASH CLAMP CAN CUT INSIDE THE WINDOW, AND IT HAS TO CUT ON CELL EDGES.
+     *
+     * Normally this clamp sits well outside the solid window and only bounds
+     * stray debris. But the window is SIZED from the camera and PLACED around the
+     * streaming focus, so when the two diverge the bias (up to WINDOW_BIAS of the
+     * half-extent) can push the window's far edge more than WIN_MAX_W/2 from the
+     * focus and the clamp lands INSIDE it. That is not exotic: drive to the far
+     * wall of a 5200-wide mine and camera.js stops panning (ADV_WALL_PEEK) while
+     * the machine keeps going, which is exactly that divergence. Measured, with a
+     * scripted focus 2600 units from the camera, a returning window came back at
+     * 1837 of 5106 solids and stayed there.
+     *
+     * Two things were wrong and both are fixed here. The cut was at an arbitrary
+     * x, which splits a column and leaves half a strip alive — the double-density
+     * hazard the header warns about — so it is snapped to the cell lattice. And
+     * the emptied strips still counted as RESIDENT, so the fill loop never
+     * regenerated them: a hole in the ground the streamer believed it had filled,
+     * permanent until the window jumped clear and re-filled from scratch. Folding
+     * the clamp into the resident rectangle is what makes it heal. */
+    if (kL < mx - hx) kL = colEdgeX(Math.ceil((mx - hx - x0) / SP));
+    if (kR > mx + hx) kR = colEdgeX(Math.floor((mx + hx - x0) / SP));
+    if (kT < my - hy) kT = rowTopY(Math.ceil((my - hy - y0) / SP));
+    if (kB > my + hy) kB = rowTopY(Math.floor((my + hy - y0) / SP));
     SM.particles.despawnOutsideRect(kL, kT, kR, kB, false);
 
     if (haveC0 < c0) haveC0 = c0;
     if (haveC1 > c1) haveC1 = c1;
     if (haveR0 < r0) haveR0 = r0;
     if (haveR1 > r1) haveR1 = r1;
+    /* Whatever the clamp emptied is not resident any more. In the ordinary case
+     * these four are no-ops — the keep rect is LOOSE_KEEP_PAD outside the window,
+     * so its cell range is strictly wider than the resident one. */
+    var kc0 = colOfX(kL), kc1 = colOfX(kR);
+    var kr0 = cellYOf(kT), kr1 = cellYOf(kB);
+    if (haveC0 < kc0) haveC0 = kc0;
+    if (haveC1 > kc1) haveC1 = kc1;
+    if (haveR0 < kr0) haveR0 = kr0;
+    if (haveR1 > kr1) haveR1 = kr1;
     if (haveC0 >= haveC1 || haveR0 >= haveR1) haveN = false;
     releasePilesOutside(kL, kT, kR, kB);
 
@@ -1900,6 +2220,10 @@ SM.advterrain = (function () {
     buildLayers(def);
     buildGuaranteedLode();
     buildTiles();
+    // BEFORE the first fill: the shaft and the stations are part of the geology
+    // this mine generates, not something painted on afterwards.
+    liftTick = 0;
+    resolveLevels();
 
     /* Restore the tunnels. Two possible providers, because the mask lives in
      * save.js's record but is this module's array: prefer an already-decoded
@@ -1985,6 +2309,15 @@ SM.advterrain = (function () {
     haveN = false;
     mineStateRef = null;
     mineDef = null;
+    // The lift belongs to the mine, not to the session. endMine() deliberately
+    // keeps it (the world still renders behind the results card); this is the
+    // other half, and it must leave liftReach at 0 so nothing carves.
+    stN = 0;
+    liftApi = false;
+    liftReach = 0;
+    nextOn = false;
+    nextArt = null;
+    liftSig = -2;
   }
 
   /**
@@ -2025,6 +2358,14 @@ SM.advterrain = (function () {
   function update(dt) {
     if (!active) return;
     adoptPiles();
+    /* THE OWNERSHIP POLL. `lift:bought` is the fast path; this is the one that
+     * cannot be forgotten. It is an integer compare over a handful of levels,
+     * eight times a second, and it runs BEFORE streamPass() so the strip filled
+     * this very step already has the new shaft in it. */
+    if (++liftTick >= LIFT_POLL) {
+      liftTick = 0;
+      if (levelsSig() !== liftSig) { resolveLevels(); reopenLift(); }
+    }
     streamPass(CELLS_PER_STEP);
     spawnReadyPiles();
     // AFTER streaming: releasePilesOutside() has already un-flagged any heap
@@ -2042,6 +2383,9 @@ SM.advterrain = (function () {
   function init() {
     resolveMaterials();
     SM.events.on('material:destroyed', onDestroyed);
+    /* A newly bought station must open WITHOUT a page reload. js/adv.js emits
+     * this the moment the purchase clears; update()'s poll is the backstop. */
+    SM.events.on('lift:bought', onLiftBought);
   }
 
   /** HOT: up to ~150 per step. One integer decode and one byte write. */
@@ -2140,8 +2484,11 @@ SM.advterrain = (function () {
     var dx = x - px, dy = y - py;
     var d = Math.sqrt(dx * dx + dy * dy);
     if (d > range) return;
-    // A formation the player has already mined out should stop answering.
+    // A formation the player has already mined out should stop answering — and
+    // so should one the lift's own excavation removed, or the scanner would
+    // point an arrow at ore that is standing in the middle of the shaft.
     if (isCarved(x, y)) return;
+    if (inLiftVoid(x, y)) return;
     addContact(out, x, y, m, d, contactStrength(m, rx, ry, d, range),
                Math.sqrt(rx * ry));
   }
@@ -2582,6 +2929,590 @@ SM.advterrain = (function () {
     ctx.restore();
   }
 
+  /* ======================================================================
+   * THE LIFT, DRAWN
+   *
+   * Three pieces, in the order the eye finds them: the lined shaft you came
+   * down, the station chamber you are standing in, and the BIG RED DEPTH
+   * READOUT that tells you which one it is.
+   * =================================================================== */
+
+  /* --- the depth readout ----------------------------------------------
+   * The one thing a lift must tell you is WHERE YOU ARE, and it is asked for in
+   * big red LED figures. Seven-segment geometry rather than a font, for two
+   * reasons: it reads as an instrument at any size (a 390-wide phone shows this
+   * at ~27 px of digit height, a desktop at ~45), and the DARK segments of every
+   * digit are half of what makes an LED panel look like an LED panel at all.
+   *
+   * PRE-RENDERED ONCE PER STATION INTO AN OFFSCREEN CANVAS. A station's depth
+   * never changes, so laying out segments, measuring text and baking the bloom
+   * per frame would be paying every frame for a picture that is identical every
+   * time. Per frame it is one drawImage and one CACHED radial glow — the same
+   * discipline as drawWorkLights, and for the same reason.
+   * ------------------------------------------------------------------ */
+  var LED_SS = 2;              // supersample of the offscreen art: crisp up to
+                               // a 2x camera scale, and nothing shows above 1.
+  /* Sized so the widest board in the catalogue (a four-figure depth, "-3 000 m")
+   * comes out at 252 world units and still hangs inside the 300-unit shaft. At
+   * the camera scales this mode actually uses that is 42 px of digit height on a
+   * desktop and 26 on a 390-wide phone. */
+  var LED_DW = 30, LED_DH = 52;         // one digit cell
+  var LED_T = 9;                        // segment thickness
+  var LED_GAP = 6, LED_SPACE = 15;      // between digits / the thousands gap
+  var LED_PAD = 15, LED_TAG = 14, LED_LVL = 25;
+
+  /* Segment rectangles of one digit cell, in the order a b c d e f g. A flat
+   * table rather than seven branches: the panel is baked once, so what matters
+   * is that the geometry is readable in one place. */
+  var LED_HB = LED_DW - LED_T * 1.24;         // horizontal bar length
+  var LED_VB = LED_DH * 0.5 - LED_T * 1.06;   // vertical bar length
+  var SEGX = [LED_T * 0.62, LED_DW - LED_T, LED_DW - LED_T, LED_T * 0.62,
+              0, 0, LED_T * 0.62];
+  var SEGY = [0, LED_T * 0.62, LED_DH * 0.5 + LED_T * 0.44, LED_DH - LED_T,
+              LED_DH * 0.5 + LED_T * 0.44, LED_T * 0.62, LED_DH * 0.5 - LED_T * 0.5];
+  var SEGW = [LED_HB, LED_T, LED_T, LED_HB, LED_T, LED_T, LED_HB];
+  var SEGH = [LED_T, LED_VB, LED_VB, LED_T, LED_VB, LED_VB, LED_T];
+  var SEG_ON = ['1111110', '0110000', '1101101', '1111001', '0110011',
+                '1011011', '1011111', '1110000', '1111111', '1111011'];
+  var SEG_MINUS = '0000001';
+
+  var artCache = {};           // what is printed on it -> baked panel
+  var measCtx = null;          // one scratch context for measureText
+
+  /** 2100 -> "-2 100". The thousands gap is a real gap in the segment layout. */
+  function ledFigures(depthM) {
+    var n = Math.round(depthM);
+    if (n < 0) n = 0;
+    var s = '' + n;
+    var out = '-';
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && ((s.length - i) % 3) === 0) out += ' ';
+      out += s.charAt(i);
+    }
+    return out;
+  }
+
+  function measureWith(font, text) {
+    if (!measCtx) measCtx = document.createElement('canvas').getContext('2d');
+    measCtx.font = font;
+    return measCtx.measureText(text).width;
+  }
+
+  function drawGlyph(g, x, y, bits, lit) {
+    var k;
+    /* A DEAD BOARD SHOWS ITS NUMBER FAINTLY AND NOTHING ELSE. Drawing the full
+     * ghost field is what an unpowered LED genuinely looks like, and it reads as
+     * "-888 m" because every digit becomes an 8 — measured by looking at a
+     * screenshot of exactly that. Legible beats literal. */
+    if (!lit) {
+      g.fillStyle = 'rgba(158,62,50,0.40)';
+      for (k = 0; k < 7; k++) {
+        if (bits.charAt(k) !== '1') continue;
+        g.fillRect(x + SEGX[k], y + SEGY[k], SEGW[k], SEGH[k]);
+      }
+      return;
+    }
+
+    /* The dark segments first: an LED display is a grid of segments that are OFF
+     * with a few switched on, and drawing only the lit ones reads as paint
+     * rather than as a lamp.
+     *
+     * EXCEPT ON THE MINUS, where a full ghost field around one lit middle bar
+     * does not read as a minus sign — it reads as a broken digit, and the board
+     * said "8135" instead of "-135". */
+    if (bits !== SEG_MINUS) {
+      g.fillStyle = 'rgba(122,26,18,0.5)';
+      for (k = 0; k < 7; k++) g.fillRect(x + SEGX[k], y + SEGY[k], SEGW[k], SEGH[k]);
+    }
+    g.shadowColor = 'rgba(255,64,38,0.95)';
+    g.shadowBlur = 15;
+    g.fillStyle = '#ff2f1c';
+    for (k = 0; k < 7; k++) {
+      if (bits.charAt(k) !== '1') continue;
+      g.fillRect(x + SEGX[k], y + SEGY[k], SEGW[k], SEGH[k]);
+    }
+    g.shadowBlur = 0;
+    /* A hot core inside each lit bar, so the figures read as emitting rather
+     * than as red-painted metal once the darkness composite lands on them.
+     *
+     * IT IS THE ONLY BRIGHTNESS THAT SURVIVES A DIM LAMP. Past the light radius
+     * the composite multiplies everything here by 0.06, so what the player
+     * actually sees is this core and nothing else — which is why it is nearly
+     * white rather than red, and why it is worth the two extra fillRects. Baked,
+     * so it costs nothing per frame. */
+    g.fillStyle = 'rgba(255,201,182,0.58)';
+    for (k = 0; k < 7; k++) {
+      if (bits.charAt(k) !== '1') continue;
+      g.fillRect(x + SEGX[k] + 2.4, y + SEGY[k] + 2.4,
+                 SEGW[k] - 4.8, SEGH[k] - 4.8);
+    }
+  }
+
+  /**
+   * Bake one panel. `lit` false is the same sign switched OFF, which is what the
+   * unowned level below the last station gets — the display being dark is the
+   * cheapest possible way to say "not yours yet".
+   */
+  function buildReadout(level, depthM, name, lit) {
+    var figs = ledFigures(depthM);
+    var i, ch;
+
+    var digitsW = 0;
+    for (i = 0; i < figs.length; i++) {
+      ch = figs.charAt(i);
+      digitsW += (ch === ' ') ? LED_SPACE : (LED_DW + LED_GAP);
+    }
+    digitsW -= LED_GAP;
+
+    var unitFont = 'bold ' + Math.round(LED_DH * 0.52) +
+                   'px ui-sans-serif, system-ui, Arial, sans-serif';
+    var unitW = measureWith(unitFont, 'm') + 11;
+
+    /* THE LEVEL NUMBER IS ITS OWN SIZE. One monospace row of everything put the
+     * level number at 14 world units, which is 7 px on a 390-wide phone —
+     * present, unreadable, and therefore pointless. The number is the second
+     * thing the player wants after the depth, so it gets its own weight and the
+     * stratum name stays small beside it. */
+    var lvl = 'L' + level;
+    var nm = name ? ('' + name).toUpperCase() : '';
+    if (nm.length > 15) nm = nm.substr(0, 15);
+    if (!lit) nm = nm ? (nm + '  LOCKED') : 'LOCKED';
+    var lvlFont = 'bold ' + LED_LVL + 'px ui-sans-serif, system-ui, Arial, sans-serif';
+    var tagFont = 'bold ' + LED_TAG + 'px ui-monospace, Menlo, Consolas, monospace';
+    var tagW = measureWith(lvlFont, lvl) + 8 + measureWith(tagFont, nm);
+
+    var inner = digitsW + unitW;
+    if (tagW > inner) inner = tagW;
+    var w = Math.ceil(inner + LED_PAD * 2);
+    var h = Math.ceil(LED_DH + LED_LVL + 8 + LED_PAD * 2);
+
+    var cv = document.createElement('canvas');
+    cv.width = Math.ceil(w * LED_SS);
+    cv.height = Math.ceil(h * LED_SS);
+    var g = cv.getContext('2d');
+    g.scale(LED_SS, LED_SS);
+
+    // Bezel, then the screen inside it.
+    g.fillStyle = lit ? '#2a1a1a' : '#1d1717';
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgba(255,255,255,0.07)';
+    g.fillRect(0, 0, w, 2);
+    g.fillStyle = 'rgba(0,0,0,0.55)';
+    g.fillRect(0, h - 3, w, 3);
+    g.fillStyle = lit ? '#0b0506' : '#0a0809';
+    g.fillRect(4, 4, w - 8, h - 8);
+
+    var dy = LED_PAD + LED_LVL + 8;
+    if (lit) {
+      // The bloom the panel throws onto its own bezel. Baked, so it is free.
+      var bx = w * 0.5, by = dy + LED_DH * 0.5;
+      var rr = Math.max(w, h) * 0.72;
+      var bg = g.createRadialGradient(bx, by, 0, bx, by, rr);
+      bg.addColorStop(0, 'rgba(255,72,44,0.40)');
+      bg.addColorStop(0.55, 'rgba(255,50,28,0.14)');
+      bg.addColorStop(1, 'rgba(255,40,20,0)');
+      g.fillStyle = bg;
+      g.fillRect(0, 0, w, h);
+    }
+
+    // The level number and the stratum, on their own row above the figures.
+    g.textAlign = 'left';
+    g.textBaseline = 'top';
+    g.font = lvlFont;
+    g.fillStyle = lit ? 'rgba(255,170,140,0.95)' : 'rgba(178,100,86,0.62)';
+    g.fillText(lvl, LED_PAD, LED_PAD - 1);
+    var lvlW = measureWith(lvlFont, lvl);
+    g.font = tagFont;
+    g.fillStyle = lit ? 'rgba(226,138,112,0.82)' : 'rgba(150,84,74,0.55)';
+    g.fillText(nm, LED_PAD + lvlW + 8, LED_PAD + (LED_LVL - LED_TAG) * 0.72);
+
+    // The figures, right-aligned against the unit so panels of different depths
+    // still line their "m" up with each other.
+    var x = w - LED_PAD - unitW - digitsW;
+    for (i = 0; i < figs.length; i++) {
+      ch = figs.charAt(i);
+      if (ch === ' ') { x += LED_SPACE; continue; }
+      drawGlyph(g, x, dy, ch === '-' ? SEG_MINUS : SEG_ON[+ch], lit);
+      x += LED_DW + LED_GAP;
+    }
+
+    g.font = unitFont;
+    g.textAlign = 'left';
+    g.textBaseline = 'alphabetic';
+    g.fillStyle = lit ? '#ff6f52' : 'rgba(150,74,64,0.6)';
+    g.fillText('m', x + 4, dy + LED_DH);
+
+    return { cv: cv, w: w, h: h };
+  }
+
+  /**
+   * Cached by exactly what is printed on it, so buying the fourth level re-bakes
+   * one panel and not four.
+   *
+   * The cache is CAPPED, because it outlives a mine: one board is about 400 KB of
+   * canvas at LED_SS, and a session that visits every mine in the catalogue and
+   * buys down each of them would otherwise accumulate tens of megabytes of
+   * pictures of numbers. Re-baking an evicted board costs well under a
+   * millisecond and only happens when the level table is re-resolved.
+   */
+  var LED_CACHE_MAX = 14;
+  var artKeys = [];
+
+  function readoutFor(level, depthM, name, lit) {
+    var key = level + '|' + Math.round(depthM) + '|' + (lit ? 1 : 0) + '|' + name;
+    var a = artCache[key];
+    if (a) return a;
+    a = buildReadout(level, depthM, name, lit);
+    artCache[key] = a;
+    artKeys.push(key);
+    while (artKeys.length > LED_CACHE_MAX) delete artCache[artKeys.shift()];
+    return a;
+  }
+
+  /**
+   * THE SHAFT, LINED. The column is carved by the generator, so what is left to
+   * draw is the infrastructure in it: a dark excavated column, wall timbers, a
+   * timber set every SHAFT_SET_PITCH, the two guide rails the cage runs on and
+   * the hoist ropes. The pitch is anchored to the WORLD, not to the view, so the
+   * sets do not crawl up the screen as the camera moves.
+   */
+  function drawShaft(ctx, vTop, vBot) {
+    if (!stN) return;
+    var a = vTop > A.MINE_CEILING_Y ? vTop : A.MINE_CEILING_Y;
+    var b = vBot < shaftBotY ? vBot : shaftBotY;
+    if (b <= a) return;
+
+    ctx.fillStyle = 'rgba(10,9,11,0.62)';
+    ctx.fillRect(-SHAFT_HALF, a, SHAFT_HALF * 2, b - a);
+
+    // Wall lining: sawn timber down both sides, with the rock's shadow on it.
+    ctx.fillStyle = 'rgba(84,57,34,0.9)';
+    ctx.fillRect(-SHAFT_HALF, a, 8, b - a);
+    ctx.fillRect(SHAFT_HALF - 8, a, 8, b - a);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(-SHAFT_HALF + 8, a, 5, b - a);
+    ctx.fillRect(SHAFT_HALF - 13, a, 5, b - a);
+
+    // Timber sets, on the world pitch. At most ~12 of these are ever on screen.
+    var y = Math.floor(a / SHAFT_SET_PITCH) * SHAFT_SET_PITCH;
+    for (; y < b; y += SHAFT_SET_PITCH) {
+      if (y < a) continue;
+      ctx.fillStyle = 'rgba(96,66,40,0.72)';
+      ctx.fillRect(-SHAFT_HALF, y, SHAFT_HALF * 2, 5);
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(-SHAFT_HALF, y + 5, SHAFT_HALF * 2, 3);
+    }
+
+    // The guide rails and the hoist ropes: the cage runs on these, so they are
+    // what makes the column read as a lift and not as a hole.
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(154,164,180,0.42)';
+    ctx.beginPath();
+    ctx.moveTo(-SHAFT_HALF + 30, a); ctx.lineTo(-SHAFT_HALF + 30, b);
+    ctx.moveTo(SHAFT_HALF - 30, a); ctx.lineTo(SHAFT_HALF - 30, b);
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(206,212,224,0.3)';
+    ctx.beginPath();
+    ctx.moveTo(-15, a); ctx.lineTo(-15, b);
+    ctx.moveTo(15, a); ctx.lineTo(15, b);
+    ctx.stroke();
+  }
+
+  /**
+   * ONE STATION: the chamber, the platform, two worklights, the cage, and the
+   * readout above it. A smaller sibling of the mouth chamber on purpose — the
+   * mouth is where the mode's contrast starts (lit and busy up there, unlit and
+   * alone down here), and a station is that same worksite, further down and with
+   * less of it.
+   */
+  function drawStation(ctx, i, flick) {
+    var cy = stY[i];
+    // The platform IS the floor of the room. Higher up it reads as a shelf the
+    // machine's drill hangs through, because the machine is 340 units long and
+    // the deck is only drawn — nothing collides with it.
+    var deck = cy + STATION_RY * 0.84;
+
+    /* The excavated room. A rounded rectangle drawn a little INSIDE the carved
+     * superellipse: the deposits at the edge are what the eye reads as the wall,
+     * so this only has to darken the void, and painting past it would put a
+     * black corner on solid rock. */
+    roomPath(ctx, cy, STATION_RX - 18, STATION_RY - 22, 80);
+    ctx.fillStyle = 'rgba(13,11,12,0.66)';
+    ctx.fill();
+
+    // The shaft frame standing in the chamber: two posts and a cap beam.
+    var fTop = cy - STATION_RY * 0.80;
+    ctx.fillStyle = '#5a3d24';
+    ctx.fillRect(-SHAFT_HALF - 24, fTop, 13, deck - fTop);
+    ctx.fillRect(SHAFT_HALF + 11, fTop, 13, deck - fTop);
+    ctx.fillRect(-SHAFT_HALF - 30, fTop - 13, (SHAFT_HALF + 30) * 2, 15);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(-SHAFT_HALF - 30, fTop + 2, (SHAFT_HALF + 30) * 2, 5);
+
+    /* The platform: two planked decks with the SHAFT OPENING between them. The
+     * opening is the point — a landing whose floor runs straight across the
+     * shaft is not a landing on a shaft, it is a shelf, and it would also hide
+     * the boarded continuation that tells the player there is more to buy. */
+    var dW = STATION_RX * 1.78;
+    var oL = -SHAFT_HALF - 14, oR = SHAFT_HALF + 14;
+    var pk, seg;
+    for (seg = 0; seg < 2; seg++) {
+      var xA = seg ? oR : -dW * 0.5;
+      var xB = seg ? dW * 0.5 : oL;
+      if (xB <= xA) continue;
+      ctx.fillStyle = 'rgba(102,71,43,0.95)';
+      ctx.fillRect(xA, deck, xB - xA, 11);
+      ctx.fillStyle = 'rgba(0,0,0,0.34)';
+      for (pk = 1; pk < 4; pk++) ctx.fillRect(xA + (xB - xA) * pk / 4 - 1, deck, 2, 11);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(xA, deck + 11, xB - xA, 8);
+      ctx.fillStyle = 'rgba(74,50,30,0.9)';
+      ctx.fillRect((xA + xB) * 0.5 - 5, deck + 11, 10, 28);
+      ctx.fillRect(xA + 8, deck + 11, 10, 28);
+    }
+    // The edge of the opening, kerbed: the one place on the platform you could
+    // fall down a shaft.
+    ctx.fillStyle = 'rgba(196,150,60,0.75)';
+    ctx.fillRect(oL - 4, deck - 4, 12, 6);
+    ctx.fillRect(oR - 8, deck - 4, 12, 6);
+
+    /* --- the cage -----------------------------------------------------
+     * On the shaft centreline, standing on the deck, and sized to LOOK like it
+     * could hold the machine — because it does: riding the lift is the machine
+     * going up in this. Drawn behind the hull (terrain renders before particles
+     * and the vehicle), so a machine parked at the station reads as being inside
+     * it and a machine that has driven off onto the platform leaves it empty. */
+    var cw = 210, chh = 190;
+    var cL = -cw * 0.5, cT = deck - chh;
+    ctx.fillStyle = 'rgba(17,19,23,0.88)';
+    ctx.fillRect(cL, cT, cw, chh);
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(168,178,194,0.85)';
+    ctx.strokeRect(cL, cT, cw, chh);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(150,160,176,0.45)';
+    ctx.beginPath();
+    for (pk = 1; pk <= 3; pk++) {
+      ctx.moveTo(cL + (cw / 4) * pk, cT); ctx.lineTo(cL + (cw / 4) * pk, cT + chh);
+    }
+    ctx.moveTo(cL, cT + chh * 0.34); ctx.lineTo(cL + cw, cT + chh * 0.34);
+    ctx.moveTo(cL, cT + chh * 0.68); ctx.lineTo(cL + cw, cT + chh * 0.68);
+    ctx.stroke();
+    // Roof plate, with the hazard stripe every hoist cage in the world carries.
+    ctx.fillStyle = '#c3cad6';
+    ctx.fillRect(cL - 11, cT - 13, cw + 22, 13);
+    ctx.fillStyle = 'rgba(240,186,44,0.9)';
+    ctx.fillRect(cL - 11, cT - 5, cw + 22, 5);
+    ctx.fillStyle = 'rgba(20,18,16,0.85)';
+    for (pk = 0; pk < 8; pk++) ctx.fillRect(cL - 11 + pk * ((cw + 22) / 8), cT - 5, (cw + 22) / 16, 5);
+
+    /* --- two worklights, the mouth's own lamps one size down ----------
+     * Out on the side walls, clear of where the machine parks, because a lamp
+     * behind the hull lights nothing. Same warm colour as the portal floods: a
+     * station is the same worksite, further down. */
+    var lx, ly = cy - STATION_RY * 0.52;
+    for (pk = -1; pk <= 1; pk += 2) {
+      lx = pk * STATION_RX * 0.70;
+      ctx.fillStyle = '#3b3f47';
+      ctx.fillRect(lx - 7, ly - 9, 14, 9);
+      ctx.fillStyle = 'rgba(24,26,30,0.9)';
+      ctx.fillRect(lx - 2, ly, 4, 9);
+      lampGlow(ctx, lx, ly, 116, 'rgba(255,214,138,', 0.48 * flick);
+      ctx.fillStyle = 'rgba(255,236,190,' + (0.95 * flick).toFixed(3) + ')';
+      ctx.fillRect(lx - 5, ly - 7, 10, 5);
+    }
+
+    /* --- THE BIG RED READOUT -----------------------------------------
+     * HUNG IN THE SHAFT, DIRECTLY OVER THE STATION OPENING — not inside the
+     * chamber. The machine is about 340 units long and the chamber is 400 tall,
+     * so a board hung under the chamber ceiling is a board the parked machine
+     * stands in front of, which is the one place it must never be. In the shaft
+     * it is also where a real level board is: you read it on the way down, from
+     * above, before you arrive.
+     *
+     * It is scaled to fit inside the shaft lining if the figures ever make a
+     * board wider than that — a sign 8% smaller beats a sign with its ends
+     * buried in rock.
+     *
+     * HOW HIGH it hangs is BOARD_RISE, and that number is set by the darkness
+     * composite rather than by the carpentry — see the note on it.
+     */
+    var g = boardGeom(i, cy);
+    if (!g) return;
+
+    // Hangers up to the nearest thing to hang it from, and a shadow under it, so
+    // the board is BOLTED INTO the shaft rather than floating in it. These are
+    // GEOMETRY — they stay in this pass and darken with the rock, which is
+    // exactly right for unlit brackets.
+    ctx.fillStyle = 'rgba(44,38,36,0.92)';
+    ctx.fillRect(-g.pw * 0.30, g.py - 16, 8, 18);
+    ctx.fillRect(g.pw * 0.30 - 8, g.py - 16, 8, 18);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(-g.pw * 0.5, g.py + g.ph, g.pw, 7);
+    /* The board itself is NOT drawn here any more. It used to be, with a glow
+     * and a comment claiming that made it "survive the darkness composite" — it
+     * cannot: this pass runs BEFORE effects.renderDarkness(), and nothing under
+     * a multiply-towards-black survives it. Measured at tier-0 lights the big
+     * red figures were crushed to near-black, which defeated the one thing the
+     * owner asked of them. The board now draws in renderLit(), which adv.js
+     * calls AFTER the darkness — an LED sign is a light source, not geometry. */
+  }
+
+  /** Board geometry, shared by the geometry pass and the lit pass so the two
+   *  can never drift apart. Returns a REUSED object — read, do not stash. */
+  var boardG = { pw: 0, ph: 0, py: 0, art: null };
+  function boardGeom(i, cy) {
+    var art = stArt[i];
+    if (!art) return null;
+    var maxW = (SHAFT_HALF - 17) * 2;
+    var sc = art.w > maxW ? maxW / art.w : 1;
+    boardG.pw = art.w * sc;
+    boardG.ph = art.h * sc;
+    boardG.py = cy - BOARD_RISE - boardG.ph;
+    boardG.art = art;
+    return boardG;
+  }
+
+  /**
+   * THE EMISSIVE PASS — everything on the lift that is genuinely a light.
+   *
+   * Called by adv.renderWorld() AFTER effects.renderDarkness(), inside the same
+   * world transform, so the red boards read at full brightness however far the
+   * headlight reaches. Near the machine this draws over an already-lit board
+   * position and changes nothing visible; in the dark it is the difference
+   * between a legible level sign and a black rectangle. Same reasoning the
+   * scanner arrows would deserve if they were not already instrument overlay.
+   *
+   * Culling matches drawLift()'s exactly, and the flicker REUSES the phase that
+   * drawLift advanced this frame (liftFlick) rather than advancing it again —
+   * two advances per frame would double the flicker rate and desync the lamps
+   * below the boards from the boards themselves.
+   */
+  function renderLit(ctx) {
+    if (!loaded || !liftApi || !stN) return;
+    var v = SM.camera.getViewBounds();
+    var vTop = v.minY - 40, vBot = v.maxY + 40;
+    var reach = STATION_RX + 70;
+    if (v.maxX < -reach || v.minX > reach) return;
+
+    for (var i = 0; i < stN; i++) {
+      var cy = stY[i];
+      if (cy - STATION_RY - 340 > vBot) continue;
+      if (cy + STATION_RY + 60 < vTop) continue;
+      var g = boardGeom(i, cy);
+      if (!g) continue;
+      // The light the board throws on the shaft around it, then the sign.
+      lampGlow(ctx, 0, g.py + g.ph * 0.5, 210, 'rgba(255,58,34,', 0.34 * liftFlick);
+      ctx.save();
+      ctx.globalAlpha = 0.94 + 0.06 * liftFlick;
+      ctx.drawImage(g.art.cv, -g.pw * 0.5, g.py, g.pw, g.ph);
+      ctx.restore();
+    }
+  }
+
+  /**
+   * A rounded-rectangle path centred on (0, cy). Built by hand rather than with
+   * ctx.roundRect(): one less canvas API to depend on, and the corner radius is
+   * clamped here where it is obvious why.
+   */
+  function roomPath(ctx, cy, rx, ry, r) {
+    if (r > rx * 0.9) r = rx * 0.9;
+    if (r > ry * 0.9) r = ry * 0.9;
+    var L = -rx, R = rx, T = cy - ry, B = cy + ry;
+    ctx.beginPath();
+    ctx.moveTo(L + r, T);
+    ctx.lineTo(R - r, T);
+    ctx.quadraticCurveTo(R, T, R, T + r);
+    ctx.lineTo(R, B - r);
+    ctx.quadraticCurveTo(R, B, R - r, B);
+    ctx.lineTo(L + r, B);
+    ctx.quadraticCurveTo(L, B, L, B - r);
+    ctx.lineTo(L, T + r);
+    ctx.quadraticCurveTo(L, T, L + r, T);
+    ctx.closePath();
+  }
+
+  /**
+   * THE NEXT LEVEL DOWN, UNOWNED. A boarded-up continuation of the shaft with
+   * the same sign switched off. Deliberately cheap and deliberately dark: it is
+   * there so that "there is more down there, and it is for sale" is something
+   * the world says on the way past, not only a row in a menu.
+   */
+  function drawHint(ctx, vTop, vBot) {
+    if (!stN) return;
+    var y = shaftBotY;                       // the bottom of the sump
+    if (y - SHAFT_SUMP > vBot + 40 || y + HINT_H < vTop - 40) return;
+
+    // The boards across the bottom of the sump, braced, with the shadow of
+    // whatever is under them.
+    ctx.fillStyle = 'rgba(84,58,34,0.95)';
+    ctx.fillRect(-SHAFT_HALF, y - 14, SHAFT_HALF * 2, 14);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(-SHAFT_HALF, y - 5, SHAFT_HALF * 2, 5);
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = 'rgba(74,51,31,0.8)';
+    ctx.beginPath();
+    ctx.moveTo(-SHAFT_HALF + 4, y - 16); ctx.lineTo(SHAFT_HALF - 4, y - 62);
+    ctx.moveTo(SHAFT_HALF - 4, y - 16); ctx.lineTo(-SHAFT_HALF + 4, y - 62);
+    ctx.stroke();
+
+    // The continuation below the boards, fading away into the rock. Cheap, and
+    // deliberately almost nothing: it is a suggestion, not a promise.
+    var g = ctx.createLinearGradient(0, y, 0, y + HINT_H);
+    g.addColorStop(0, 'rgba(5,4,6,0.75)');
+    g.addColorStop(1, 'rgba(5,4,6,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(-SHAFT_HALF + 8, y);
+    ctx.lineTo(SHAFT_HALF - 8, y);
+    ctx.lineTo(SHAFT_HALF * 0.40, y + HINT_H);
+    ctx.lineTo(-SHAFT_HALF * 0.40, y + HINT_H);
+    ctx.closePath();
+    ctx.fill();
+
+    /* The next level's own board, hanging over the boarded-up shaft with its
+     * lamps off. The SAME sign design as a station's, dark — which is the whole
+     * argument for building the dark variant at all: the player already knows
+     * what a lit one means. */
+    if (!nextArt) return;
+    var w = nextArt.w * 0.60, h = nextArt.h * 0.60;
+    if (w > (SHAFT_HALF - 14) * 2) {
+      var k = (SHAFT_HALF - 14) * 2 / w;
+      w *= k; h *= k;
+    }
+    /* Low in the sump, sitting on the boards. Not for looks: a machine parked in
+     * the cage above has its drill hanging into the top of the sump, and a sign
+     * mounted any higher is a sign behind the bit. */
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(nextArt.cv, -w * 0.5, y - 20 - h, w, h);
+    ctx.restore();
+  }
+
+  /** All three pieces, and the one flicker phase they share. */
+  function drawLift(ctx, vLeft, vTop, vRight, vBot) {
+    if (!liftApi) return;
+    var reach = STATION_RX + 70;
+    if (vRight < -reach || vLeft > reach) return;    // the shaft is off to one side
+
+    /* One monotonic phase, as at the mouth: the lamps must not jump when a band
+     * streams out and back in, so the flicker is a pure function of it. The
+     * value is kept on `liftFlick` for renderLit(), which runs after the
+     * darkness composite and must flicker IN STEP with the lamps here. */
+    liftPhase += 0.016;
+    var flick = 0.92 + 0.08 * Math.sin(liftPhase * 2.1) * Math.sin(liftPhase * 0.6 + 0.7);
+    liftFlick = flick;
+
+    drawShaft(ctx, vTop, vBot);
+    for (var i = 0; i < stN; i++) {
+      if (stY[i] - STATION_RY - 340 > vBot) continue;
+      if (stY[i] + STATION_RY + 60 < vTop) continue;
+      drawStation(ctx, i, flick);
+    }
+    drawHint(ctx, vTop, vBot);
+  }
+
   function render(ctx) {
     // `loaded`, not `active`: the mine stays on screen behind the extraction
     // card, the map and the workshop. See the two-flag note at the top.
@@ -2641,6 +3572,9 @@ SM.advterrain = (function () {
       drawStrata(ctx, rockL, sTop, rockR, vBot);
       drawLodeGlow(ctx, rockL, sTop, rockR, vBot);
       drawTimbers(ctx, rockL, sTop, rockR, vBot);
+      // LAST of the in-rock draws: the lift is built THROUGH the strata and the
+      // old workings, so it has to paint over both.
+      drawLift(ctx, rockL, sTop, rockR, vBot);
 
       // Ambient occlusion where the shaft meets its walls — only when a wall is
       // actually on screen.
@@ -2747,7 +3681,8 @@ SM.advterrain = (function () {
     haveC0: 0, haveC1: 0, haveR0: 0, haveR1: 0, cells: 0,
     peakWinW: 0, peakWinH: 0, peakLiveW: 0, peakLiveH: 0,
     trim: 1, cellBudget: 0, peakSolid: 0, lowFree: 0, solid: 0, free: 0,
-    piles: 0, pilesUp: 0, deepestM: 0, layer: ''
+    piles: 0, pilesUp: 0, deepestM: 0, layer: '',
+    liftApi: false, stations: 0, shaftBotM: 0, nextLevelM: 0
   };
   function getDebug() {
     var st = SM.particles.getStats();
@@ -2774,6 +3709,10 @@ SM.advterrain = (function () {
     dbg.pilesUp = up;
     dbg.deepestM = depthOfY(deepestY);
     dbg.layer = (lastLayer >= 0 && layers[lastLayer]) ? layers[lastLayer].name : '';
+    dbg.liftApi = liftApi;
+    dbg.stations = stN;
+    dbg.shaftBotM = stN ? depthOfY(shaftBotY) : 0;
+    dbg.nextLevelM = nextOn ? depthOfY(nextY) : 0;
     return dbg;
   }
   function resetPeaks() {
@@ -2819,6 +3758,7 @@ SM.advterrain = (function () {
     update: update,
     reset: reset,
     render: render,
+    renderLit: renderLit,
 
     markDestroyed: markDestroyed,
     isCarved: isCarved,
@@ -2853,6 +3793,30 @@ SM.advterrain = (function () {
       mlOut.depthM = depthOfY(gldY);
       return mlOut;
     },
+    /* --- THE LIFT (see the section of that name) -----------------------
+     * The station cage zone Agent 1 codes against is a circle of
+     * ADV.EXIT_RADIUS centred on (getMouthX(), getStationY(k)); the shaft is the
+     * column at getMouthX() +- getShaftHalfWidth(). Everything here is derived
+     * from SM.adv.getLevels(), so this side never decides what is owned. */
+    /** Half-width of the carved shaft column, world units. */
+    getShaftHalfWidth: function () { return SHAFT_HALF; },
+    /** How many OWNED stations this module has resolved for the live mine. */
+    getStationCount: function () { return stN; },
+    /** World y of station k, shallowest first, or NaN. */
+    getStationY: function (k) { return (k >= 0 && k < stN) ? stY[k] : NaN; },
+    /** Depth in metres of station k, as the level declared it, or NaN. */
+    getStationDepthM: function (k) { return (k >= 0 && k < stN) ? stDepthM[k] : NaN; },
+    /** Level number (getLevels()[].i) of station k, or -1. */
+    getStationLevel: function (k) { return (k >= 0 && k < stN) ? stLevel[k] : -1; },
+    /** True where the lift's own excavation has removed the rock. */
+    isLiftVoid: inLiftVoid,
+    /**
+     * Re-read the level table NOW and re-open the resident band. Called for you
+     * on `lift:bought` and on a poll; exposed so a caller that would rather be
+     * explicit than trust an event can be.
+     */
+    refreshLift: function () { resolveLevels(); reopenLift(); },
+
     getDebug: getDebug,
     resetPeaks: resetPeaks,
     /** Grid geometry + the generator's answer for one cell. Tests only. */
