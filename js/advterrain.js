@@ -425,6 +425,81 @@ SM.advterrain = (function () {
    * bolted anyway (drawStation paints the board after the frame). */
   var BOARD_RISE = 120;
 
+  /* --- THE RAILS: the drift, the chambers, and the track ---------------
+   * A LEVEL IS A LANDING; THE RAILS ARE THE ROAD OFF IT. The lift sells DEPTH
+   * and it stops at the station room's east mouth (ELEV_X + STATION_FWD). Beyond
+   * that the mine is 4,800 units of country rock, the motherlode sits on the
+   * centre line, and getting there is the run. A checkpoint is the player buying
+   * that distance back: a serviced siding 120 m further out, with a chamber to
+   * stand in and a line of track leading to it.
+   *
+   * SAME OWNERSHIP-IN-GEOLOGY-OUT RULE AS THE SHAFT, and for the same reasons
+   * (see "THE LIFT" above). resolveRails() reads SM.adv.getCheckpoints(L) for
+   * every owned station at GENERATION time; nothing here is ever written into the
+   * carve mask. So the drift exists in bands nobody has driven, it is absent again
+   * in a save that never bought the checkpoint, and a band met on the way out is
+   * byte-identical to the same band met on the way back.
+   *
+   * THE CORRIDOR'S HEIGHT IS SET BY THE CUT BOX, NOT BY TASTE. The fast lane
+   * (js/vehicle.js's onRail() gate) only pays out while the bit is in CLEAR AIR —
+   * advLoad under ADV_TRAVEL_FREE — and js/vehicle.js scans a square box of
+   * ADV_CUT_HALF + 8 per blade tier (84 at tier 0, 124 at tier 5) centred on the
+   * bit, which particles.js's queryRect answers by CIRCLE OVERLAP, so a deposit
+   * of radius 11 still counts 135 units out on a maxed rig. The machine's natural
+   * travel line is the one vehicle.js parks it on, ADV_SPAWN_Y (70) BELOW the
+   * level's survey line, so the void is deliberately ASYMMETRIC about that line:
+   *
+   *     RAIL_UP    90    roof, above the survey line   -> 160 over the travel line
+   *     RAIL_DOWN 210    floor, below it               -> 140 under the travel line
+   *
+   * 300 units total, which is exactly the width of the shaft the same machine
+   * came down — anything that fits down the column fits along the drift, at every
+   * rig tier, with the cut box clear of rock at both. It is a THIN VEIN and it is
+   * meant to stay one: 30 m of the stratum's thickness, at four discrete depths,
+   * against a mine 520 m wide. Going lower starts costing the fast lane at the top
+   * of the tech tree (a tier-5 bit grinds the floor and the gear drops out from
+   * under it, with nothing on screen saying why); going higher starts deleting the
+   * bed the level exists to sell.
+   *
+   * THE SOLID BILL IS NEGATIVE. Carving cannot push resident solids UP: the window
+   * is sized in CELLS from SOLID_BUDGET / FILL_ESTIMATE (see computeWindow), so a
+   * void is a cell that produces no deposit and the count can only fall. Measured
+   * with the machine mid-track — see the report.
+   * ------------------------------------------------------------------ */
+  var RAIL_UP = 90;            // corridor void above the level's survey line
+  var RAIL_DOWN = 210;         // ...and below it
+  /* The corridor starts INSIDE the station room's east mouth rather than at it.
+   * The room is a superellipse, so at its extreme east edge it has pinched to a
+   * point: a drift butted onto that x leaves a lens of rock between the two that
+   * the player has to cut through on the way out of their own station. */
+  var RAIL_MOUTH_BACK = 40;
+  /* THE SERVICE CHAMBER — a station room's smaller sibling. 480 x 360 against the
+   * station's 746 x 400: wide enough that the whole USABLE x window of the cage
+   * (+-187, per the note in ADVENTURE.md 2c — the machine parks below the centre)
+   * is inside the excavation, and tall enough to read as a room widening out of
+   * the drift rather than as a bulge in it. Centred on the DRIFT, not on the
+   * survey line, so its floor and the drift's floor are the same floor. */
+  var CP_HW = 240;             // chamber half-width
+  var CP_RY = 180;             // chamber half-height
+  var CP_DY = (RAIL_DOWN - RAIL_UP) * 0.5;   // 60 — the drift's own centre line
+  /* onRail() answers the CORRIDOR minus this on each side. The carve and the fast
+   * lane deliberately do not share an edge: a machine grinding along the roof of
+   * the drift is not travelling, and a gate that said it was would flicker the
+   * gear on and off against the lining. */
+  var RAIL_ON_INSET = 26;
+  var RAIL_SET_PITCH = 168;    // world units between the drift's timber sets
+  var RAIL_GAUGE = 92;         // between the two running rails
+  var RAIL_TIE_PITCH = 58;     // sleepers
+  var RAIL_MAX = STATION_MAX;  // one run per owned station
+  var CP_MAX = 8;              // chambers one run may hold (mines.js sells 4)
+  /* Where the CP board hangs: the distance from the level line UP to the board's
+   * bottom edge. Same argument as BOARD_RISE — it is set by the darkness
+   * composite. The machine's travel line is 70 BELOW the level line, so a board
+   * at -52 sits ~122 from the hull centre and ~180 from the light's centre, well
+   * inside a starter lamp's 380. It is also the only place it fits: the chamber's
+   * roof is at CP_DY - CP_RY = -120, and the board is 62 tall. */
+  var CPS_RISE = 52;
+
   /* --- structure grids -----------------------------------------------
    * Every structure family owns a grid of cells; a cell either contains one
    * structure or does not, decided by one hash of its integer index. That is

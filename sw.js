@@ -83,7 +83,14 @@
 //         EXIT distance (nearest owned station), which the fuel reserve and
 //         TURN BACK follow. Prep fuel widget removed: DESCEND buys the tank.
 //         Also: loading a slot no longer inherits another slot's mining rights.
-const VERSION = 'v1.7.0';
+// v1.8.0  TWO-AXIS EXPANSION. The elevator moves to the mine's WEST EDGE
+//         (sketch-faithful; field uninterrupted; ELEV_X solved so a maxed rig
+//         can still board). RAILS: buy checkpoints eastward per level — REFUEL
+//         at 1.5x markup, DEPOSIT secures the hold (strand-immune, credited on
+//         sale). Measured: a deposit checkpoint turns a hold-bound $7.5k run
+//         into a fuel-bound $60k run. NOTE: rails world-visuals and the
+//         checkpoint UI land in the next bump — this build has the systems.
+const VERSION = 'v1.8.0';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

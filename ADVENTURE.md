@@ -245,6 +245,48 @@ The shaft is STRUCTURAL carving derived from ownership at generation time — it
 must never be written into the player mask (mask ones == carved count is the
 regression check).
 
+## 2c. Rails & checkpoints — seams as shipped
+
+Horizontal expansion, per level, extending EAST from the elevator. Checkpoint k
+of level L sits at `getStationX() + k * pitch` (pitch 1200 units = 120 m, 4 per
+level), cage = circle of `ADV.EXIT_RADIUS`, boardable by definition. NOTE the
+machine parks +70 BELOW station y, so the usable x window of a cage is ±187,
+not ±200. `ELEV_INSET` must stay <= 400 or the outermost checkpoint leaves the
+mine (asserted in mines.js note 4d).
+
+```
+SM.adv.getCheckpoints(L)   LIVE [{k,outM,x,y,price,owned}] — quotes UNOWNED
+                           levels too, so the UI can show the ladder ahead
+SM.adv.buyCheckpoint(L,k)  next-outward only; REQUIRES level L owned; legal
+                           mid-run; emits rail:bought {L,k,price,mineId}
+SM.adv.getServiceable()    REUSED {level,k} | null — cage containing machine
+SM.adv.refuelHere()        full-tank at railFuelMarkup (1.5x, ceil'd through
+                           mines.railFuelCost — never raw float maths)
+SM.adv.depositHere()       hold -> SECURED ledger; emits rail:deposit (DELTA)
+SM.adv.getSecured()        REUSED {value,units}; getSecuredLines() per-material
+SM.mines.checkpointsOf(id,L) / checkpointPriceOf / railFuelCost
+SM.save.railsOwned(id,L) / setRailsOwned — mines[id].rails = dense int array
+```
+
+SECURED SEMANTICS — the UI must honour these:
+* Secured ore is immune to strand() and abort(); it is credited in sell(), and
+  `getResults().secured` carries it — SO A STRANDED RESULTS SCREEN MUST OFFER
+  SELL: on a bad run the secured ore is the entire payout.
+* `sell().gross` and `adv:sold.gross` INCLUDE secured; `results.gross` is the
+  hold only. `evExtracted/.evStranded` gained a `secured` field.
+* restart() (R) and close() mid-run DROP secured — that descent never happened.
+* Secured is run state and is NEVER saved.
+
+Measured why this feature exists (Blackstone Gold Pocket, tier-2 rig, n=3):
+without a deposit checkpoint a run is HOLD-bound — home at 22% of the tank,
+$7,524. With one it is FUEL-bound — 92% of the tank, 3 holds, $60,189. 8.0x,
+of which ~1.55x is pure throughput and the rest is the west-edge geometry
+making rich ore lateral. Payback on the first checkpoint: 0.32 runs.
+
+TESTING GOTCHA: the service worker caches the whole build — a test harness
+that reloads MUST unregister it and pass ignoreCache, or it silently tests
+stale code.
+
 ## 3. Module contracts
 
 Each new file carries its full contract in its own header — **read the file you
