@@ -184,94 +184,9 @@ SM.camera = (function () {
   var SHAKE_EVENT_COMPLETE = 16;
   var SHAKE_GRIND_GAIN     = 5.0;    // continuous rumble from cutter resistance
 
-  /* =====================================================================
-   * AGENT-1 TUNABLES — ADVENTURE MODE
-   * ---------------------------------------------------------------------
-   * Adventure asks the camera three different questions and everything below
-   * exists to answer them:
-   *
-   * 1. THE ZOOM IS FIXED, AND THEN FITTED. ADV.CAM_ZOOM is a shared, frozen
-   *    constant the whole mode is framed around, so the derived auto-zoom above
-   *    is off: desiredZoom() short-circuits and setZoomTarget() stays ignored.
-   *    Zoom PUNCH still lands, because that is impact feedback, not framing.
-   *
-   *    But a constant alone is wrong on a phone, and this mode is thumb-driven.
-   *    ADV.CAM_ZOOM normalises on HEIGHT (like the classic zoom), so a 390x844
-   *    portrait viewport lands at scale 0.75 and shows about 520 of the shaft's
-   *    1760 units — under a third of the width the player is steering around in.
-   *    So the adventure scale is additionally FITTED: never so zoomed in that
-   *    less than ADV_FIT_SHAFT of the shaft is across the screen. It can only
-   *    ever zoom OUT from the tuned value, so desktop framing is untouched
-   *    (measured: 1440x813 stays at 0.723, exactly as before), while portrait
-   *    settles near 0.49 and shows ~790 units — about the diameter of the
-   *    starting headlamp, which is the most of the mine a phone can usefully
-   *    light anyway.
-   *
-   * 2. THE LOOK-AHEAD HAS TO ROTATE. The classic lead is hard-coded to -y
-   *    because the classic machine only ever drives that way. Here the player
-   *    picks the direction, so the lead is a VECTOR along the velocity, eased
-   *    as a vector so that turning around swings the framing instead of
-   *    snapping it. It is expressed as a fraction of the visible half-height
-   *    for the same reason the classic one is: framing that survives a resize.
-   *
-   * 3. recomputeScale() IS SOLVED AGAINST THE WRONG WIDTH. Both of its clamps
-   *    are written against LANE_HALF_WIDTH (640) and the shaft is
-   *    ADV.MINE_HALF_WIDTH (880), so they fight it in opposite directions:
-   *      * the lane-FILL floor would allow 300 units of bedrock either side of
-   *        a 1280 lane — measured against a 1760 shaft it is simply too small a
-   *        view, so it is re-solved against the shaft;
-   *      * the lane-FIT ceiling ("never so zoomed in that the lane runs off the
-   *        sides") is actively wrong underground. The shaft is MEANT to run off
-   *        the sides — you are in a tunnel, not a lane — and forcing 1760 units
-   *        across a 390 px phone would zoom to 0.21, put the machine on screen
-   *        at eight pixels and multiply the streamed area by twenty. So the
-   *        adventure branch does not apply it at all.
-   * ================================================================== */
-
-  // Bedrock we will tolerate beside the shaft before refusing to widen further.
-  var ADV_WALL_VISIBLE = 260;
-  // The fraction of the shaft's full width that must fit across the viewport.
-  // 0.45 of 1760 is ~790 units: enough of the shaft to steer in and to see a
-  // seam beside you, without shrinking the machine to a chip on a phone.
-  /* WORKING WIDTH, IN WORLD UNITS — not a fraction of the mine.
- * This was `0.45 of the shaft`, which only worked while the shaft was narrower
- * than a screen. Once the mine is wider than the viewport, a fraction-of-mine
- * fit means every extra metre of MINE_HALF_WIDTH zooms the player further out to
- * frame walls that are nowhere near them: at 2600 half-width it drove desktop
- * scale from 0.72 down to 0.615 and portrait to 0.167.
- * What the rule was actually protecting is "enough ground across the screen to
- * drive and aim", which is an absolute distance. 792 is exactly 0.45 x the old
- * 1760-wide shaft, so every device frames the game precisely as it did before. */
-var ADV_FIT_WIDTH = 792;
-  // ...and a hard floor, so a freak viewport cannot zoom out into abstraction.
-  // At 0.30 the starting machine is still ~45 px wide.
-  var ADV_MIN_SCALE = 0.30;
-  // Lead, as a fraction of the visible half-height, at full drive speed.
-  var ADV_LEAD_FRAC = 0.20;
-  var ADV_LEAD_LERP = 2.0;
-  // How much rock outside the shaft, and sky above the mouth, may show. Keeping
-  // the camera inside these means the walls read as the edge of the world
-  // instead of as a place the view falls off.
-  var ADV_WALL_PEEK = 150;
-  var ADV_SKY_PEEK = 420;
-  /* How far off the view centre the machine may ever be pushed by the wall peek
-   * above, as a fraction of the visible half-width. The lift is now a column near
-   * the mine's west bedrock, so every run starts, ends and boards with the machine
-   * against a wall and the two clamps in direct conflict — see the note in
-   * updateAdvFollow() for the measurement and for why this one wins. */
-  var ADV_WALL_OFFSET = 0.34;
-
   /* ================================================================== */
 
   var C = SM.config;
-  var A = SM.config.ADV;
-
-  /** True from SM.adv.open() to close(): the whole campaign, not just a run. */
-  function advOn() {
-    return !!(SM.adv && SM.adv.isActive && SM.adv.isActive());
-  }
-
-  var advLeadX = 0, advLeadY = 0;
 
   var x = 0, y = 0;                 // camera centre in world space
   var zoomBase = C.CAM_ZOOM;        // smoothed, punch-free
@@ -450,7 +365,6 @@ var ADV_FIT_WIDTH = 792;
   }
 
   function recomputeScale() {
-    if (advOn()) { recomputeScaleAdv(); return; }
     scale = zoom * (vpH / C.CAM_REFERENCE_HEIGHT);
     // Lane-fill floor: never show more world width than lane + 2*MAX_WALL_VISIBLE.
     var minScale = vpW / (C.LANE_HALF_WIDTH * 2 + MAX_WALL_VISIBLE * 2);
@@ -471,42 +385,6 @@ var ADV_FIT_WIDTH = 792;
       var target = fit > affordable ? fit : affordable;
       if (target < scale) scale = target;
     }
-    if (scale < 0.05) scale = 0.05;
-  }
-
-  /**
-   * The adventure scale. One clamp only — the shaft-fill floor, re-solved
-   * against ADV.MINE_HALF_WIDTH — and deliberately NO lane-fit ceiling. See
-   * point 3 of the tunables note above for why that would be wrong here.
-   */
-  function recomputeScaleAdv() {
-    scale = zoom * (vpH / C.CAM_REFERENCE_HEIGHT);
-
-    /* THE PORTRAIT FIT. Only ever reduces the scale, so a landscape desktop —
-     * where the tuned framing already shows more than the whole shaft — is
-     * untouched, and a narrow screen is widened until it can see enough of the
-     * shaft to drive in. Note that this is deliberately applied to `scale` and
-     * not to `zoom`: update() clamps zoom at CAM_ZOOM_MIN * 0.9 (0.558) and a
-     * portrait fit needs ~0.52, so routing it through the zoom would be silently
-     * clamped back. getZoom() therefore stays the nominal ADV.CAM_ZOOM, which is
-     * also what keeps particles.js's LOW_DETAIL_ZOOM switch from flipping the
-     * whole mine to cheap squares on exactly the devices that most want the
-     * detail. */
-    var fit = vpW / ADV_FIT_WIDTH;
-    if (scale > fit) scale = fit;
-
-    /* Shaft-fill floor: never show more bedrock than ADV_WALL_VISIBLE either
-     * side. This only means anything when the WALLS ARE ACTUALLY ON SCREEN, so
-     * it is now conditional on that. On a mine wider than the viewport there is
-     * no wall in shot to frame, and applying it anyway would force a zoom IN on
-     * a wide screen to fill the view with a shaft that already fills it. */
-    var visHalfX = (vpW * 0.5) / scale;
-    if (visHalfX > A.MINE_HALF_WIDTH) {
-      var minScale = vpW / (A.MINE_HALF_WIDTH * 2 + ADV_WALL_VISIBLE * 2);
-      if (scale < minScale) scale = minScale;
-    }
-
-    if (scale < ADV_MIN_SCALE) scale = ADV_MIN_SCALE;
     if (scale < 0.05) scale = 0.05;
   }
 
@@ -542,12 +420,6 @@ var ADV_FIT_WIDTH = 792;
 
   /** The camera's own opinion about how far out we should be. */
   function desiredZoom() {
-    // ADVENTURE: fixed framing. The derived width/zone/overdrive zoom is a
-    // time-attack device — the rig grows there, and the mode is a lane. Here
-    // the zoom is a shared constant every other adventure module is tuned
-    // against (light radius, streaming window, joystick scale), so it is not
-    // the camera's to have an opinion about.
-    if (advOn()) return A.CAM_ZOOM;
     if (!autoZoom) return externalZoom;
 
     ensureBaseWidth();
@@ -590,88 +462,6 @@ var ADV_FIT_WIDTH = 792;
   }
 
   /* =====================================================================
-   * ADVENTURE FOLLOW
-   * ---------------------------------------------------------------------
-   * A follow for a machine that can travel in any direction. The lead is a
-   * vector along the velocity, eased AS A VECTOR so a 180-degree turn swings
-   * the framing round instead of teleporting it through zero, and the target is
-   * then clamped so the view never slides off the shaft or up into the sky.
-   * The clamp is applied to the TARGET, exactly as the classic lane-slack clamp
-   * is, so the camera eases into its limit rather than hitting a wall.
-   * ================================================================== */
-  var advTargetX = 0, advTargetY = 0;
-
-  function updateAdvFollow(dt) {
-    if (!SM.vehicle || !SM.vehicle.getY) return;
-    var vxv = SM.vehicle.getVelX ? SM.vehicle.getVelX() : 0;
-    var vyv = SM.vehicle.getVelY ? SM.vehicle.getVelY() : 0;
-    var sp = Math.sqrt(vxv * vxv + vyv * vyv);
-
-    var halfW = (vpW * 0.5) / scale;
-    var halfH = (vpH * 0.5) / scale;
-
-    var lx = 0, ly = 0;
-    if (sp > 1) {
-      var ref = (SM.rig && SM.rig.getSpeed) ? SM.rig.getSpeed() : C.VEHICLE_SPEED;
-      if (!(ref > 1)) ref = C.VEHICLE_SPEED;
-      var t = sp / ref;
-      if (t > 1) t = 1;
-      var mag = t * ADV_LEAD_FRAC * halfH;
-      lx = (vxv / sp) * mag;
-      ly = (vyv / sp) * mag;
-    }
-    var k = 1 - Math.exp(-ADV_LEAD_LERP * dt);
-    advLeadX += (lx - advLeadX) * k;
-    advLeadY += (ly - advLeadY) * k;
-
-    var vx0 = SM.vehicle.getX();
-    advTargetX = vx0 + advLeadX;
-    advTargetY = SM.vehicle.getY() + advLeadY;
-
-    // Keep bedrock off the sides. When the view is wider than the shaft plus
-    // its peek there is nothing to slide, so centre it.
-    var slack = A.MINE_HALF_WIDTH + ADV_WALL_PEEK - halfW;
-    if (slack < 0) slack = 0;
-    if (advTargetX > slack) advTargetX = slack;
-    else if (advTargetX < -slack) advTargetX = -slack;
-
-    /* ...BUT THE WALL CLAMP MAY NOT FIGHT THE FOLLOW, and this is what the
-     * ELEVATOR AT THE WEST EDGE made non-optional.
-     *
-     * The clamp above is written as "how far off the MINE'S CENTRE may the view
-     * slide", which was harmless while everything the player did happened near
-     * x = 0. The lift is now a column at x = -2280 and the run starts, ends and
-     * boards there, so the machine lives against the west bedrock — and it CAN
-     * reach it: the hull clamp in vehicle.js stops the starter rig at x = -2470.4,
-     * which is 130 units off the wall.
-     *
-     * MEASURED at 1440x900 (halfW 900, so slack = 1850) with the hull there:
-     * the bare wall clamp pins the view at x = -1850 and puts the hull 496 px left
-     * of a 720 px half-width — 69% off centre, drifting towards the edge of the
-     * screen, and driving further west only made it worse because the camera had
-     * stopped moving.
-     *
-     * So that clamp is now a PREFERENCE and this is the guarantee: the view centre
-     * may never be more than ADV_WALL_OFFSET of a half-width from the machine. At
-     * 0.34 the same case measures 245 px, i.e. the hull is always inside the middle
-     * two thirds of the view, at the cost of 194 units of bedrock on screen instead
-     * of 150. Applied SECOND, deliberately: visible bedrock is a cosmetic cost, a
-     * machine sliding off the side is a playability one.
-     *
-     * It is a no-op almost everywhere — including parked at the lift on desktop
-     * (measured 224 px, inside the 245 bound) and everywhere at all on a 390-wide
-     * portrait, where halfW is 396 and the wall clamp is already gentler than this
-     * one. It exists for the case above. */
-    var maxOff = halfW * ADV_WALL_OFFSET;
-    if (advTargetX < vx0 - maxOff) advTargetX = vx0 - maxOff;
-    else if (advTargetX > vx0 + maxOff) advTargetX = vx0 + maxOff;
-
-    // ...and the sky off the top. -y is up, so this is a lower bound.
-    var top = A.MINE_CEILING_Y - ADV_SKY_PEEK + halfH;
-    if (advTargetY < top) advTargetY = top;
-  }
-
-  /* =====================================================================
    * UPDATE
    * ================================================================== */
   function update(dt) {
@@ -684,11 +474,7 @@ var ADV_FIT_WIDTH = 792;
     /* --- follow target ------------------------------------------------ */
     var tx = 0, ty = 0;
     var speed = 0;
-    if (advOn()) {
-      updateAdvFollow(dt);
-      tx = advTargetX;
-      ty = advTargetY;
-    } else if (SM.vehicle && SM.vehicle.getY) {
+    if (SM.vehicle && SM.vehicle.getY) {
       speed = SM.vehicle.getSpeed ? SM.vehicle.getSpeed() : C.VEHICLE_SPEED;
       var lat = SM.vehicle.getLateralSpeed ? SM.vehicle.getLateralSpeed() : 0;
       tx = SM.vehicle.getX() * C.CAM_LATERAL_LEAD + lat * STEER_LEAD;
@@ -824,20 +610,6 @@ var ADV_FIT_WIDTH = 792;
     overdriveMix = overdriveTarget = 0;
     trauma = 0;
     shakeX = shakeY = shakeRot = 0;
-    advLeadX = advLeadY = 0;
-
-    /* ADVENTURE: snap onto the machine at the mine mouth. adv.enterMine() has
-     * already reset the vehicle by the time it calls this, so the position is
-     * available — and without the snap a descent would open with the camera
-     * flying in from wherever the time-attack lane left it. */
-    if (advOn()) {
-      x = (SM.vehicle && SM.vehicle.getX) ? SM.vehicle.getX() : 0;
-      y = (SM.vehicle && SM.vehicle.getY) ? SM.vehicle.getY() : A.MINE_CEILING_Y;
-      advTargetX = x;
-      advTargetY = y;
-      zoom = zoomBase = externalZoom = A.CAM_ZOOM;
-      lookahead = 0;
-    }
     recomputeScale();
   }
 

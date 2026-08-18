@@ -623,3 +623,39 @@ and verified. Notable seams closed during integration:
 Full-run verification (headless Chrome 1440×900, scripted steering): 4.7-minute run
 to `level:complete`, all 11 zones, 18 upgrades, 16 gates, 120 fps average, zero
 console errors, clean restart.
+
+## 11. Post-note — ADVENTURE MODE was split out (2026-08-18)
+
+Between v1.6.0 and v1.9.0 this repo also carried **ADVENTURE MODE**: a mining-company
+campaign with save slots, a world map, mining rights, fuel/cargo/heat pressure, free
+2D driving on a virtual joystick, sealed per-level maps and a lift. It has since
+become **its own game in its own repo (`supermine_adventure`)**, and every trace of it
+was removed from here.
+
+**Everything above this section describes the engine as it stands today and is
+accurate.** In particular §1's "the 14 JS files + `index.html` + `style.css` are the
+complete set" is true again, and the module map in §2 is once more the whole build.
+
+What that removal touched, for anyone reading old commits or the split repo:
+
+* **Deleted outright** — `js/adv.js`, `js/advui.js`, `js/advterrain.js`,
+  `js/advhud.js`, `js/mines.js`, `js/rig.js`, `js/save.js`, `js/scanner.js`,
+  `js/joystick.js`, `style-adventure.css`, `ADVENTURE.md`, `ROADMAP.md`.
+* **Restored to their pre-adventure state** — every shared file adventure had
+  reached into: `index.html`, `js/main.js`, `js/ui.js`, `js/camera.js`,
+  `js/vehicle.js`, `js/input.js`, `js/particles.js`, `js/config.js`, `js/terrain.js`,
+  `js/effects.js`, `js/materials.js`. Adventure was built as `if (adv) X else Y`
+  throughout, so removing it was deleting the `X` branches; the `Y` side is
+  byte-for-byte what it was before adventure existed. Classic gameplay is unchanged.
+* **Gone with it**, in case you go looking for them: `SM.config.ADV`,
+  `SM.input.setStick()/getMove()`, `SM.particles.despawnOutsideRect()`,
+  `SM.effects.renderDarkness()`, `SM.vehicle.parkAtDoor()/renderPreview()`,
+  `SM.ui.leaveAdventure()`, the `sm-adv` root class, materials 13–22 (the adventure
+  geology: clay, coal, copper, sandstone, limestone, silver, platinum, uranium,
+  ancient, bedrock), and the ADVENTURE card on the main menu.
+
+`sw.js` bumped to `v1.9.1` because the cache is whole-build and cache-first: a client
+holding v1.9.0 would otherwise keep being served nine files this build no longer ships.
+
+The classic regression gate is unchanged and worth keeping: **the seed-424242 terrain
+histogram**.

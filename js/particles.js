@@ -831,20 +831,7 @@ SM.particles = (function () {
 
   /* --- 1. integration ------------------------------------------------ */
   function integrate(dt) {
-    /* THE ONE DELIBERATE EXCEPTION TO THIS FILE'S FREEZE.
-     *
-     * These are the walls loose debris bounces off. They were hard-coded to the
-     * classic lane, but an ADVENTURE shaft is wider (ADV.MINE_HALF_WIDTH 880 vs
-     * LANE_HALF_WIDTH 640), so underground every fragment in the outer 240 units
-     * of each side was snapped inward off a wall that is not drawn and is not
-     * there — ore erupting from a wide cut visibly jumped towards the middle.
-     *
-     * Read ONCE PER STEP, not per particle, so the cost is a single guarded
-     * function call against ~200 dynamic entries. Deliberately not a setter:
-     * a setter is a second copy of this fact that some code path forgets to
-     * update, and the bound would then be wrong for a whole descent. */
     var lane = C.LANE_HALF_WIDTH;
-    if (SM.adv && SM.adv.isActive && SM.adv.isActive()) lane = C.ADV.MINE_HALF_WIDTH;
     var maxSpeed = C.MAX_SPEED;
     var snap2 = C.COLLECT_SNAP_DIST * C.COLLECT_SNAP_DIST;
     var collAcc = C.COLLECT_ACCEL;
@@ -1096,34 +1083,6 @@ SM.particles = (function () {
     }
   }
 
-  /**
-   * Free everything OUTSIDE a rectangle. The second deliberate exception to this
-   * file's freeze, and the enabling change for a wide mine.
-   *
-   * despawnBehind/Ahead cut on a Y line only, which forces a streamer to keep the
-   * FULL WIDTH of its world resident and window in one axis. That is why the
-   * adventure shaft was capped at 1760 units: widening it multiplied the resident
-   * particle count until the slab had to be too short to fill the screen.
-   *
-   * A rectangle lets a streamer window in BOTH axes, which makes width almost
-   * free — the camera only ever sees about 2000 units across, so a much wider
-   * mine costs no extra resident particles and no extra draw calls, only a bigger
-   * carve mask (one byte per cell, and that lives in a plain typed array).
-   *
-   * `keepLoose` exists because debris is the player's property: ore tumbling
-   * loose or flying to the collector must not evaporate because the chunk it
-   * happens to be over got recycled. Pass true to spare LOOSE and COLLECTED and
-   * cull only embedded SOLID terrain.
-   */
-  function despawnOutsideRect(minX, minY, maxX, maxY, keepLoose) {
-    for (var k = activeCount - 1; k >= 0; k--) {
-      var i = activeList[k];
-      if (keepLoose && sState[i] !== SOLID) continue;
-      var x = pX[i], y = pY[i];
-      if (x < minX || x > maxX || y < minY || y > maxY) free(i);
-    }
-  }
-
   /* =====================================================================
    * RENDERING
    * Solids are bucketed per material so we hammer one atlas at a time;
@@ -1289,7 +1248,6 @@ SM.particles = (function () {
     // streaming
     despawnBehind: despawnBehind,
     despawnAhead: despawnAhead,
-    despawnOutsideRect: despawnOutsideRect,
 
     // introspection
     getStats: getStats,

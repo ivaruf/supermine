@@ -35,10 +35,16 @@ PRESSURE LOCK → THE MOTHERLODE → THE CORE. Paired upgrade gates offer a SAFE
 HARD route — harder rock, rarer loot, stronger upgrades. 13 upgrade effects, all
 repeatable with tiered falloff, all visible on the machine.
 
-## Roadmap
+## Adventure mode was split out
 
-Adventure mode's design backlog lives in `ROADMAP.md` — the lift/depth-level
-plan, station infrastructure, level events, and the unbuilt machine upgrades.
+SUPERMINE briefly carried a second, much larger mode — a mining-company
+campaign with save slots, a world map, fuel and cargo, and free 2D driving.
+On 2026-08-18 it became **its own game in its own repo**
+(`supermine_adventure`), and everything it added here was removed: nine JS
+modules, `style-adventure.css`, and its design docs (`ADVENTURE.md`,
+`ROADMAP.md`) all went with it. This repo is once again purely the original
+time-attack / freestyle drill-fest, and every shared file was returned to its
+pre-adventure state — classic play is unchanged.
 
 ## Code
 

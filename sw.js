@@ -90,7 +90,27 @@
 //         sale). Measured: a deposit checkpoint turns a hold-bound $7.5k run
 //         into a fuel-bound $60k run. NOTE: rails world-visuals and the
 //         checkpoint UI land in the next bump — this build has the systems.
-const VERSION = 'v1.8.0';
+// v1.9.0  LEVELS ARE MAPS. Each level is its own sealed playfield (all four
+//         bounds impassable at every drill tier; seals heal and beat old-save
+//         masks); the LIFT is big doors at the level's top-centre — drive in
+//         and the machine disappears into the cage; the door menu is the whole
+//         surface loop (SELL / REFUEL / levels with BUY / MAP), so the results
+//         screen now exists only for strands (and still sells secured ore).
+//         Rides are map transitions with a dip-to-black; you arrive inside the
+//         destination lift. L1 comes with the rights; deeper levels are wider.
+//         v1.8 saves migrate losslessly. Also fixes a classic-mode DOM leak
+//         that shipped in v1.8.
+// v1.9.1  ADVENTURE MODE SPLIT OUT into its own game and repo
+//         (supermine_adventure), 2026-08-18. SUPERMINE is once again purely the
+//         60-second time-attack / freestyle drill-fest it started as. Nine JS
+//         files and style-adventure.css left with it and are gone from the
+//         precache list below; every shared file was returned to its
+//         pre-adventure state, so classic play is byte-for-byte unchanged.
+//         BUMPED BECAUSE THE FILE SET CHANGED: this cache is whole-build and
+//         cache-first, so a client holding v1.9.0 would keep being served the
+//         adventure build — including nine files this deploy no longer ships —
+//         until this string changes.
+const VERSION = 'v1.9.1';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [
@@ -98,7 +118,6 @@ const ASSETS = [
   './index.html',
   './manifest.webmanifest',
   './style.css',
-  './style-adventure.css',
   './js/config.js',
   './js/events.js',
   './js/materials.js',
@@ -112,15 +131,6 @@ const ASSETS = [
   './js/effects.js',
   './js/sound.js',
   './js/ui.js',
-  './js/mines.js',
-  './js/rig.js',
-  './js/save.js',
-  './js/advterrain.js',
-  './js/scanner.js',
-  './js/joystick.js',
-  './js/advhud.js',
-  './js/advui.js',
-  './js/adv.js',
   './js/main.js',
   './icons/icon-192.png',
   './icons/icon-512.png',

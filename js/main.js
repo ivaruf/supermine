@@ -89,42 +89,17 @@ SM.main = (function () {
   /* =====================================================================
    * SIMULATION STEP
    * ================================================================== */
-  /**
-   * True when ADVENTURE MODE owns the session. Feature-detected at every call
-   * site so a build without the adventure modules still runs classic exactly
-   * as before — `SM.adv` simply is not there and every branch takes the
-   * classic path.
-   */
-  function advActive() {
-    return !!(SM.adv && SM.adv.isActive && SM.adv.isActive());
-  }
-
   function step(dt) {
-    var adv = advActive();
-
     SM.input.update(dt);
-
-    // The RUN DIRECTOR. level.js is the time-attack director and adv.js is the
-    // expedition director; exactly one of them runs. They are mutually
-    // exclusive by design — level.js owns a countdown that must not tick while
-    // the player is choosing a mine, and adv.js owns fuel/cargo/heat that mean
-    // nothing in a 60-second score attack.
-    if (adv) SM.adv.update(dt); else SM.level.update(dt);
-
+    SM.level.update(dt);
     SM.terrain.update(dt);
     SM.vehicle.update(dt);
     SM.particles.update(dt);
-
-    // Upgrade GATES are a classic-mode device: adventure buys upgrades in the
-    // workshop instead. Skipping this also keeps upgrades.js's progression
-    // zoom-out from fighting the adventure camera every single step.
-    if (!adv) SM.upgrades.update(dt);
-
+    SM.upgrades.update(dt);
     SM.camera.update(dt);
     SM.effects.update(dt);
     SM.sound.update(dt);
     SM.ui.update(dt);
-    if (adv && SM.advhud) SM.advhud.update(dt);
   }
 
   /* =====================================================================
@@ -135,20 +110,14 @@ SM.main = (function () {
     ctx.fillStyle = '#0b0a0d';
     ctx.fillRect(0, 0, cssW, cssH);
 
-    var adv = advActive();
-
     ctx.save();
     SM.camera.applyTransform(ctx);
 
     SM.terrain.render(ctx);
     SM.particles.render(ctx);
-    if (!adv) SM.upgrades.render(ctx);
+    SM.upgrades.render(ctx);
     SM.vehicle.render(ctx);
     SM.effects.render(ctx);
-    // LAST inside the world transform, because the adventure layer is where
-    // the darkness/headlight composite lives: it has to fall on the terrain,
-    // the machine AND the effects, so it cannot draw before any of them.
-    if (adv) SM.adv.renderWorld(ctx);
 
     ctx.restore();
 
@@ -178,13 +147,7 @@ SM.main = (function () {
     // trick: a paused minute banks nothing, so the first frame after a resume
     // steps exactly once like any other frame instead of paying out sixty
     // seconds of backlog and teleporting the rig across the map.
-    // The third holder is ADVENTURE MODE's meta screens (slot picker, world
-    // map, workshop, prep, extraction summary). It gets its own gate rather
-    // than reusing setPaused() because setPaused() emits `game:paused`, which
-    // ui.js answers by opening the CLASSIC pause card — a card with a RESUME
-    // button for a run that has not started. Same zeroing, no side effects.
-    if (!started || paused ||
-        (SM.adv && SM.adv.holdsSim && SM.adv.holdsSim())) accumulator = 0;
+    if (!started || paused) accumulator = 0;
 
     var t0 = performance.now();
     var steps = 0;
@@ -241,13 +204,6 @@ SM.main = (function () {
   }
 
   function restart() {
-    // ADVENTURE owns its own restart: re-descending means rebuilding the mine
-    // from its saved seed and carve mask with the loadout the player paid for,
-    // none of which this function knows about. Rebuilding the CLASSIC world
-    // underneath a live expedition would strand the player in a time-attack
-    // lane, so hand over and get out of the way.
-    if (advActive() && SM.adv.restart) { SM.adv.restart(); return; }
-
     // Clear the pause FIRST. RESTART is reachable from inside the pause menu,
     // so `game:paused` has to land before `run:reset`: the menu is then gone
     // by the time the fresh run announces itself, and a restarted run can
@@ -283,14 +239,6 @@ SM.main = (function () {
     SM.input.init(canvas);
     SM.particles.init();
     SM.camera.init();
-    // ADVENTURE DATA LAYER, before anything can ask it a question. Pure data
-    // and localStorage: no canvas, no camera, no particles. Ordered
-    // mines -> rig -> save because save.js validates a loaded slot against
-    // the catalogues (an unknown mine id or part key must not boot a company
-    // into an inconsistent state).
-    if (SM.mines) SM.mines.init();
-    if (SM.rig) SM.rig.init();
-    if (SM.save) SM.save.init();
     // Viewport BEFORE terrain: terrain sizes its streaming window from the
     // camera's visible bounds, which are meaningless until the canvas is sized.
     resize();
@@ -301,16 +249,6 @@ SM.main = (function () {
     SM.effects.init();
     SM.sound.init();
     SM.ui.init();
-
-    // ADVENTURE, after everything it drives exists. adv.js LAST of the four:
-    // it is the state machine, and opening a state must be able to reach a
-    // fully-built terrain streamer, scanner, HUD, joystick and screen stack.
-    if (SM.advterrain) SM.advterrain.init();
-    if (SM.scanner) SM.scanner.init();
-    if (SM.joystick) SM.joystick.init();
-    if (SM.advhud) SM.advhud.init();
-    if (SM.advui) SM.advui.init();
-    if (SM.adv) SM.adv.init();
 
     window.addEventListener('resize', resize, false);
     window.addEventListener('orientationchange', resize, false);

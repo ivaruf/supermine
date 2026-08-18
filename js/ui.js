@@ -98,7 +98,7 @@ SM.ui = (function () {
   /* The build stamp shown on the menu. It lives HERE rather than in
    * config.js because config.js is frozen, and ui.js is the only module that
    * ever displays it. Bump it by hand when the game meaningfully changes. */
-  var GAME_VERSION    = 'v1.8.0';
+  var GAME_VERSION    = 'v1.9.1';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -796,11 +796,6 @@ SM.ui = (function () {
       'Dig as far as you like. Nothing is timed and nothing ends the run — ' +
       'every gate pays an upgrade instead of seconds.',
       'SANDBOX');
-    els.modeAdv = modeCard(modes, 'adventure', 'ADVENTURE',
-      'RUN A MINING COMPANY',
-      'Buy mining rights, fuel up and descend. Drive with the stick, fill the ' +
-      'hold, then get back to the surface and sell before the tank runs dry.',
-      'CAMPAIGN');
 
     // Two lines, one shown at a time: a phone player has no keyboard to be
     // told about and a desktop player has no side pads to find.
@@ -995,9 +990,6 @@ SM.ui = (function () {
     // Not while the menu is up (nothing is running yet) and not after the run
     // has ended (the summary owns the screen, and pausing a finished run is a
     // way to get stuck behind two overlays at once).
-    // Not in ADVENTURE either: that mode has its own pause, and this card's
-    // RESTART / MAIN MENU buttons both rebuild the classic time-attack world.
-    if (advActive()) return false;
     return started && !summaryOpen;
   }
 
@@ -1713,59 +1705,8 @@ SM.ui = (function () {
     }
   }
 
-  /* =====================================================================
-   * ADVENTURE HANDOFF
-   * ---------------------------------------------------------------------
-   * ADVENTURE is not a "run" in this file's sense, so it does NOT go through
-   * startRun(): there is no mode to set on level.js, no world to restart and
-   * no clock to show. It takes the menu down, marks the root `sm-adv` (which
-   * is how style-adventure.css hides the classic HUD wholesale), and hands the
-   * screen to SM.adv. `started` stays FALSE the whole time, which is what
-   * keeps the classic pause card and the summary out of the expedition.
-   * ================================================================== */
-  /* ui.js's OWN latch, not a mirror of SM.adv's state. It has to be set before
-   * noteGesture() below — that call synchronously fires `input:firstgesture`,
-   * and onFirstGesture() must already know this is a campaign, not a run, or it
-   * latches `started` and brings the classic HUD up under the world map. */
-  var advMode = false;
-
-  function advActive() {
-    return advMode || !!(SM.adv && SM.adv.isActive && SM.adv.isActive());
-  }
-
-  function enterAdventure(e) {
-    if (e && e.preventDefault) e.preventDefault();
-    if (started || advActive()) return;
-    if (!SM.adv || !SM.adv.open) { toast('ADVENTURE UNAVAILABLE', 'This build has no campaign module', 2.2); return; }
-
-    advMode = true;
-    SM.sound.play('ui');
-    SM.input.noteGesture();          // canonical path: unlocks audio for everyone
-
-    padsRelease();
-    if (root) { root.classList.remove('sm-menu'); root.classList.add('sm-adv'); }
-    if (els.start) els.start.classList.add('sm-start-off');
-    if (els.hint) els.hint.classList.add('sm-hint-fade');
-
-    SM.adv.open();
-  }
-
-  /** Called by SM.adv when the player leaves the campaign. Puts the menu back. */
-  function leaveAdventure() {
-    advMode = false;
-    if (root) { root.classList.remove('sm-adv'); root.classList.add('sm-menu'); }
-    if (els.start) els.start.classList.remove('sm-start-off');
-    if (els.hint) els.hint.classList.remove('sm-hint-fade');
-    started = false;
-    reset();
-  }
-
   function onFirstGesture() {
     if (started) return;
-    // The ADVENTURE card routes through noteGesture() to unlock audio, which
-    // fires this — but the campaign is not a run and must not tear the menu
-    // down twice or re-show the classic HUD over the world map.
-    if (advActive()) return;
     started = true;
     if (root) root.classList.remove('sm-menu');
     if (els.start) els.start.classList.add('sm-start-off');
@@ -1857,7 +1798,6 @@ SM.ui = (function () {
      * after reset had already re-armed the overlay. */
     if (els.modeTime) els.modeTime.addEventListener('click', function (e) { startRun(e, 'time'); });
     if (els.modeFree) els.modeFree.addEventListener('click', function (e) { startRun(e, 'freestyle'); });
-    if (els.modeAdv) els.modeAdv.addEventListener('click', enterAdventure);
     refreshMute();
     initPWA();
   }
@@ -1943,11 +1883,6 @@ SM.ui = (function () {
 
   function update(dt) {
     if (!root || !built) return;
-    /* ADVENTURE runs its own HUD (js/advhud.js) against its own numbers. This
-     * one would otherwise keep writing a time-attack clock and a score counter
-     * over the top of an expedition — and main.js calls update() from inside
-     * the fixed step, so that is up to 60 pointless DOM writes a second. */
-    if (advActive()) return;
 
     /* --- animated counter -------------------------------------------- */
     shown += (currency - shown) * Math.min(1, COUNTER_LERP * dt);
@@ -2228,12 +2163,6 @@ SM.ui = (function () {
     update: update,
     toast: toast,
     getCurrency: getCurrency,
-    isSummaryOpen: function () { return summaryOpen; },
-
-    /* --- adventure handoff (called by js/adv.js only) ----------------- */
-    enterAdventure: enterAdventure,
-    leaveAdventure: leaveAdventure,
-    returnToMenu: returnToMenu,
-    getRoot: function () { return root; }
+    isSummaryOpen: function () { return summaryOpen; }
   };
 })();
