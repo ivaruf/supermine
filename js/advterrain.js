@@ -81,16 +81,20 @@
  * ---------------------------------------------------------------------------
  * THE GEOLOGY, IN THE ORDER THE GENERATOR ASKS THE QUESTIONS
  *
- *   MOUTH CHAMBER   an excavated portal at the top so the machine is not born
- *                   buried, and so EXIT_RADIUS is reachable.
+ *   MOUTH CHAMBER   an excavated portal at the top of the ELEVATOR COLUMN — the
+ *                   mine's west corner — so the machine is not born buried, and
+ *                   so EXIT_RADIUS is reachable.
  *   THE LIFT        the one piece of geology that is not geology: a vertical
- *                   shaft at the mouth's x, carved down to the deepest STATION
- *                   the player owns, with a chamber, a platform, worklights, a
- *                   cage and a big red depth readout at each of them. It is
- *                   INFRASTRUCTURE — derived from SM.adv.getLevels() at
- *                   GENERATION time and never written into the carve mask, so it
- *                   exists in bands nobody has visited and vanishes again in a
- *                   save that never bought the level. See "THE LIFT" below.
+ *                   shaft at the mine's WEST EDGE (ELEV_X, just inside the
+ *                   bedrock wall), carved down to the deepest STATION the player
+ *                   owns, with a chamber that opens EASTWARD into the field, a
+ *                   platform, worklights, a cage and a big red depth readout at
+ *                   each of them. It is INFRASTRUCTURE — derived from
+ *                   SM.adv.getLevels() at GENERATION time and never written into
+ *                   the carve mask, so it exists in bands nobody has visited and
+ *                   vanishes again in a save that never bought the level. It is
+ *                   also OUTSIDE THE WORKINGS: the whole span east of it is
+ *                   uninterrupted diggable geology. See "THE LIFT" below.
  *   BEDROCK FLOOR   below the mine's stated depth. The bottom of a mine is
  *                   expressed as HARDNESS (26), not as an invisible wall.
  *   MOTHERLODE      the money shot. A big natural cavern whose far WALL is
@@ -234,10 +238,104 @@ SM.advterrain = (function () {
   var TRIM_DOWN = 0.02;        // per-step shrink while over budget
   var TRIM_UP = 0.004;         // per-step recovery once back under
 
+  /* --- THE ELEVATOR'S X: THE MINE'S WEST EDGE --------------------------
+   * The lift is a TRANSPORT COLUMN OUTSIDE THE WORKINGS, not a road through the
+   * middle of them. It used to be sunk down x = 0, and a shaft down the centre of
+   * a 5200-unit mine is not an elevator: it is a pair of rails with the field
+   * split in half around them, and every run began by driving down a corridor the
+   * player already owned. Moving it to the west edge does two things at once —
+   * the whole span east of it becomes ONE uninterrupted body of diggable rock,
+   * and the levels stop being waypoints on a road and become landings that open
+   * off a column, which is the shape a real mine has.
+   *
+   * THE INSET IS SET BY WHAT HANGS OFF THE COLUMN, NOT BY TASTE. The carved
+   * shaft is only SHAFT_HALF (150) either side of ELEV_X, but four other things
+   * stand further west than that and every one of them would end up drawn on
+   * bedrock at a smaller inset:
+   *
+   *   the shaft's own timber LINING           at -150 .. -137
+   *   each station's BACK WALL (STATION_BACK)  at -186
+   *   the station HEADFRAME's west post        at -174 .. -161
+   *   the surface PORTAL's west post           at -198
+   *
+   * ...plus render() paints the wall trim and a 70-unit ambient-occlusion
+   * gradient inward from -HALF_W, which would land on that timber rather than on
+   * rock. MEASURED at 210, which is what this was first built at: the portal's
+   * west post and the west festoon string both stood in the rock rind, and the
+   * station headframe's west post stood outside the room it is supposed to be
+   * inside.
+   *
+   * BUT THE NUMBER IS ACTUALLY SET BY THE MACHINE'S OWN WALL CLAMP, and that was
+   * the surprise. js/vehicle.js holds the hull centre at least advRadius() from
+   * the bedrock (`bound = MINE_HALF_WIDTH - rad`), and advRadius() is the
+   * CIRCUMSCRIBED reach — a top-tier rig trails a hopper and a conveyor, and it
+   * measures 438.7 units. So the machine physically cannot get closer to the west
+   * wall than x = -2161, whatever it is asked to do. The cage it has to board is a
+   * circle of ADV.EXIT_RADIUS (200) about (ELEV_X, stationY) and the park sits
+   * ADV_SPAWN_Y (70) below that centre, so the inset has to satisfy
+   *
+   *     sqrt((advRadius - inset)^2 + ADV_SPAWN_Y^2)  <  EXIT_RADIUS
+   *
+   * i.e. inset > 251.7 for the rig the workshop actually sells. MEASURED at 250:
+   * a maxed rig parked at the surface sat 201.3 units from the cage centre and
+   * getBoardable() returned -1 — the lift was unusable at the top of the tech
+   * tree, at every station, and nothing about the failure said why.
+   *
+   * 320 puts the park at ELEV_X + ADV_SPAWN_X = -2130, which is inside the clamp
+   * for EVERY rig tier (so the biggest and the smallest machine park in exactly
+   * the same place, 165 units from the cage) and leaves 62 units of slack on the
+   * boarding radius for whatever js/rig.js grows next. It also gives every one of
+   * the four overhangs above 120+ units of real rock behind it. The cost is 70
+   * units of field out of 5200 — 1.3% — against a mode-breaking bug.
+   *
+   * EVERYTHING DOWNSTREAM READS getMouthX(). js/adv.js's getStationX(), the cage
+   * circles, the distance-to-exit reserve maths, js/vehicle.js's park and the HUD
+   * all resolve the shaft's x through that one getter, so this constant is the
+   * only place the number lives.
+   * ------------------------------------------------------------------ */
+  var ELEV_INSET = 320;
+  var ELEV_X = -HALF_W + ELEV_INSET;
+
   /* --- the mine mouth ------------------------------------------------- */
-  var MOUTH_R = 250;           // excavated portal chamber radius
+  var MOUTH_R = 270;           // excavated portal chamber radius
+  /* THE PORTAL CHAMBER IS OFFSET EAST OF THE HEADFRAME, and that is the
+   * spawn-footprint fix. The machine now parks EAST of the cage facing east (see
+   * vehicle.js's ADV_SPAWN_X), so at the surface station its nose reaches about
+   * 320 units east of the column — past the edge of a chamber centred on it, i.e.
+   * born with the bit inside solid topsoil. Sliding the circle 84 east puts the
+   * excavation where the machine actually stands while still covering the full
+   * width of the shaft head behind it. Measured: buried-solid count at spawn 0. */
+  var MOUTH_DX = 100;
   var MOUTH_CY = 70;           // its centre, world units below MINE_CEILING_Y
   var SKY_DEPTH = 300;         // world units of daylight ramp above the mouth
+  /* DAYLIGHT IS LOCAL TO THE ELEVATOR HEAD. With the mouth at the centre of the
+   * mine, "the surface" and "the way out" were the same line and the sky was
+   * painted across the whole view above MINE_CEILING_Y. At the west edge that
+   * would say the opposite of the truth: the workings run 4800 units east of the
+   * head and their roof is ROCK. So the sky is a patch over the head that grades
+   * into the rock cap, which is also what makes the daylight mean something —
+   * one bright place, and it is the one you leave from. */
+  var DAY_HALF = 640;          // sky reaches this far EAST of the head...
+  var DAY_FADE = 420;          // ...then grades into the rock cap over this
+  /* THE DAYLIGHT BLOOM, drawn in renderLit() — the emissive pass — because the
+   * darkness composite crushes the sky itself to rgb(8,9,10) past the headlight.
+   * Sized so the portal reads from about half a screen away, and no further: it is
+   * culled with the mouth (see renderLit), so it is a landmark on the surface
+   * rather than a beacon through 300 m of rock, and a deep station pays nothing
+   * for it at all.
+   *
+   * IT IS THE ONE THING IN THIS FILE THAT COSTS FRAMES. One cached radial gradient
+   * over a 2R square is 840x840 world units of alpha blending. Measured headless at
+   * 1440x900: 44 fps at the surface without it, 41 at R = 470, 42 at R = 420 — and
+   * unchanged at depth, because the y guard skips it. 420 is where the landmark is
+   * still legible and the bill is under a frame and a half. */
+  var DAY_GLOW_R = 420;
+  var DAY_GLOW_A = 0.30;
+  /* Headframe span, straddling the carved column. A literal rather than
+   * SHAFT_HALF * 2 + 68, because SHAFT_HALF is declared further down this block
+   * and `var` hoisting would make that read `undefined`. It IS 368 = the 300-unit
+   * column plus 34 of bracket each side, and the two must be changed together. */
+  var PORTAL_W = 368;
   var FLOOR_PAD_M = 60;        // metres of bedrock modelled below the bottom
 
   /* --- THE LIFT: the shaft, the stations, and the red readout ----------
@@ -268,12 +366,29 @@ SM.advterrain = (function () {
    * is excavated to hold a platform, so it is a SUPERELLIPSE (exponent 4):
    * square-ish walls, rounded corners, full width right up to the ceiling.
    *
-   * 600 x 400 is sized off THE MACHINE, which is about 340 units long with its
-   * drill out and 150 wide — a room that only just contains it reads as a
-   * cupboard and leaves nowhere to put the sign. It also means the whole
-   * EXIT_RADIUS (200) cage zone is inside the excavation, so the lift is always
-   * reachable from anywhere in the room. */
-  var STATION_RX = 300;
+   * IT IS ASYMMETRIC NOW, AND THAT IS THE WHOLE POINT OF AN EDGE ELEVATOR. The
+   * room used to be 600 x 400 centred on the column, which is right when the
+   * column runs down the middle of the mine and wrong at its west wall: half that
+   * excavation would be carved into — and half the room PAINTED onto — the
+   * bedrock the mine ends at. So the shaft is the room's BACK WALL and the
+   * excavation runs EAST into the field:
+   *
+   *   STATION_BACK  the shaft's own width plus the thickness of its lining. Just
+   *                 enough that the column passes cleanly through the chamber;
+   *                 there is nothing behind it to excavate.
+   *   STATION_FWD   the room proper. 560 is sized off THE MACHINE (about 340
+   *                 units long with its drill out and 150 wide) plus the cage and
+   *                 the deck it drives off: a room that only just contains the
+   *                 machine reads as a cupboard.
+   *
+   * The cage zone js/adv.js boards from is still a circle of EXIT_RADIUS (200)
+   * about (ELEV_X, stY), and its WESTERN half is now outside the workings by
+   * design — there is no rock over there to stand in. What matters is that the
+   * whole eastern half, including where vehicle.js parks, is inside the
+   * excavation, so the lift is reachable from anywhere in the room. */
+  var STATION_BACK = 186;      // west of the column: the lining and the headframe
+                               // post, and no more — there is nothing behind it
+  var STATION_FWD = 560;       // east of the column: the room
   var STATION_RY = 200;
   var STATION_MAX = 16;        // stations one mine may hold
   var LIFT_POLL = 8;           // steps between ownership re-reads (see update)
@@ -353,11 +468,18 @@ SM.advterrain = (function () {
   // default. Below that the motherlode is the best ore the layer already has,
   // which keeps a shallow mine's headline formation in proportion to the mine.
   var ANCIENT_DEPTH_M = 650;
-  /* The GUARANTEED motherlode stays within this of the shaft centre. The mouth
-   * is at x = 0 and depth is still the axis of progression, so "go all the way
-   * down and there is one waiting" has to survive the mine getting three times
-   * wider: a headline formation 2400 units off to one side is not a reward, it
-   * is a lottery. Rolled lodes are free to be anywhere. */
+  /* The GUARANTEED motherlode stays within this of the MINE'S CENTRE LINE, and
+   * that line is x = 0 whatever the elevator does. Depth is still the axis of
+   * progression, so "go all the way down and there is one waiting" has to survive
+   * the mine being 5200 units wide: a headline formation 2400 units off to one
+   * side is not a reward, it is a lottery. Rolled lodes are free to be anywhere.
+   *
+   * DELIBERATELY NOT MOVED WITH THE ELEVATOR. The lift went to the west edge; the
+   * FIELD did not move, and re-anchoring this to ELEV_X would regenerate the
+   * geology of every seed in the catalogue. The headline formation therefore sits
+   * in the middle of the workings — 2400 units of driving east of the column,
+   * which is exactly the distance the mode's horizontal progression (levels, and
+   * the checkpoints that extend east from them) exists to sell. */
   var LODE_GUARANTEED_X = 1150;
 
   var DRIFT_W = 1760;                // one old-workings slot per 176 m across
@@ -458,9 +580,14 @@ SM.advterrain = (function () {
   var stLevel = new Int32Array(STATION_MAX);
   var stArt = [];                 // the pre-rendered readout panel, per station
   var shaftBotY = 0;              // the shaft is carved from the ceiling to here
-  var liftReach = 0;              // no cell with |x| past this can be lift void.
-                                  // 0 means nothing is carved at all, and it is
-                                  // the one test the hot path pays for.
+  /* THE HOT-PATH REJECT. liftXLo/liftXHi bracket every x the lift's excavation
+   * can possibly reach, in ABSOLUTE world coordinates — they are not symmetric
+   * about anything now, because the room only opens one way. `liftReach` is kept
+   * purely as the "is anything carved at all" flag: it is 0 until a station is
+   * owned, and that zero test is the only cost cellMaterialAt() pays per cell in
+   * the 95% of a 5200-unit mine that is nowhere near the column. */
+  var liftReach = 0;
+  var liftXLo = 0, liftXHi = 0;
   var nextOn = false;             // is there an unowned level below the last?
   var nextY = 0, nextArt = null;
   var liftSig = -2;               // ownership signature, for the poll
@@ -722,7 +849,11 @@ SM.advterrain = (function () {
     if (stN) {
       shaftBotY = stY[stN - 1] + STATION_RY + SHAFT_SUMP;
       if (shaftBotY > floorY - SP) shaftBotY = floorY - SP;
-      liftReach = (SHAFT_HALF > STATION_RX ? SHAFT_HALF : STATION_RX) + 2;
+      /* The reject box, in world x. West of the column only the lining is
+       * excavated; east of it the station rooms are. */
+      liftReach = 1;
+      liftXLo = ELEV_X - (SHAFT_HALF > STATION_BACK ? SHAFT_HALF : STATION_BACK) - 2;
+      liftXHi = ELEV_X + (SHAFT_HALF > STATION_FWD ? SHAFT_HALF : STATION_FWD) + 2;
     }
 
     /* THE NEXT LEVEL DOWN, unowned: the shallowest one below what the shaft
@@ -755,13 +886,16 @@ SM.advterrain = (function () {
    */
   function inLiftVoid(x, y) {
     if (!liftReach) return false;
-    if (x < -liftReach || x > liftReach) return false;
-    if (y < shaftBotY && x > -SHAFT_HALF && x < SHAFT_HALF) return true;
+    if (x < liftXLo || x > liftXHi) return false;
+    var lx = x - ELEV_X;                       // shaft-local x; +lx is EAST
+    if (y < shaftBotY && lx > -SHAFT_HALF && lx < SHAFT_HALF) return true;
     for (var i = 0; i < stN; i++) {
       var dy = (y - stY[i]) / STATION_RY;
       if (dy < -1 || dy > 1) continue;
-      var dx = x / STATION_RX;
-      // The ROOM: |dx|^4 + |dy|^4 < 1. Squaring twice keeps it to multiplies.
+      // The ROOM: |dx|^4 + |dy|^4 < 1, with a DIFFERENT half-extent each side of
+      // the column, because a landing at the mine's edge opens one way only.
+      var dx = lx / (lx < 0 ? STATION_BACK : STATION_FWD);
+      // Squaring twice keeps the fourth power to multiplies.
       dx *= dx; dy *= dy;
       if (dx * dx + dy * dy < 1) return true;
     }
@@ -1113,9 +1247,11 @@ SM.advterrain = (function () {
 
   /**
    * Resolve one motherlode into the scratch slots.
-   * `centred` is the guaranteed lode: it is placed near the shaft centre rather
-   * than anywhere across the width (see LODE_GUARANTEED_X), because it is the
-   * payoff for DEPTH and the mouth is at x = 0.
+   * `centred` is the guaranteed lode: it is placed near the MINE'S centre line
+   * rather than anywhere across the width (see LODE_GUARANTEED_X), because it is
+   * the payoff for DEPTH. That line is x = 0 and is independent of ELEV_X — see
+   * the note on LODE_GUARANTEED_X for why moving it with the elevator would have
+   * been a regeneration of every seed rather than a relocation.
    */
   function describeLode(i, j, yc, L, scale, centred) {
     if (!L) return false;
@@ -1404,7 +1540,7 @@ SM.advterrain = (function () {
     var i, dx, dy, t;
 
     /* --- the mine mouth: an excavated portal chamber ------------------ */
-    dx = px; dy = py - (A.MINE_CEILING_Y + MOUTH_CY);
+    dx = px - (ELEV_X + MOUTH_DX); dy = py - (A.MINE_CEILING_Y + MOUTH_CY);
     if (dx * dx + dy * dy < MOUTH_R * MOUTH_R) return -1;
 
     /* --- the floor of the mine --------------------------------------- */
@@ -1426,7 +1562,7 @@ SM.advterrain = (function () {
      * pay for the call, and the call is shared with the scanner and the renderer
      * so the three can never disagree about where the shaft is.
      * ---------------------------------------------------------------- */
-    if (liftReach && px > -liftReach && px < liftReach && inLiftVoid(px, py)) return -1;
+    if (liftReach && px > liftXLo && px < liftXHi && inLiftVoid(px, py)) return -1;
 
     /* --- blobs: motherlode, then cavern, then pocket ------------------ */
     for (i = 0; i < bbN; i++) {
@@ -2609,13 +2745,26 @@ SM.advterrain = (function () {
   var BG_TILE = 128;
 
   /* --- worklights at the mine mouth (drawWorkLights) ------------------- */
-  var FESTOON_N = 7;           // bulbs strung down EACH wall of the mouth chamber
+  var FESTOON_N = 7;           // bulbs strung down EACH wall of the shaft head
   var FESTOON_GAP = 34;        // world units between bulbs
+  /* WHERE THE STRINGS HANG, and it is the SHAFT's walls, not the headframe's
+   * brackets. They used to hang off the portal frame at hx + 9, which is 193
+   * units out — fine over a mouth in the middle of a mine, and 43 units of solid
+   * rock west of the excavation once the mouth is at the west wall (screenshotted:
+   * a column of bulbs embedded in the rind). Hung off the shaft's own lining they
+   * are both inside the void at every depth they reach AND doing the job the
+   * comment below claims for them: they light the top of the SHAFT, which is what
+   * you look up at on the way out. */
+  var FESTOON_X = 159;         // = SHAFT_HALF + 9; change the two together
   var lampPhase = 0;           // monotonic; drives a deterministic flicker
   var lampGrads = {};          // radius+colour -> cached radial gradient
 
   var rockPattern = null, wallPattern = null;
   var tileSeed = 0;
+  /* The BASE COLOUR of wallPattern, i.e. the rock cap and the bedrock walls. Must
+   * match buildTiles()'s noiseTile(58, 53, 62, ...) call — drawMouth() grades the
+   * daylight into this flat colour because a pattern cannot be alpha-ramped. */
+  var CAP_RGB = '58,53,62';
 
   function tileRnd() {
     tileSeed = (tileSeed + 0x6D2B79F5) >>> 0;
@@ -2808,29 +2957,78 @@ SM.advterrain = (function () {
     return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
   }
 
-  /** Daylight and a timbered portal at the mine mouth. */
+  /**
+   * DAYLIGHT AND THE ELEVATOR HEAD, at the mine's WEST CORNER.
+   *
+   * Two separate jobs that used to be one. The sky is a PATCH over the head that
+   * grades east into the rock cap render() has already painted (see DAY_HALF): the
+   * workings run 4800 units east of here and their roof is rock, so a bright band
+   * across the whole ceiling would say the exact opposite of the truth and would
+   * also spend the one strong visual cue this mode has — "that way is out" — on
+   * every metre of it equally. The headframe, the floods and the festoons then
+   * draw over the column itself, in ELEV_X-local coordinates.
+   */
   function drawMouth(ctx, v, vTop) {
     var ceil = A.MINE_CEILING_Y;
     if (vTop > ceil) return;
-    /* Daylight over a FIXED distance, not over the visible slice. Anchoring the
-     * bright end to vTop meant that on the framing the camera actually uses at
-     * the mouth (camera.js caps the sky at ADV_SKY_PEEK) only the dark end of
-     * the ramp was ever on screen, and the surface read as more rock. */
     var top = ceil - SKY_DEPTH;
-    var g = ctx.createLinearGradient(0, top, 0, ceil);
-    g.addColorStop(0, '#8194ab');
-    g.addColorStop(0.45, '#4d5464');
-    g.addColorStop(1, '#14131a');
-    var fx = v.minX - 60, fw = (v.maxX - v.minX) + 120;
-    if (vTop < top) {
-      ctx.fillStyle = '#8194ab';
-      ctx.fillRect(fx, vTop - 60, fw, top - vTop + 60);
-    }
-    ctx.fillStyle = g;
-    ctx.fillRect(fx, top, fw, ceil - top);
 
-    // The portal frame, spanning the mouth chamber.
-    var w = MOUTH_R * 1.5;
+    /* --- the daylight patch ------------------------------------------- */
+    var xW = v.minX - 60;
+    var xE = ELEV_X + DAY_HALF;
+    if (xE > xW) {
+      /* Daylight over a FIXED distance, not over the visible slice. Anchoring the
+       * bright end to vTop meant that on the framing the camera actually uses at
+       * the mouth (camera.js caps the sky at ADV_SKY_PEEK) only the dark end of
+       * the ramp was ever on screen, and the surface read as more rock. */
+      var flat = vTop < top;
+      var g = ctx.createLinearGradient(0, top, 0, ceil);
+      g.addColorStop(0, '#8194ab');
+      g.addColorStop(0.45, '#4d5464');
+      g.addColorStop(1, '#14131a');
+
+      /* THE GRADE INTO THE ROCK CAP, IN TWO RECTS AND NO BANDING.
+       *
+       * The cap is a repeating PATTERN and a pattern cannot carry an alpha ramp,
+       * so the first attempt re-drew the sky over it in strips of falling alpha.
+       * Screenshotted: eight legible vertical bars, and raising the count to 24
+       * traded them for 24 fainter ones plus a hairline at every overlap where two
+       * alphas double-composited. Strips are simply the wrong tool.
+       *
+       * So the sky is painted across the WHOLE span including the grade, and the
+       * grade is then a single HORIZONTAL gradient of the cap's own base colour
+       * over the top of it: rgba(CAP,0) at the daylight end, rgba(CAP,1) at the
+       * rock end. Both gradients are continuous, so there is nothing to band. The
+       * only seam left is a TEXTURE one at the grade's east edge, where flat cap
+       * colour meets patterned cap colour — the same colour, differing by the
+       * pattern's own +-24 speckle, which is invisible next to a full-screen
+       * multiply-towards-black. */
+      var xF = xE + DAY_FADE;
+      if (xF > v.maxX + 60) xF = v.maxX + 60;
+      if (xF > xW) {
+        if (flat) {
+          ctx.fillStyle = '#8194ab';
+          ctx.fillRect(xW, vTop - 60, xF - xW, top - vTop + 60);
+        }
+        ctx.fillStyle = g;
+        ctx.fillRect(xW, top, xF - xW, ceil - top);
+      }
+      if (xF > xE) {
+        var cg = ctx.createLinearGradient(xE, 0, xE + DAY_FADE, 0);
+        cg.addColorStop(0, 'rgba(' + CAP_RGB + ',0)');
+        cg.addColorStop(1, 'rgba(' + CAP_RGB + ',1)');
+        ctx.fillStyle = cg;
+        ctx.fillRect(xE, vTop - 60, xF - xE, ceil - vTop + 60);
+      }
+    }
+
+    /* --- the head itself, over the column ----------------------------- */
+    if (v.maxX < ELEV_X - PORTAL_W || v.minX > ELEV_X + PORTAL_W) return;
+    ctx.save();
+    ctx.translate(ELEV_X, 0);
+
+    // The portal frame, spanning the shaft head.
+    var w = PORTAL_W;
     ctx.fillStyle = '#5a3d24';
     ctx.fillRect(-w * 0.5 - 14, ceil - 18, w + 28, 22);
     ctx.fillRect(-w * 0.5 - 14, ceil - 4, 18, 90);
@@ -2839,16 +3037,21 @@ SM.advterrain = (function () {
     ctx.fillRect(-w * 0.5, ceil + 4, w, 12);
 
     drawWorkLights(ctx, ceil, w);
+    ctx.restore();
   }
 
   /**
    * WORKLIGHTS ON THE PORTAL — the surface is a WORKSITE.
    *
    * Two things this buys beyond decoration. It marks where the exit is from
-   * further away than the timbers do, because a warm point of light survives the
-   * darkness composite while brown wood against brown rock does not. And it makes
-   * the mouth read as somewhere people work, which is the contrast the whole
+   * further away than the timbers do, because a warm lens against brown wood on
+   * brown rock still reads once the darkness composite has flattened both. And it
+   * makes the mouth read as somewhere people work, which is the contrast the whole
    * descent depends on: lit and busy up here, unlit and alone down there.
+   *
+   * NOTE that this is the GEOMETRY pass, so none of it survives the composite past
+   * the headlight — carrying the exit from further out than that is DAY_GLOW_R's
+   * job, in renderLit(). These lamps are the close-range read.
    *
    * Lamps on the headframe, plus a run of festoon bulbs strung down each side
    * wall that dim as they go — the last thing you see on the way down and the
@@ -2880,16 +3083,17 @@ SM.advterrain = (function () {
       ctx.fillRect(lx - 5, ceil - 32, 10, 5);           // the lit lens
     }
 
-    /* --- festoon bulbs down both walls -------------------------------
+    /* --- festoon bulbs down both walls OF THE SHAFT -------------------
      * They fade with depth so the string reads as leaving the daylight behind,
      * and there are only FESTOON_N of them so they never march past the mouth
-     * chamber into ground the player still has to dig. */
+     * chamber into ground the player still has to dig. See FESTOON_X for why they
+     * hang off the shaft's lining rather than off the headframe's brackets. */
     for (i = 0; i < FESTOON_N; i++) {
       var y = ceil + 26 + i * FESTOON_GAP;
       var dim = 1 - (i / FESTOON_N) * 0.72;
       var a = 0.85 * dim * flick;
       for (var s = -1; s <= 1; s += 2) {
-        var bx = s * (hx + 9);
+        var bx = s * FESTOON_X;
         ctx.strokeStyle = 'rgba(18,16,14,0.75)';        // the sagging cable
         ctx.lineWidth = 1.6;
         ctx.beginPath();
@@ -3225,6 +3429,9 @@ SM.advterrain = (function () {
    * mouth is where the mode's contrast starts (lit and busy up there, unlit and
    * alone down here), and a station is that same worksite, further down and with
    * less of it.
+   *
+   * ALL COORDINATES ARE SHAFT-LOCAL: drawLift() has translated the context to
+   * ELEV_X, so 0 is the column's centreline and +x is EAST, into the room.
    */
   function drawStation(ctx, i, flick) {
     var cy = stY[i];
@@ -3236,8 +3443,11 @@ SM.advterrain = (function () {
     /* The excavated room. A rounded rectangle drawn a little INSIDE the carved
      * superellipse: the deposits at the edge are what the eye reads as the wall,
      * so this only has to darken the void, and painting past it would put a
-     * black corner on solid rock. */
-    roomPath(ctx, cy, STATION_RX - 18, STATION_RY - 22, 80);
+     * black corner on solid rock — and at the mine's west edge that rock is the
+     * bedrock the world ends at, so the inset on THAT side matters most. */
+    /* The west inset is only 8, not 18: the headframe's own post stands at -174
+     * and a room wall painted at -172 would have cut it in half. */
+    roomPath(ctx, -STATION_BACK + 8, STATION_FWD - 18, cy, STATION_RY - 22, 80);
     ctx.fillStyle = 'rgba(13,11,12,0.66)';
     ctx.fill();
 
@@ -3250,16 +3460,20 @@ SM.advterrain = (function () {
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.fillRect(-SHAFT_HALF - 30, fTop + 2, (SHAFT_HALF + 30) * 2, 5);
 
-    /* The platform: two planked decks with the SHAFT OPENING between them. The
+    /* The platform: planked decks with the SHAFT OPENING between them. The
      * opening is the point — a landing whose floor runs straight across the
      * shaft is not a landing on a shaft, it is a shelf, and it would also hide
-     * the boarded continuation that tells the player there is more to buy. */
-    var dW = STATION_RX * 1.78;
+     * the boarded continuation that tells the player there is more to buy.
+     *
+     * The WEST segment is now a ledge against the back wall rather than half the
+     * platform, so it comes out a few units wide or nothing at all; the `xB <=
+     * xA` guard is what makes that a no-op instead of a negative-width fill. All
+     * of the deck the player actually drives on runs east. */
     var oL = -SHAFT_HALF - 14, oR = SHAFT_HALF + 14;
     var pk, seg;
     for (seg = 0; seg < 2; seg++) {
-      var xA = seg ? oR : -dW * 0.5;
-      var xB = seg ? dW * 0.5 : oL;
+      var xA = seg ? oR : -STATION_BACK + 12;
+      var xB = seg ? STATION_FWD - 26 : oL;
       if (xB <= xA) continue;
       ctx.fillStyle = 'rgba(102,71,43,0.95)';
       ctx.fillRect(xA, deck, xB - xA, 11);
@@ -3308,12 +3522,17 @@ SM.advterrain = (function () {
     for (pk = 0; pk < 8; pk++) ctx.fillRect(cL - 11 + pk * ((cw + 22) / 8), cT - 5, (cw + 22) / 16, 5);
 
     /* --- two worklights, the mouth's own lamps one size down ----------
-     * Out on the side walls, clear of where the machine parks, because a lamp
-     * behind the hull lights nothing. Same warm colour as the portal floods: a
-     * station is the same worksite, further down. */
+     * BOTH EAST OF THE COLUMN NOW, strung across the ceiling of the room the
+     * machine drives out into. There is no west wall to hang one on any more, and
+     * the old pair straddled the shaft — which put one of them behind the parked
+     * hull, where a lamp lights nothing. Spaced so the near one covers the landing
+     * and the far one reaches the room's mouth into the field, which is also what
+     * keeps the red board's own emissive glow inside the same brightness band as
+     * the lamps (see BOARD_RISE). Same warm colour as the portal floods: a station
+     * is the same worksite, further down. */
     var lx, ly = cy - STATION_RY * 0.52;
-    for (pk = -1; pk <= 1; pk += 2) {
-      lx = pk * STATION_RX * 0.70;
+    for (pk = 0; pk < 2; pk++) {
+      lx = pk ? STATION_FWD - 120 : SHAFT_HALF + 70;
       ctx.fillStyle = '#3b3f47';
       ctx.fillRect(lx - 7, ly - 9, 14, 9);
       ctx.fillStyle = 'rgba(24,26,30,0.9)';
@@ -3390,12 +3609,44 @@ SM.advterrain = (function () {
    * below the boards from the boards themselves.
    */
   function renderLit(ctx) {
-    if (!loaded || !liftApi || !stN) return;
+    if (!loaded) return;
     var v = SM.camera.getViewBounds();
     var vTop = v.minY - 40, vBot = v.maxY + 40;
-    var reach = STATION_RX + 70;
-    if (v.maxX < -reach || v.minX > reach) return;
+    var lo = liftDrawLo(), hi = liftDrawHi();
+    if (lo > ELEV_X - DAY_GLOW_R) lo = ELEV_X - DAY_GLOW_R;
+    if (hi < ELEV_X + DAY_GLOW_R) hi = ELEV_X + DAY_GLOW_R;
+    if (v.maxX < lo || v.minX > hi) return;
 
+    /* SAME TRANSLATE AS drawLift(). Everything below is shaft-local, which is
+     * what keeps this pass and the geometry pass sharing boardGeom() without a
+     * second copy of the x arithmetic. */
+    ctx.save();
+    ctx.translate(ELEV_X, 0);
+
+    /* --- DAYLIGHT IS A LIGHT SOURCE, SO IT DRAWS HERE ------------------
+     * drawMouth() paints the sky in the GEOMETRY pass, where the darkness
+     * composite then multiplies it towards black — the same trap the level boards
+     * were in. Measured at the surface with tier-0 lamps: outside the headlight
+     * the #8194ab sky transmits at 6% and comes out as rgb(8,9,10), so the one
+     * thing the mouth is supposed to say — THIS IS THE WAY OUT — was only legible
+     * if you were already standing in it.
+     *
+     * That was survivable while the mouth was in the middle of the mine and every
+     * run started and ended there. It is not survivable now: the workings run
+     * 4700 units east of the head under a rock roof, so coming home is a
+     * navigation problem it never used to be, and the exit has to be visible from
+     * further away than the headlight reaches.
+     *
+     * Deliberately ONE cached radial glow and no beacon: it is culled with the
+     * mouth, so a player 300 m down sees nothing of it — which is correct, there
+     * is a mine's worth of rock in the way. */
+    var ceil = A.MINE_CEILING_Y;
+    if (vTop < ceil + DAY_GLOW_R && vBot > ceil - DAY_GLOW_R) {
+      lampGlow(ctx, MOUTH_DX * 0.4, ceil + 40, DAY_GLOW_R,
+               'rgba(188,208,234,', DAY_GLOW_A);
+    }
+
+    if (!liftApi || !stN) { ctx.restore(); return; }
     for (var i = 0; i < stN; i++) {
       var cy = stY[i];
       if (cy - STATION_RY - 340 > vBot) continue;
@@ -3409,17 +3660,30 @@ SM.advterrain = (function () {
       ctx.drawImage(g.art.cv, -g.pw * 0.5, g.py, g.pw, g.ph);
       ctx.restore();
     }
+    ctx.restore();
   }
 
+  /* The world-x span the lift PAINTS into, which is a little wider than the span
+   * it CARVES (liftXLo/liftXHi): the headframe posts, the deck kerbs and the
+   * board's own glow all overhang the excavation. One pair of helpers so the
+   * geometry pass and the emissive pass cull identically — they must, or a board
+   * appears at a view position its own shaft does not. */
+  function liftDrawLo() { return ELEV_X - STATION_BACK - 70; }
+  function liftDrawHi() { return ELEV_X + STATION_FWD + 70; }
+
   /**
-   * A rounded-rectangle path centred on (0, cy). Built by hand rather than with
-   * ctx.roundRect(): one less canvas API to depend on, and the corner radius is
-   * clamped here where it is obvious why.
+   * A rounded-rectangle path spanning x in [xL, xR], centred on cy in y. Built by
+   * hand rather than with ctx.roundRect(): one less canvas API to depend on, and
+   * the corner radius is clamped here where it is obvious why.
+   *
+   * ASYMMETRIC IN X because a station room at the mine's edge is (see
+   * STATION_BACK / STATION_FWD).
    */
-  function roomPath(ctx, cy, rx, ry, r) {
+  function roomPath(ctx, xL, xR, cy, ry, r) {
+    var rx = (xR - xL) * 0.5;
     if (r > rx * 0.9) r = rx * 0.9;
     if (r > ry * 0.9) r = ry * 0.9;
-    var L = -rx, R = rx, T = cy - ry, B = cy + ry;
+    var L = xL, R = xR, T = cy - ry, B = cy + ry;
     ctx.beginPath();
     ctx.moveTo(L + r, T);
     ctx.lineTo(R - r, T);
@@ -3490,11 +3754,20 @@ SM.advterrain = (function () {
     ctx.restore();
   }
 
-  /** All three pieces, and the one flicker phase they share. */
+  /**
+   * All three pieces, and the one flicker phase they share.
+   *
+   * THE WHOLE LIFT IS DRAWN IN SHAFT-LOCAL SPACE. One translate to ELEV_X here
+   * rather than an ELEV_X term in every fillRect below it: the column, the
+   * headframes, the decks, the cages, the sump boards and the level boards are all
+   * expressed as offsets from the centreline, so relocating the lift is one
+   * transform and no arithmetic — and the emissive pass (renderLit) does the same
+   * translate, which is what stops the two from ever drifting apart.
+   */
   function drawLift(ctx, vLeft, vTop, vRight, vBot) {
     if (!liftApi) return;
-    var reach = STATION_RX + 70;
-    if (vRight < -reach || vLeft > reach) return;    // the shaft is off to one side
+    // The column is off to one side (which, in a 5200-wide mine, is most of it).
+    if (vRight < liftDrawLo() || vLeft > liftDrawHi()) return;
 
     /* One monotonic phase, as at the mouth: the lamps must not jump when a band
      * streams out and back in, so the flicker is a pure function of it. The
@@ -3504,6 +3777,8 @@ SM.advterrain = (function () {
     var flick = 0.92 + 0.08 * Math.sin(liftPhase * 2.1) * Math.sin(liftPhase * 0.6 + 0.7);
     liftFlick = flick;
 
+    ctx.save();
+    ctx.translate(ELEV_X, 0);
     drawShaft(ctx, vTop, vBot);
     for (var i = 0; i < stN; i++) {
       if (stY[i] - STATION_RY - 340 > vBot) continue;
@@ -3511,6 +3786,7 @@ SM.advterrain = (function () {
       drawStation(ctx, i, flick);
     }
     drawHint(ctx, vTop, vBot);
+    ctx.restore();
   }
 
   function render(ctx) {
@@ -3682,7 +3958,8 @@ SM.advterrain = (function () {
     peakWinW: 0, peakWinH: 0, peakLiveW: 0, peakLiveH: 0,
     trim: 1, cellBudget: 0, peakSolid: 0, lowFree: 0, solid: 0, free: 0,
     piles: 0, pilesUp: 0, deepestM: 0, layer: '',
-    liftApi: false, stations: 0, shaftBotM: 0, nextLevelM: 0
+    liftApi: false, stations: 0, shaftBotM: 0, nextLevelM: 0,
+    elevX: 0, elevXLo: 0, elevXHi: 0
   };
   function getDebug() {
     var st = SM.particles.getStats();
@@ -3713,6 +3990,10 @@ SM.advterrain = (function () {
     dbg.stations = stN;
     dbg.shaftBotM = stN ? depthOfY(shaftBotY) : 0;
     dbg.nextLevelM = nextOn ? depthOfY(nextY) : 0;
+    // The elevator column, and the world-x box its excavation can reach.
+    dbg.elevX = ELEV_X;
+    dbg.elevXLo = liftReach ? liftXLo : ELEV_X;
+    dbg.elevXHi = liftReach ? liftXHi : ELEV_X;
     return dbg;
   }
   function resetPeaks() {
@@ -3778,8 +4059,14 @@ SM.advterrain = (function () {
     getLayers: function () { return layers; },
     /** The material ids this generator places. js/mines.js prices these. */
     getMaterialIds: function () { return MAT_IDS; },
-    /** Where the machine gets in and out. */
-    getMouthX: function () { return 0; },
+    /**
+     * Where the machine gets in and out: the elevator column, just inside the
+     * mine's WEST wall. THE ONE SOURCE OF TRUTH for the shaft's x — js/adv.js's
+     * mouthX()/getStationX(), the cage circles, getDistanceToExit() and
+     * js/vehicle.js's park all resolve through this getter, so nothing else in
+     * the codebase should ever spell the number out.
+     */
+    getMouthX: function () { return ELEV_X; },
     getMouthY: function () { return A.MINE_CEILING_Y + MOUTH_CY * 0.35; },
     /** Depth in metres of the bedrock floor of the live mine. */
     getFloorDepthM: function () { return depthOfY(floorY); },

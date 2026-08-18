@@ -218,8 +218,28 @@ SM.save                       mines[id].levels = integer count (no holes)
 Events: lift:bought {i,price,mineId}   lift:ride {from,to}
 ```
 
-Machine spawn/park at a station sits `ADV_SPAWN_Y` (120 units = 12 m) below the
-station centre — remember it when asserting depth in tests. Descending
+THE ELEVATOR IS AT THE WEST EDGE (relocated from the centre, per the owner's
+side-view sketch): `ELEV_X = -2280`, i.e. `-(MINE_HALF_WIDTH) + 320`. The inset
+is 320 BY MEASUREMENT, not taste: vehicle.js holds the hull centre at least its
+circumscribed radius (438.7 on a maxed rig) from the bedrock, and the boarding
+circle is EXIT_RADIUS (200) about the cage — insets under ~252 make the lift
+unusable at high rig tiers with nothing saying why. Do not "tidy" this number.
+
+Geometry the rails wave anchors to: the shaft column is `ELEV_X ± 150` from
+ceiling to the sump; each station room is void from `ELEV_X - 186` to
+`ELEV_X + 560`, ±200 in y. Checkpoint chains run EAST and must anchor at or
+beyond `ELEV_X + 560`. `isLiftVoid(x, y)` takes absolute world coords.
+
+Machine spawn/park at a station is `(+150 east, +70 down)` of the station
+centre, heading east — remember it when asserting position in tests (depth
+assertions land ~7 m below the level's depthM).
+
+The guaranteed motherlode stays anchored to the mine's CENTRE LINE (x = 0), so
+it now sits ~2,400 units east of the elevator: the depth payoff is also a
+DISTANCE payoff. Deliberate — it is what the rails feature exists to sell.
+
+Portrait headroom warning: worst measured resident solids are 5,007 of the
+5,200 budget on a tall viewport. Anything that adds resident rows re-measures. Descending
 auto-buys a full tank (partial if cash is short); the prep fuel widget is gone.
 The shaft is STRUCTURAL carving derived from ownership at generation time — it
 must never be written into the player mask (mask ones == carved count is the

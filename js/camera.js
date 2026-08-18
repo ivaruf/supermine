@@ -254,6 +254,12 @@ var ADV_FIT_WIDTH = 792;
   // instead of as a place the view falls off.
   var ADV_WALL_PEEK = 150;
   var ADV_SKY_PEEK = 420;
+  /* How far off the view centre the machine may ever be pushed by the wall peek
+   * above, as a fraction of the visible half-width. The lift is now a column near
+   * the mine's west bedrock, so every run starts, ends and boards with the machine
+   * against a wall and the two clamps in direct conflict — see the note in
+   * updateAdvFollow() for the measurement and for why this one wins. */
+  var ADV_WALL_OFFSET = 0.34;
 
   /* ================================================================== */
 
@@ -618,7 +624,8 @@ var ADV_FIT_WIDTH = 792;
     advLeadX += (lx - advLeadX) * k;
     advLeadY += (ly - advLeadY) * k;
 
-    advTargetX = SM.vehicle.getX() + advLeadX;
+    var vx0 = SM.vehicle.getX();
+    advTargetX = vx0 + advLeadX;
     advTargetY = SM.vehicle.getY() + advLeadY;
 
     // Keep bedrock off the sides. When the view is wider than the shaft plus
@@ -627,6 +634,37 @@ var ADV_FIT_WIDTH = 792;
     if (slack < 0) slack = 0;
     if (advTargetX > slack) advTargetX = slack;
     else if (advTargetX < -slack) advTargetX = -slack;
+
+    /* ...BUT THE WALL CLAMP MAY NOT FIGHT THE FOLLOW, and this is what the
+     * ELEVATOR AT THE WEST EDGE made non-optional.
+     *
+     * The clamp above is written as "how far off the MINE'S CENTRE may the view
+     * slide", which was harmless while everything the player did happened near
+     * x = 0. The lift is now a column at x = -2280 and the run starts, ends and
+     * boards there, so the machine lives against the west bedrock — and it CAN
+     * reach it: the hull clamp in vehicle.js stops the starter rig at x = -2470.4,
+     * which is 130 units off the wall.
+     *
+     * MEASURED at 1440x900 (halfW 900, so slack = 1850) with the hull there:
+     * the bare wall clamp pins the view at x = -1850 and puts the hull 496 px left
+     * of a 720 px half-width — 69% off centre, drifting towards the edge of the
+     * screen, and driving further west only made it worse because the camera had
+     * stopped moving.
+     *
+     * So that clamp is now a PREFERENCE and this is the guarantee: the view centre
+     * may never be more than ADV_WALL_OFFSET of a half-width from the machine. At
+     * 0.34 the same case measures 245 px, i.e. the hull is always inside the middle
+     * two thirds of the view, at the cost of 194 units of bedrock on screen instead
+     * of 150. Applied SECOND, deliberately: visible bedrock is a cosmetic cost, a
+     * machine sliding off the side is a playability one.
+     *
+     * It is a no-op almost everywhere — including parked at the lift on desktop
+     * (measured 224 px, inside the 245 bound) and everywhere at all on a 390-wide
+     * portrait, where halfW is 396 and the wall clamp is already gentler than this
+     * one. It exists for the case above. */
+    var maxOff = halfW * ADV_WALL_OFFSET;
+    if (advTargetX < vx0 - maxOff) advTargetX = vx0 - maxOff;
+    else if (advTargetX > vx0 + maxOff) advTargetX = vx0 + maxOff;
 
     // ...and the sky off the top. -y is up, so this is a lower bound.
     var top = A.MINE_CEILING_Y - ADV_SKY_PEEK + halfH;

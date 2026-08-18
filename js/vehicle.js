@@ -222,7 +222,33 @@ SM.vehicle = (function () {
   var ADV_TURN_REF = 2.2;        // SM.rig.getTurnRate() at tier 0 (its unit ref)
   var ADV_ALIGN_MIN = 0.32;      // thrust available while facing the wrong way
   var ADV_BANK_GAIN = 0.22;      // visual roll per rad/sec of swing
-  var ADV_SPAWN_Y = 120;         // where the machine parks inside the mouth
+  /* --- WHERE THE CAGE SETS YOU DOWN ------------------------------------
+   * The lift is a column at the mine's WEST EDGE and its landings open EASTWARD
+   * into the field (see advterrain.js's ELEV_X / STATION_FWD), so the machine
+   * steps OUT of the cage rather than down the shaft: +x from the cage centre,
+   * onto the station deck.
+   *
+   * BOTH OFFSETS ARE BOUNDED BY ADV.EXIT_RADIUS (200), because SM.adv.getBoardable()
+   * is a circle of exactly that about the cage centre and a machine parked outside
+   * it arrives at a station it cannot board. sqrt(150^2 + 70^2) = 165, which leaves
+   * 35 units of margin — the old pair (0, 120) had 80, and a straight swap to
+   * (150, 120) would have left 8. That is the whole reason the vertical drop came
+   * down: the machine no longer hangs into the shaft, it stands on the deck, so
+   * most of the old 120 was buying nothing.
+   *
+   * ADV_SPAWN_X ALSO HAS TO CLEAR THE WEST WALL CLAMP. advUpdate() holds the hull
+   * centre at least advRadius() from the bedrock, and advRadius() is 438.7 on a
+   * top-tier rig, so a park position west of x = -2161 is silently moved east on
+   * the first step — away from the cage. advterrain.js's ELEV_INSET is chosen so
+   * that ELEV_X + 150 lands inside that clamp for every rig tier (see the long
+   * note on it); the two numbers are a pair, and moving either without checking
+   * the other is how a maxed rig ends up unable to board its own lift.
+   *
+   * The Y drop is also what test assertions of the form
+   * |getDepthM() - level.depthM| < 12 are written against (ADVENTURE.md §2b quotes
+   * the old 120 units = 12 m); 70 units = 7 m keeps every one of them true. */
+  var ADV_SPAWN_X = 150;         // east of the cage centre, out into the room
+  var ADV_SPAWN_Y = 70;          // ...and down onto the station deck
   var ADV_CEIL_MARGIN = 40;      // closest the hull centre may get to the roof
   var ADV_WALL_BOUNCE = 0.18;    // how much of the impact a wall gives back
 
@@ -857,10 +883,16 @@ SM.vehicle = (function () {
   }
 
   /**
-   * Park the machine at the lift station the descent starts from, facing DOWN
-   * into the shaft, stopped. Called from the tail of reset(); everything it
-   * touches is invisible to classic mode except the parkAtStation() call, which
-   * returns immediately outside adventure.
+   * Park the machine at the lift station the descent starts from, stopped, and
+   * clear every mid-cut / mid-stall flag. Called from the tail of reset();
+   * everything it touches is invisible to classic mode except the
+   * parkAtStation() call, which returns immediately outside adventure.
+   *
+   * The heading set here is a DEFAULT that parkAtStation() then overwrites in
+   * adventure (it now faces the machine east, into the field). It stays as it was
+   * so that the pre-guard block below is byte-identical for classic — where
+   * `heading` is inert anyway, because every classic path reads the fixed -y
+   * forward direction rather than this variable.
    */
   function advReset() {
     heading = Math.PI;           // facing +y == deeper
@@ -888,16 +920,22 @@ SM.vehicle = (function () {
   }
 
   /**
-   * ADVENTURE ONLY: set the machine down in the cage of the lift station
-   * SM.adv currently reports, stopped and pointing down the shaft.
+   * ADVENTURE ONLY: set the machine down on the deck of the lift station SM.adv
+   * currently reports, stopped, EAST of the cage and facing the field.
    *
    * TWO CALLERS, ONE OFFSET. A descent gets here through reset(), and a LIFT
    * RIDE calls it directly — a ride cannot reset the whole machine, because
    * reset() would also throw away the rig sync, the deploy animations and the
    * hold. Keeping both on one function is what stops the spawn offset from
-   * existing in two places: ADV_SPAWN_Y is how far INSIDE the stratum the cage
-   * sets you down (120 units, well within ADV.EXIT_RADIUS's 200), so SM.adv's
-   * getBoardable() still finds you standing in the station you arrived at.
+   * existing in two places: see ADV_SPAWN_X / ADV_SPAWN_Y for how far out of the
+   * cage it sets you down and why those two numbers are what they are.
+   *
+   * FACING EAST, not down. The lift is at the mine's west edge and the whole mine
+   * is east of it, so the machine arrives pointing at the work: heading is
+   * measured from local -y, so PI/2 is +x. It matters beyond looks — the drill,
+   * the collector and the hull's own grind box all sit along the facing, so a
+   * machine that arrived facing down would spend its first second chewing the
+   * station's own floor.
    *
    * The station is asked for, never assumed: a build without the level ladder
    * (or a console call before a mine is in context) answers the mine mouth,
@@ -905,12 +943,12 @@ SM.vehicle = (function () {
    */
   function parkAtStation() {
     if (!advMode()) return false;
-    x = advStationX();
+    x = advStationX() + ADV_SPAWN_X;
     y = advStationY() + ADV_SPAWN_Y;
     speed = 0;
     vx = 0;
     dvx = 0; dvy = 0;
-    heading = Math.PI;
+    heading = Math.PI * 0.5;
     // A ride must not arrive mid-stall, mid-lurch or mid-cut: every one of those
     // is a statement about rock that is no longer in front of the bit.
     stalled = false;

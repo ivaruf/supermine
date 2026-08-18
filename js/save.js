@@ -18,6 +18,7 @@
  *       old_creek: {
  *         owned: true,
  *         levels: 2,                          // LIFT STATIONS bought, see below
+ *         rails: [3, 1],                      // RAIL CHECKPOINTS bought per level
  *         visits: 12,
  *         deepestM: 173,                      // best depth reached, for the map card
  *         mask: '<rle>',                      // carved cells, see below
@@ -40,6 +41,25 @@
  *   always `owned`. A missing or nonsense `levels` migrates to 0 — no levels
  *   bought — which is the only safe direction and is what every record written
  *   before the lift existed says.
+ *
+ * RAIL CHECKPOINTS — `rails` IS AN ARRAY OF COUNTS, ONE PER LEVEL
+ *   Rails run EAST from the lift inside a single level, and checkpoints on a
+ *   level are bought strictly outward, so the same argument as `levels` applies
+ *   one dimension over: the only thing worth storing per level is HOW MANY.
+ *   `rails: [3, 1]` means level 1 has checkpoints 1-3 and level 2 has checkpoint
+ *   1; every deeper level has none. Index i is LEVEL i+1 — there is no entry for
+ *   level 0, because the surface has no rails.
+ *
+ *   A missing, short or nonsense `rails` migrates to all-zero: no track bought.
+ *   Same reasoning as `levels` — it is the only safe direction, it is what every
+ *   record written before rails existed says, and it does not warrant a
+ *   SAVE_VERSION bump (which would delete every existing company; see below).
+ *
+ *   SECURED ORE IS NOT HERE, ON PURPOSE. Ore deposited at a checkpoint is RUN
+ *   state: it is credited when the company next surfaces and it does not exist
+ *   between runs. Reloading mid-run was never supported — there is nowhere to
+ *   store "the machine is 400 m down with a part tank" — so persisting the
+ *   secured ledger alone would let a reload bank it twice.
  *
  * HULL INTEGRITY — MIND THE UNITS
  *   Stored here as a 0..1 FRACTION, because that is what SM.adv.getIntegrity()
@@ -154,6 +174,10 @@ SM.save = (function () {
    * so this is a paranoia ceiling on a hand-edited save, not a game rule —
    * SM.adv clamps to what SM.mines.levelsOf() actually offers. */
   var MAX_LEVELS = 16;
+  /* Rail checkpoints bought on ONE level. The catalogue sells 4, so this is the
+   * same kind of paranoia ceiling as MAX_LEVELS — SM.adv clamps to what
+   * SM.mines.checkpointsOf() actually offers. */
+  var MAX_RAILS = 16;
 
   /* Set true to have every key validateRecord() discards printed once. Left OFF
    * because the build's bar is zero console output, but the list is always
@@ -525,7 +549,8 @@ SM.save = (function () {
 
   var RECORD_KEYS = ['v', 'company', 'day', 'cash', 'integrity', 'rig',
                      'mines', 'seen', 'stats'];
-  var MINE_KEYS = ['owned', 'levels', 'visits', 'deepestM', 'mask', 'piles'];
+  var MINE_KEYS = ['owned', 'levels', 'rails', 'visits', 'deepestM', 'mask',
+                   'piles'];
 
   function knownMine(id) {
     if (!SM.mines || !SM.mines.count || SM.mines.count() === 0) return true;
@@ -533,7 +558,8 @@ SM.save = (function () {
   }
 
   function blankMineState() {
-    return { owned: false, levels: 0, visits: 0, deepestM: 0, mask: '', piles: [] };
+    return { owned: false, levels: 0, rails: [], visits: 0, deepestM: 0,
+             mask: '', piles: [] };
   }
 
   function validateMineState(o) {
@@ -545,6 +571,22 @@ SM.save = (function () {
      * lift existed owns the surface station and nothing else, which is exactly
      * how it played. See the header note. */
     out.levels = Math.floor(num(o.levels, 0, 0, MAX_LEVELS));
+    /* RAIL CHECKPOINTS BOUGHT, one count per level, index i = level i+1. Missing
+     * or short -> zeros: a company from before rails owns no track. See the
+     * header note. Written back as a dense array so JSON.stringify cannot turn a
+     * hole into `null` and hand the next load a NaN. */
+    out.rails = [];
+    /* `typeof === 'object'` as well as a numeric length, because a STRING is
+     * array-like: without it a hand-edited `"rails": "3"` decodes to [3] — one
+     * checkpoint the player never bought. Measured; it is the only shape in this
+     * validator that could be read as something it is not. */
+    if (o.rails && typeof o.rails === 'object' &&
+        typeof o.rails.length === 'number') {
+      var nl = o.rails.length < MAX_LEVELS ? o.rails.length : MAX_LEVELS;
+      for (var r = 0; r < nl; r++) {
+        out.rails.push(Math.floor(num(o.rails[r], 0, 0, MAX_RAILS)));
+      }
+    }
     out.visits = Math.floor(num(o.visits, 0, 0, 1e7));
     out.deepestM = Math.floor(num(o.deepestM, 0, 0, 1e6));
     out.mask = (typeof o.mask === 'string' && o.mask.length <= MASK_MAX_CHARS)
@@ -909,6 +951,34 @@ SM.save = (function () {
     return true;
   }
 
+  /* --- rail checkpoints ------------------------------------------------
+   * Per LEVEL, so both of these take one. Named railsOwned/setRailsOwned to
+   * rhyme with levelsOwned/setLevelsOwned for exactly the same reason: a COUNT
+   * and a TABLE must not share a name. */
+
+  /** How many checkpoints are bought on level `L` (1-based) of this mine. */
+  function railsOwned(id, L) {
+    var m = record && record.mines ? record.mines[id] : null;
+    if (!m || !m.rails) return 0;
+    var i = Math.floor(num(L, 0, 0, MAX_LEVELS)) - 1;
+    if (i < 0 || i >= m.rails.length) return 0;
+    return Math.floor(num(m.rails[i], 0, 0, MAX_RAILS));
+  }
+
+  /** Persist it. SM.adv is the only caller; it clamps to the catalogue. */
+  function setRailsOwned(id, L, n) {
+    var m = mineState(id);
+    if (!m) return false;
+    var i = Math.floor(num(L, 0, 0, MAX_LEVELS)) - 1;
+    if (i < 0) return false;
+    if (!m.rails || typeof m.rails.length !== 'number') m.rails = [];
+    // Dense: pad with zeros rather than leaving holes JSON would write as null.
+    while (m.rails.length <= i) m.rails.push(0);
+    m.rails[i] = Math.floor(num(n, 0, 0, MAX_RAILS));
+    markDirty();
+    return true;
+  }
+
   /* --- hull integrity -------------------------------------------------
    * js/adv.js may keep writing record.integrity directly; these exist so that
    * nothing ELSE has to know whether the stored unit is a fraction or a point.
@@ -1025,6 +1095,8 @@ SM.save = (function () {
     ownedCount: ownedCount,
     levelsOwned: levelsOwned,
     setLevelsOwned: setLevelsOwned,
+    railsOwned: railsOwned,
+    setRailsOwned: setRailsOwned,
     storeMask: storeMask,
     loadMask: loadMask,
     setPiles: setPiles,

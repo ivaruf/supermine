@@ -94,6 +94,11 @@
  *   lift:bought   {i, price, mineId}          <- a level was bought
  *   lift:ride     {from, to}                  <- the cage moved (to 0 = surface,
  *                                                which is an extraction)
+ *   rail:bought   {L, k, price, mineId}       <- a checkpoint was bought
+ *   rail:fuel     {units, cost}               <- refuelled at a checkpoint
+ *   rail:deposit  {value, units}              <- the hold was SECURED; the
+ *                                                payload is what JUST moved, not
+ *                                                the running total (getSecured())
  *
  * ---------------------------------------------------------------------------
  * THE LIFT — LEVELS, STATIONS AND WHAT "DEPTH" NOW MEANS
@@ -129,6 +134,62 @@
  *   therefore the number getReserveNeeded() and the HUD's TURN BACK warning must
  *   be built from. getDepthM() keeps meaning ABSOLUTE depth: it is what the
  *   lift's own display reads.
+ *
+ * ---------------------------------------------------------------------------
+ * RAILS — CHECKPOINTS, FUEL, AND THE SECURED LEDGER
+ *
+ * A mine expands two ways. The LIFT buys depth; RAILS buy width WITHIN a level.
+ * Track runs EAST from the shaft and a company buys CHECKPOINTS along it —
+ * checkpoint k on level L sits at (getStationX() + k x pitch, levels[L].y), in a
+ * cage of ADV.EXIT_RADIUS, and every position is read through
+ * SM.advterrain.getMouthX() so the whole feature is correct wherever the shaft
+ * is. Bought strictly outward, one level at a time, price from
+ * SM.mines.checkpointsOf().
+ *
+ * A CHECKPOINT DOES TWO THINGS, and only one of them matters.
+ *
+ *   FUEL     refuelHere() fills the tank at SM.mines.railFuelMarkup() — 1.5x the
+ *            surface price. Deliberately a bad deal: filling before you descend
+ *            has to stay the smart default, and the markup is the price of not
+ *            having planned. Charges what the cash reaches, exactly as buyFuel().
+ *
+ *   DEPOSIT  depositHere() SECURES the hold. It does NOT bank it. The units leave
+ *            the manifest, the hold is empty and free to fill again, and the
+ *            value sits in a run-long SECURED ledger that strand() and abort()
+ *            cannot touch. It becomes money in sell(), with the rest of the run.
+ *
+ * WHY SECURED AND NOT INSTANT MONEY. Paying out at the checkpoint would make the
+ * climb optional, and the climb is the loop's heartbeat — extraction is the game.
+ * What SHOULD die is the round trip you make because the HOPPER is full rather
+ * than because the TANK is empty. Measured on the lift ladder: buying levels
+ * raises $/MINUTE and leaves $/RUN alone, because the hold binds long before the
+ * fuel does. A deposit checkpoint removes exactly that constraint, so it is the
+ * first thing in the game that raises $/RUN. Rails buy THROUGHPUT; the lift buys
+ * REACH.
+ *
+ * MEASURED, Blackstone's payoff level (Gold Pocket, 1020 m) at rig tier 2 — one
+ * descent, one tank, the same seam and the same driving policy either way:
+ *
+ *     without a deposit checkpoint   $24 764/run   58 of 450 fuel spent (13%)
+ *     with one                       $38 442/run  426 of 450 fuel spent (95%)
+ *
+ * 1.55x, and the number that matters is the SECOND column: the run stops being
+ * HOLD-bound and becomes FUEL-bound, which is what it should have been all along.
+ * 13% of a tank is what "the hopper decides when you go home" actually costs. The
+ * uplift is ~1.5 holds rather than three, because once the hold is unbound the
+ * tank binds instead — that is the correct next constraint, and it is what makes
+ * the tank upgrade the thing you want after your first checkpoint.
+ *
+ * IT IS CREDITED IN sell(), NOT ON ARRIVAL AT THE SURFACE. One place rounds a
+ * run's ore into whole dollars, rolls the day and writes the lifetime stats, and
+ * two would drift. The results screen therefore has the secured figure to SHOW
+ * (getResults().secured) before it turns into cash, which is the beat the screen
+ * wants anyway — and a STRANDED results screen must offer SELL for the same
+ * reason, because on a bad run the secured ore is the whole payout.
+ *
+ * SECURED ORE IS RUN STATE AND IS NEVER SAVED. It is cleared by enterMine(), so
+ * restart()'s do-over drops it along with the hold — R means "that descent never
+ * happened", and it never pays out either.
  * ========================================================================== */
 
 var SM = SM || {};
@@ -215,6 +276,17 @@ SM.adv = (function () {
   // consolation prize. 1.0 = every unit is still there.
   var STRAND_RECOVERY = 1.0;
 
+  // --- rails -----------------------------------------------------------
+  // The pitch and the markup are SM.mines's numbers (design note 4d there), for
+  // the same reason the fuel budget is rig.js's: one owner per number. These are
+  // the fallbacks for a build where that catalogue is still a stub.
+  var CP_PITCH_M = 120;              // metres of track between checkpoints
+  var RAIL_FUEL_MARKUP = 1.5;        // ...of the surface fuel price
+  /* "The tank is already full enough that there is nothing to sell." Fuel units
+   * are fractional, so this needs a tolerance rather than an equality test — the
+   * same argument as CARGO_EPS, in the other resource's units. */
+  var FUEL_EPS = 0.001;
+
   /* ================================================================== */
 
   var A = SM.config.ADV;
@@ -230,6 +302,12 @@ SM.adv = (function () {
    * js/save.js's header argues the case, and a set would let a lift have a hole
    * in it that no purchase path can produce. */
   var levelsHeld = Object.create(null);
+  /* mineId -> ARRAY of "how many checkpoints are owned on this level", index 0
+   * being LEVEL 1. Counts for the same reason `levelsHeld` is a count: track is
+   * laid outward and a set would describe a rail line with a gap in it that no
+   * purchase path can produce. Mirrored into save.js, which stores the same
+   * shape. Sparse until read: ownedCheckpoints() fills a slot on first touch. */
+  var railsHeld = Object.create(null);
   var companyName = '';
 
   /* --- selection / loadout -------------------------------------------- */
@@ -303,11 +381,32 @@ SM.adv = (function () {
   var lvMouthX = 0;                    // ...and where advterrain put the shaft
   var runLevel = 0;                    // station this run began at / last rode to
 
+  /* --- the rails ------------------------------------------------------
+   * `cpArrays[L]` is the LIVE checkpoint table getCheckpoints(L) hands out for
+   * level L, and `cpKeys[L]` is its cache key. Both are indexed BY LEVEL and the
+   * entry objects are reused, exactly as `levels` is — the HUD and the rail panel
+   * hold references across frames and getServiceable() walks them.
+   *
+   * Slot 0 is never used: the surface has no rails.
+   * ------------------------------------------------------------------ */
+  var cpArrays = [];
+  var cpKeys = [];
+  var EMPTY_CPS = [];                  // shared; getCheckpoints() never writes it
+
+  /* --- the secured ledger ---------------------------------------------
+   * RUN STATE, never saved. `secured` is the REUSED object getSecured() returns;
+   * `securedLines` is the per-material breakdown the results screen itemises,
+   * with entry objects mutated in place so a merge never allocates.
+   * ------------------------------------------------------------------ */
+  var secured = { value: 0, units: 0 };
+  var securedLines = [];
+  var svcOut = { level: 0, k: 0 };     // REUSED: getServiceable()'s answer
+
   /* --- reused event payloads (never stashed) -------------------------- */
   var evState = { state: '', prev: '' };
   var evEntered = { mineId: '', depth: 0, level: 0 };
-  var evExtracted = { gross: 0, cargo: 0, depthM: 0, reason: '' };
-  var evStranded = { reason: '', depthM: 0, lost: 0 };
+  var evExtracted = { gross: 0, cargo: 0, depthM: 0, reason: '', secured: 0 };
+  var evStranded = { reason: '', depthM: 0, lost: 0, secured: 0 };
   var evCash = { cash: 0, delta: 0, reason: '' };
   var evFuelLow = { pct: 0 };
   var evDumped = { matIndex: 0, units: 0, x: 0, y: 0 };
@@ -322,6 +421,10 @@ SM.adv = (function () {
    * event payloads has one convention nobody trusts. */
   var evLiftBought = { i: 0, price: 0, mineId: '' };
   var evLiftRide = { from: 0, to: 0 };
+  /* Rails fire even less often than the lift — reused anyway, same argument. */
+  var evRailBought = { L: 0, k: 0, price: 0, mineId: '' };
+  var evRailFuel = { units: 0, cost: 0 };
+  var evRailDeposit = { value: 0, units: 0 };
 
   var heatPctSent = -1;                // 1% granularity gate on adv:heat
   var dmgPctSent = -1;                 // ...and on adv:damage
@@ -667,6 +770,355 @@ SM.adv = (function () {
   }
 
   /* =====================================================================
+   * THE RAILS
+   * ---------------------------------------------------------------------
+   * Geometry first, and it is one line: checkpoint k on level L sits at
+   * (getStationX() + k x pitch, levels[L].y). getStationX() is the shaft's x as
+   * js/advterrain.js reports it, so this is correct whether the shaft is at the
+   * mine's centre line or at its west edge — nothing here ever hard-codes a
+   * position. The cage is a circle of ADV.EXIT_RADIUS and, exactly like a deep
+   * lift station, it is BOARDABLE BY DEFINITION: there is no arming rule,
+   * because a checkpoint does nothing on contact. Refuelling and depositing are
+   * explicit verbs, so arming would only ever lock out a machine that had driven
+   * back to its own siding.
+   * ================================================================== */
+
+  /** The price table for one level of one mine. Never null. */
+  function cpTable(id, L) {
+    if (!id || !(L >= 1)) return EMPTY_CPS;
+    if (SM.mines && SM.mines.checkpointsOf) {
+      var t = SM.mines.checkpointsOf(id, L);
+      if (t && t.length) return t;
+    }
+    return EMPTY_CPS;
+  }
+
+  /** Units of track between checkpoints. SM.mines owns the number. */
+  function cpPitch() {
+    var m = CP_PITCH_M;
+    if (SM.mines && SM.mines.checkpointPitchM) {
+      var v = SM.mines.checkpointPitchM();
+      if (typeof v === 'number' && v > 0) m = v;
+    }
+    return m / A.METERS_PER_UNIT;
+  }
+
+  /**
+   * How many checkpoints this company owns on level L of a mine, clamped to what
+   * the catalogue actually sells. Read through from js/save.js once and then
+   * mirrored, exactly as `levelsHeld` is.
+   */
+  function ownedCheckpoints(id, L) {
+    if (!id || !(L >= 1)) return 0;
+    var arr = railsHeld[id];
+    if (!arr) { arr = []; railsHeld[id] = arr; }
+    var i = L - 1;
+    if (typeof arr[i] !== 'number') {
+      var n = 0;
+      if (SM.save && SM.save.railsOwned) {
+        var v = SM.save.railsOwned(id, L);
+        if (typeof v === 'number' && v > 0) n = Math.floor(v);
+      }
+      arr[i] = n;
+    }
+    var max = cpTable(id, L).length;
+    return arr[i] > max ? max : arr[i];
+  }
+
+  function setOwnedCheckpoints(id, L, n) {
+    var arr = railsHeld[id];
+    if (!arr) { arr = []; railsHeld[id] = arr; }
+    var i = L - 1;
+    while (arr.length <= i) arr.push(0);
+    arr[i] = n;
+    if (SM.save && SM.save.setRailsOwned) SM.save.setRailsOwned(id, L, n);
+    else {
+      // No dedicated accessor (an older save.js): write the documented field.
+      var ms = mineRecord(id);
+      if (ms) {
+        if (!ms.rails || typeof ms.rails.length !== 'number') ms.rails = [];
+        while (ms.rails.length <= i) ms.rails.push(0);
+        ms.rails[i] = n;
+        markDirty();
+      }
+    }
+  }
+
+  /**
+   * Rebuild level L's checkpoint table if the mine, the checkpoints owned on that
+   * level, the shaft's x or the level's y has changed. Everything else about a
+   * checkpoint is derived, so those four are the whole cache key.
+   *
+   * HOT-ADJACENT: getServiceable() calls this for every level the machine is
+   * level with, so the steady-state path is a string compare and a return. The
+   * rebuild reuses the array AND the entry objects — a UI that stashed
+   * getCheckpoints(2)[0] keeps a live reference for the whole session.
+   */
+  function ensureCheckpoints(L) {
+    ensureLevels();
+    if (!(L >= 1) || L >= levels.length) return EMPTY_CPS;
+    var def = getMine();
+    var id = def ? def.id : null;
+    if (!id) return EMPTY_CPS;
+
+    var e = levels[L];
+    var owned = ownedCheckpoints(id, L);
+    var key = id + '|' + owned + '|' + lvMouthX + '|' + e.y;
+    if (cpKeys[L] === key && cpArrays[L]) return cpArrays[L];
+
+    var tbl = cpTable(id, L);
+    var arr = cpArrays[L];
+    if (!arr) { arr = []; cpArrays[L] = arr; }
+    while (arr.length > tbl.length) arr.pop();
+    while (arr.length < tbl.length) {
+      arr.push({ k: 0, outM: 0, x: 0, y: 0, price: 0, owned: false });
+    }
+    var pitch = cpPitch();
+    for (var i = 0; i < tbl.length; i++) {
+      var t = tbl[i], c = arr[i];
+      c.k = t.k;
+      c.outM = t.outM;
+      c.price = t.price;
+      c.x = lvMouthX + t.k * pitch;     // EAST of the shaft, always
+      c.y = e.y;
+      c.owned = t.k <= owned;
+    }
+    cpKeys[L] = key;
+    return arr;
+  }
+
+  /**
+   * LIVE array [{k, outM, x, y, price, owned}] for level L of the mine in
+   * context, k >= 1 and outward. Empty for the surface, for a level this mine
+   * does not sell, and when there is no mine to talk about.
+   *
+   * Returned for levels the company does NOT own, with every `owned` false, so a
+   * UI can quote the ladder before the lift reaches it.
+   */
+  function getCheckpoints(L) { return ensureCheckpoints(Math.floor(L)); }
+
+  /**
+   * Buy the next checkpoint outward on level L. -> true if money moved.
+   *
+   * Refused unless `k` is exactly the next unowned one ON THAT LEVEL, which is
+   * what makes the stored count (rather than a set) legitimate — the same rule
+   * buyLevel() enforces, one dimension over. Each level's line is independent:
+   * owning three checkpoints on level 1 buys you nothing on level 2.
+   *
+   * THE LEVEL ITSELF MUST BE OWNED. Track on a stratum you cannot reach is money
+   * spent on a place you have never been, and unlike a level it does not open the
+   * way to anything — the lift is the only way in.
+   *
+   * ALLOWED DURING A RUN, for the same reason buyLevel() is: you are standing at
+   * the end of your own line looking east, and the answer is money.
+   */
+  function buyCheckpoint(L, k) {
+    // ...but not from outside the campaign — see buyLevel().
+    if (state === 'off') return false;
+    var def = getMine();
+    if (!def || !ownsRights(def.id)) return false;
+    ensureLevels();
+    L = Math.floor(L);
+    k = Math.floor(k);
+    if (!(L >= 1) || L >= levels.length) return false;
+    if (L > ownedLevels(def.id)) return false;
+    var tbl = ensureCheckpoints(L);
+    if (!tbl.length) return false;
+    if (!(k >= 1) || k > tbl.length) return false;
+    if (k !== ownedCheckpoints(def.id, L) + 1) return false;
+    var price = tbl[k - 1].price;
+    if (!canAfford(price)) return false;
+
+    moveCash(-price, 'rail');
+    setOwnedCheckpoints(def.id, L, k);
+    ensureCheckpoints(L);           // the cache key just changed: refresh `owned`
+
+    evRailBought.L = L;
+    evRailBought.k = k;
+    evRailBought.price = price;
+    evRailBought.mineId = def.id;
+    SM.events.emit('rail:bought', evRailBought);
+    flushSave();
+    return true;
+  }
+
+  /**
+   * The checkpoint whose cage the machine is standing in, as {level, k}, else
+   * null. REUSED object — read it inside the call.
+   *
+   * Every owned checkpoint on every owned level is a candidate, not just the ones
+   * on the level the run is based at: a machine that drove down its own tunnel
+   * from level 1 to level 2's depth is standing at level 2 whatever runLevel
+   * says, and a siding you paid for has to work when you are in it. The y test is
+   * a cheap reject first, so the loop is a handful of compares in the normal case.
+   */
+  function getServiceable() {
+    if (state !== 'mine' || !SM.vehicle) return null;
+    ensureLevels();
+    var vx = SM.vehicle.getX(), vy = SM.vehicle.getY();
+    var r = A.EXIT_RADIUS, r2 = r * r;
+    var bestL = -1, bestK = -1, bestD = 0;
+    for (var L = 1; L < levels.length; L++) {
+      var e = levels[L];
+      if (!e.owned) continue;
+      var dy = vy - e.y;
+      if (dy > r || dy < -r) continue;
+      var tbl = ensureCheckpoints(L);
+      for (var i = 0; i < tbl.length; i++) {
+        var c = tbl[i];
+        if (!c.owned) continue;
+        var dx = vx - c.x;
+        if (dx > r || dx < -r) continue;
+        var d2 = dx * dx + dy * dy;
+        if (d2 > r2) continue;
+        if (bestL < 0 || d2 < bestD) { bestL = L; bestK = c.k; bestD = d2; }
+      }
+    }
+    if (bestL < 0) return null;
+    svcOut.level = bestL;
+    svcOut.k = bestK;
+    return svcOut;
+  }
+
+  /** Dollars for `units` of fuel at a checkpoint pump. */
+  function quoteRailFuel(units) {
+    if (SM.mines && SM.mines.railFuelCost) return SM.mines.railFuelCost(units);
+    return Math.ceil((units > 0 ? units : 0) * railUnitPrice());
+  }
+
+  /** Dollars per unit at a checkpoint pump — for sizing a partial fill only. */
+  function railUnitPrice() {
+    var price = 1;
+    if (SM.mines && SM.mines.fuelPrice) {
+      var p = SM.mines.fuelPrice();
+      if (typeof p === 'number' && p > 0) price = p;
+    }
+    var mk = RAIL_FUEL_MARKUP;
+    if (SM.mines && SM.mines.railFuelMarkup) {
+      var m = SM.mines.railFuelMarkup();
+      if (typeof m === 'number' && m > 0) mk = m;
+    }
+    return price * mk;
+  }
+
+  /**
+   * Top the tank up at the checkpoint the machine is standing in. -> true if
+   * money moved.
+   *
+   * Charges what the cash reaches rather than refusing outright, exactly as
+   * buyFuel() does — a machine 400 m down with $30 must always be able to buy $30
+   * of fuel. The arithmetic goes through SM.mines.railFuelCost() and never
+   * through units x price: the quote has to be provably 1.5x the number the prep
+   * screen showed for the same litres.
+   */
+  function refuelHere() {
+    if (state !== 'mine') return false;
+    if (!getServiceable()) return false;
+    var cap = getFuelCap();
+    var want = cap - fuel;
+    if (!(want > FUEL_EPS)) return false;
+
+    var units = want;
+    var cost = quoteRailFuel(units);
+    if (cost > cash) {
+      /* Whole units, so the rounding-up in railFuelCost() can never land above
+       * the cash on hand — and then shave, because cash can be fractional. */
+      units = Math.floor(cash / railUnitPrice());
+      if (units < 1) return false;
+      cost = quoteRailFuel(units);
+      while (units >= 1 && cost > cash) { units -= 1; cost = quoteRailFuel(units); }
+      if (units < 1 || cost > cash) return false;
+    }
+
+    fuel += units;
+    if (fuel > cap) fuel = cap;
+    moveCash(-cost, 'railfuel');
+
+    /* RE-ARM THE LOW-FUEL WARNINGS. They fire once each as the needle crosses a
+     * threshold downward and otherwise only re-arm on a new descent, so a tank
+     * refilled underground would climb back through 20% and 10% in silence on the
+     * way down again — which is the one moment the warning is worth most. */
+    var pct = getFuelPct();
+    while (warnIndex > 0 && pct > FUEL_WARN[warnIndex - 1]) warnIndex--;
+
+    evRailFuel.units = units;
+    evRailFuel.cost = cost;
+    SM.events.emit('rail:fuel', evRailFuel);
+    return true;
+  }
+
+  /**
+   * SECURE the whole hold at the checkpoint the machine is standing in. -> true
+   * if anything moved.
+   *
+   * The units leave the manifest and the hold is empty and free to fill again;
+   * the VALUE goes into the run's secured ledger, which strand() and abort()
+   * cannot touch and which sell() banks. This is the verb rails exist for — see
+   * the RAILS note in the header for why it is not instant money.
+   */
+  function depositHere() {
+    if (state !== 'mine') return false;
+    if (!getServiceable()) return false;
+    if (!(cargo > 0) || !manifest.length) return false;
+
+    var moved = 0, units = 0;
+    for (var i = 0; i < manifest.length; i++) {
+      var e = manifest[i];
+      if (e.units <= 0) continue;
+      addSecuredLine(e.matIndex, e.matId, e.units, e.value);
+      moved += e.value;
+      units += e.units;
+    }
+    if (!(units > 0)) return false;
+    secured.value += moved;
+    secured.units += units;
+    clearHold();
+
+    evRailDeposit.value = moved;
+    evRailDeposit.units = units;
+    SM.events.emit('rail:deposit', evRailDeposit);
+    return true;
+  }
+
+  /**
+   * Merge a holding into the secured breakdown. Entries are created once per
+   * material per run and mutated in place after that, so a deposit allocates
+   * nothing on the second and every subsequent trip.
+   */
+  function addSecuredLine(mi, matId, units, value) {
+    for (var i = 0; i < securedLines.length; i++) {
+      if (securedLines[i].matIndex === mi) {
+        securedLines[i].units += units;
+        securedLines[i].value += value;
+        return;
+      }
+    }
+    securedLines.push({ matIndex: mi, matId: matId, units: units, value: value });
+  }
+
+  /** What this run has secured so far, as {value, units}. REUSED object. */
+  function getSecured() { return secured; }
+
+  /** LIVE per-material breakdown of the secured ledger. REUSED entries. */
+  function getSecuredLines() { return securedLines; }
+
+  function clearSecured() {
+    secured.value = 0;
+    secured.units = 0;
+    securedLines.length = 0;
+  }
+
+  /** A plain copy for the results record. Once per descent: allocation is fine. */
+  function securedForResults() {
+    var out = [];
+    for (var i = 0; i < securedLines.length; i++) {
+      var e = securedLines[i];
+      out.push({ matId: e.matId, matIndex: e.matIndex, units: e.units, value: e.value });
+    }
+    return out;
+  }
+
+  /* =====================================================================
    * MATERIAL TABLES
    * ---------------------------------------------------------------------
    * Built on first use inside a mine — NOT in init(), because Agent 3 owns
@@ -823,7 +1275,13 @@ SM.adv = (function () {
      * which `levelsHeld` would have copied. Cleared before anything reads them. */
     rightsHeld = Object.create(null);
     levelsHeld = Object.create(null);
+    railsHeld = Object.create(null);
     lvMineId = null;                     // ...and so the station table rebuilds
+    /* ...and the checkpoint tables with it. The ARRAYS are kept — a UI holding
+     * getCheckpoints(1) keeps a live reference — and only the cache keys are
+     * dropped, so the next read refills the same objects in place. */
+    cpKeys.length = 0;
+    clearSecured();
     if (r) {
       cash = typeof r.cash === 'number' ? r.cash : START_CASH;
       day = typeof r.day === 'number' && r.day > 0 ? r.day : 1;
@@ -840,6 +1298,17 @@ SM.adv = (function () {
           // `levels` is a count and js/save.js has already clamped it into
           // range; a record from before the lift simply has no such field.
           if (r.mines[id].levels > 0) levelsHeld[id] = Math.floor(r.mines[id].levels);
+          /* `rails` is one count per level and js/save.js has already clamped
+           * each into range; a record from before rails simply has no such
+           * field, and ownedCheckpoints() reads 0 through for every level. */
+          var rr = r.mines[id].rails;
+          if (rr && rr.length) {
+            var ra = [];
+            for (var ri = 0; ri < rr.length; ri++) {
+              ra.push(rr[ri] > 0 ? Math.floor(rr[ri]) : 0);
+            }
+            railsHeld[id] = ra;
+          }
         }
       }
     } else {
@@ -996,6 +1465,11 @@ SM.adv = (function () {
     results = null;
     soldThisRun = false;
     clearHold();
+    /* SECURED ORE IS RUN STATE. Cleared here rather than in teardownRun() so it
+     * survives until sell() has had a chance to bank it — and so restart()'s
+     * do-over, which comes back through this function, drops it along with the
+     * hold. R means "that descent never happened", and it does not pay out. */
+    clearSecured();
 
     // Piles left in THIS mine on a previous visit. The array identity is kept
     // because js/advterrain.js holds the reference.
@@ -1112,7 +1586,15 @@ SM.adv = (function () {
       fuelUsed: fuelAtEntry - fuel,
       integrity: hull / HULL_POINTS,
       day: day,
-      lines: lines
+      lines: lines,
+      /* THE SECURED LEDGER. `gross` above is the HOLD — what the machine is
+       * carrying — and `secured` is what the rails already took off it. sell()
+       * banks both, so the screen's total is gross + secured, and on a STRANDED
+       * run `gross` is 0 while `secured` is the entire payout. That is exactly the
+       * case the figure exists to show. */
+      secured: secured.value,
+      securedUnits: secured.units,
+      securedLines: securedForResults()
     };
     return results;
   }
@@ -1129,6 +1611,8 @@ SM.adv = (function () {
     evExtracted.cargo = cargo;
     evExtracted.depthM = maxDepthM;
     evExtracted.reason = 'mouth';
+    // ADDITION: what the rails secured on the way. `gross` still means the HOLD.
+    evExtracted.secured = secured.value;
     SM.events.emit('adv:extracted', evExtracted);
     flushSave();
     return true;
@@ -1166,6 +1650,9 @@ SM.adv = (function () {
     evStranded.reason = reason || 'unknown';
     evStranded.depthM = depthM;
     evStranded.lost = lost;
+    /* ADDITION, and the whole point of a deposit checkpoint: `lost` is the HOLD
+     * and it is gone, `secured` is what the rails put beyond reach of this. */
+    evStranded.secured = secured.value;
     SM.events.emit('adv:stranded', evStranded);
     flushSave();
     return true;
@@ -1866,11 +2353,29 @@ SM.adv = (function () {
     }
     clearHold();
 
+    /* THE SECURED LEDGER IS BANKED HERE, WITH THE HOLD.
+     *
+     * This is the one place a run's ore becomes money, and it has to stay the one
+     * place: it is where the fractional cargo units are rounded into whole
+     * dollars, where the day rolls over and where the lifetime stats are written.
+     * Paying secured ore out at the checkpoint instead would need a second copy of
+     * all three, and two of anything that touches the ledger is how a ledger
+     * drifts.
+     *
+     * IT IS BANKED EVEN WHEN THE HOLD IS EMPTY, and even after a STRAND. A run
+     * that deposited at a checkpoint and then ran dry lost the hold and keeps the
+     * secured ore — that immunity is the whole reason the verb exists — so the
+     * extraction screen has to offer SELL on a stranded run too. */
+    var secGross = secured.value;
+    var secUnits = secured.units;
+    var secLines = securedForResults();
+    clearSecured();
+
     // Cargo units are fractional (a fragment of a deposit is a fraction of its
     // volume) but MONEY is not, and js/save.js floors `cash` on load — so the
     // gross is rounded here, once, at the moment it becomes money. Otherwise
     // the ledger drifts from the saved one and every screen prints $1705.4000007.
-    gross = Math.round(gross);
+    gross = Math.round(gross + secGross);
     if (gross > 0) moveCash(gross, 'sale');
 
     var r = saveRecord();
@@ -1895,7 +2400,17 @@ SM.adv = (function () {
     flushSave();
     // Deliberately stays on 'results' — see the note above. The screen repaints
     // off `adv:sold` and the player picks where to go next.
-    return { gross: gross, lines: lines };
+    /* `gross` is the TOTAL banked, hold plus secured, because that is the money
+     * that actually moved. `lines` is still only the hold, with `securedLines`
+     * alongside it, so a screen can itemise the two separately — one of them was
+     * carried out and one of them was already safe. */
+    return {
+      gross: gross,
+      lines: lines,
+      secured: secGross,
+      securedUnits: secUnits,
+      securedLines: secLines
+    };
   }
 
   /** True once this run's hold has been banked. The screen greys SELL out. */
@@ -2008,6 +2523,34 @@ SM.adv = (function () {
     getStationY: getStationY,
     getDistanceToExitM: getDistanceToExitM,
     getExitLevel: getExitLevel,
-    ownedLevels: ownedLevels
+    ownedLevels: ownedLevels,
+
+    /* --- THE RAILS -----------------------------------------------------
+     * getCheckpoints(L)     LIVE [{k, outM, x, y, price, owned}] for level L of
+     *                       the mine in context, k >= 1 and outward. Empty for
+     *                       the surface and for an invalid level. Returned for
+     *                       levels the company does not own, all `owned` false.
+     * buyCheckpoint(L, k)   buy the NEXT unowned checkpoint outward on level L.
+     *                       -> bool. Emits rail:bought. Legal from the map, the
+     *                       prep screen AND from inside the mine. Refuses unless
+     *                       the LEVEL is owned.
+     * getServiceable()      {level, k} of the checkpoint cage the machine is
+     *                       standing in, else null. REUSED object.
+     * refuelHere()          full-tank top-up at SM.mines.railFuelMarkup();
+     *                       charges what the cash reaches. Emits rail:fuel.
+     * depositHere()         move the whole hold into the SECURED ledger. Emits
+     *                       rail:deposit. The hold is then empty and refillable.
+     * getSecured()          {value, units} secured this run. REUSED object.
+     * getSecuredLines()     LIVE per-material breakdown of the same. REUSED.
+     * ownedCheckpoints(id, L)  how many checkpoints are owned on that level
+     */
+    getCheckpoints: getCheckpoints,
+    buyCheckpoint: buyCheckpoint,
+    getServiceable: getServiceable,
+    refuelHere: refuelHere,
+    depositHere: depositHere,
+    getSecured: getSecured,
+    getSecuredLines: getSecuredLines,
+    ownedCheckpoints: ownedCheckpoints
   };
 })();

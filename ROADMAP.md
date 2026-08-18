@@ -17,14 +17,15 @@ system, the event bus) was built to carry it.
 
 ---
 
-## NOW — in flight
+## SHIPPED — v1.7.0
 
-### Depth levels: the lift *(being built)*
-The mine entrance becomes a lift. Levels snap to the geological strata, are
+### Depth levels: the elevator
+The mine entrance is a lift. Levels snap to the geological strata, are
 purchased progressively ("Level 3 — Silver Veins — $1,200"), and each mine's
 levels finance the next mine's rights. Riding is free; boarding and choosing
-SURFACE is extraction; the HUD gauge becomes distance-to-exit while absolute
-depth moves onto the lift's own big red LED readout in the world.
+SURFACE is extraction; the HUD gauge is distance-to-exit while absolute depth
+lives on the lift's big red LED boards in the world. This is the VERTICAL
+expansion axis of the owner's two-axis sketch; rails (NEXT) are the horizontal.
 
 Why it leads the roadmap: the 3× deeper mines created a commute problem, and
 the lift converts the commute into a purchased checkpoint — the same shape
@@ -34,28 +35,46 @@ physically visible infrastructure.**
 
 ---
 
-## NEXT — station infrastructure
+## NEXT — rails & checkpoints (the horizontal axis)
 
-The lift makes stations into places. Each of these is one more reason a mine
-feels *owned* rather than visited, and each is bought per-station so the money
-sink scales with the player.
+*(Corrected against the owner's side-view sketch: fuel and deposit do NOT hang
+on the lift stations, as an earlier draft of this section had it. They hang on
+RAILS built horizontally into a level. A mine expands two ways —*
 
-- **Fuel depot.** Refuel underground, at a markup. Changes the shape of a deep
-  run fundamentally: the tank stops being the leash and becomes the stride
-  length. Should be expensive enough that the surface fill is still the
-  sensible default early on.
-- **Ore hopper.** Dump cargo at a station and it counts as banked (or is
-  collected on extraction). Turns a deep level into a working face instead of
-  a round-trip destination. *(The pile system already persists dropped ore —
-  a hopper is a pile with a ledger entry.)*
-- **Lighting mains.** A permanently lit radius around the station, growing
-  with tier. Diegetic — the worklight/festoon rendering at the mouth already
-  established the language, and lamps are cheap (cached gradients).
-- **Rail cart / conveyor to the shaft.** The far-future version of the hopper:
-  automated ore movement from a working face back to the lift. Only worth
-  doing once hoppers prove the loop.
+```
+    ELEVATOR                    the mine, seen from the side
+   +--------+   +---------------------------------------------+
+   |        |   |  lvl 1        rails -> o------o------o       |
+   |        |   |---------------------------------------------|
+   |        |   |  lvl 2                                       |
+   | buys   |   |---------------------------------------------|
+   | DEEPER |   |  lvl 3                                       |
+   |        |   |---------------------------------------------|
+   |        |   |  lvl 4                                       |
+   +--------+   +---------------------------------------------+
+                     rails buy FURTHER OUT, per level
+```
 
----
+*— the elevator (shipped, v1.7.0) buys depth; rails buy reach.)*
+
+- **A checkpoint** is purchased at a distance out along a level, progressively
+  pricier with distance and depth — the lateral twin of the level ladder. The
+  rail draws physically from the station to it: owned ground, visible.
+- **FUEL at a checkpoint** refuels at a markup, so the surface fill stays the
+  sensible early default while deep lateral work becomes possible at a price.
+- **DEPOSIT at a checkpoint SECURES the hold** — safe from stranding, credited
+  when you next surface. Deliberately not instant banking: extraction stays the
+  loop's heartbeat; what dies is the hold-pressure round trip, and what is
+  gained is that ore already carried to a checkpoint survives a strand.
+- **Rails are a fast lane**: the free-travel gear gets a further multiplier on
+  your own rail, so built ground feels built.
+- **Lighting mains** stay on this list (a lit radius around stations and
+  checkpoints, growing with tier — the worklight language, cached gradients).
+
+Why the two axes matter together, from the lift's own verification report:
+fuel pressure is now LATERAL (rails answer it the way the elevator answered
+depth), and levels raise $/minute rather than $/run (a deposit checkpoint
+raises $/run — reach and throughput become different purchases).
 
 ## THEN — levels with identity
 
@@ -154,6 +173,14 @@ mask, AI that respects streaming/persistence, and a balance pass over every
 pressure at once. None of it is small.
 
 ## TECH DEBT — known, measured, parked
+
+- **The balance pass is DEFERRED by owner decision** until the core mechanics
+  (elevator, rails, checkpoints) settle — numbers tuned now would be tuned
+  against a leash that is still changing shape. Known items for that pass:
+  Blackstone rights measure 7.3 previous-mine runs vs the intended 1.5–4; the
+  fuel-tank ladder was sized for surface round trips and needs re-anchoring
+  once checkpoint refuelling exists; the whole income ladder re-measured after
+  both expansion axes land (`SM.mines.audit()` is the tool).
 
 - **Frame rate headroom.** Adventure sits ~42 fps against a ~70 ceiling; the
   remainder is the shaft rock pattern fill and strata polylines in

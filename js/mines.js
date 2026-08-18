@@ -220,6 +220,74 @@
  *    after three or four runs, which is the ladder the brief asks for. Every
  *    mine's table is in audit() under `levels`; re-read it after any retune.
  *
+ * 4d. RAILS — THE LATERAL TWIN OF THE LIFT
+ *
+ *    The lift buys REACH; rails buy THROUGHPUT. Within one level a company lays
+ *    track EASTWARD from the shaft and buys CHECKPOINTS along it, each of which
+ *    can refuel (at a markup) and — the one that matters — SECURE the hold.
+ *
+ *    WHY THIS IS AN ECONOMY AND NOT A CONVENIENCE. Measured on the lift ladder:
+ *    levels raise $/MINUTE, not $/RUN, because the HOLD binds long before the
+ *    tank does. A deposit checkpoint removes exactly that binding constraint, so
+ *    it raises $/RUN directly.
+ *
+ *    MEASURED, Blackstone's payoff level (Gold Pocket, 1020 m) at rig tier 2,
+ *    one descent and one tank either way, same seam, same driving policy:
+ *
+ *        without a deposit checkpoint   $24 764/run    58 of 450 fuel spent
+ *        with one                       $38 442/run   426 of 450 fuel spent
+ *
+ *    1.55x on $/run, and the fuel column is the real finding: a hold-bound run
+ *    spends THIRTEEN PER CENT of its tank before the hopper sends it home. The
+ *    checkpoint turns that into a fuel-bound run at 95%. The uplift is ~1.5 holds
+ *    rather than three because the tank binds as soon as the hold stops — which
+ *    is the correct next constraint, and it is what makes the tank the upgrade a
+ *    player wants immediately after their first checkpoint. Re-measure this after
+ *    any retune of CP_K: it is the only justification for the price.
+ *
+ *    checkpointsOf() prices each one at
+ *
+ *        CP_K x refHold(mine) x rateOfLayer(level's stratum)
+ *              x CP_GROWTH^(k-1) x (1 + CP_DEPTH_K x depthKm)
+ *
+ *    which is levelsOf()'s equation with the compounding moved from DEPTH to
+ *    DISTANCE, plus a mild depth term so that infrastructure 3 km down is dearer
+ *    than the same infrastructure 300 m down even in a poor stratum.
+ *
+ *    THE TARGET THE COEFFICIENTS WERE SOLVED FOR, not chosen: the FIRST
+ *    checkpoint on any level costs 0.5-1.0 full holds of that level's rate and
+ *    the OUTERMOST costs 2-3. With CP_GROWTH 1.5 over 4 checkpoints the outer/
+ *    inner ratio is fixed at 3.375, so the first must land in 0.593-0.889 holds
+ *    for BOTH ends to be inside their band. CP_DEPTH_K 0.15 makes the depth term
+ *    span 1.02 (Old Creek level 1, 135 m) to 1.45 (The Rift level 4, 3000 m),
+ *    and CP_K 0.60 therefore puts every mine's first checkpoint in 0.61-0.87
+ *    holds and every outermost in 2.07-2.94. Both bands hold by construction
+ *    across the whole catalogue — audit()'s `rails` block prints the tables.
+ *
+ *    CP_PITCH_M x CP_PER_LEVEL IS BOUNDED BY THE MINE, not by taste, and the
+ *    margin is THIN — measured against the shipped shaft, not assumed:
+ *
+ *        getMouthX()            -2280   (js/advterrain.js: -HALF_W + ELEV_INSET)
+ *        + 4 x 120 m (4800u)    +2520   the outermost checkpoint's CENTRE
+ *        MINE_HALF_WIDTH         2600   the east wall
+ *        margin                    80 units
+ *
+ *    So four checkpoints at 120 m fit, and a FIFTH would be 1120 units outside
+ *    the world. The cage (radius ADV.EXIT_RADIUS 200) does overhang the east wall
+ *    by 120 units at k=4; that is harmless, because the cage is a service radius
+ *    and not carved geometry — the centre is what has to be reachable.
+ *
+ *    >> CONSTRAINT FOR WHOEVER OWNS js/advterrain.js: ELEV_INSET must stay at or
+ *    >> below 400, or the outermost checkpoint centre leaves the mine and
+ *    >> CP_PITCH_M or CP_PER_LEVEL has to come down with it. This file cannot
+ *    >> check that itself — it is pure data and must not read a live module — so
+ *    >> it is written down here and asserted in the rails harness instead.
+ *
+ *    FUEL AT A CHECKPOINT IS DELIBERATELY A BAD DEAL (RAIL_FUEL_MARKUP 1.5).
+ *    Filling at the surface has to stay the smart default or the tank stops being
+ *    a decision; the markup is what you pay for not having planned. Always go
+ *    through railFuelCost() — see the rounding note on fuelCost().
+ *
  * 5. DEVICE HARDNESS COMPENSATION — the trap in this file
  *
  *    js/materials.js REWRITES `hardness` at load (applyWorldDensity) because a
@@ -368,6 +436,19 @@ SM.mines = (function () {
    * 384/768/1536) at the drill tier each mine's recDrill names — refHoldOf()
    * reads them out of rig.js when it can, so this is only ever a stand-in. */
   var REF_HOLD = [48, 96, 192, 384, 384, 768, 1536];
+
+  /* RAILS. See design note 4d — these six numbers are the whole rail economy,
+   * and the first three were SOLVED for the 0.5-1.0 / 2-3 hold band rather than
+   * picked. Re-read audit()'s `rails` block after touching any of them. */
+  var CP_K = 0.60;           // first checkpoint, as a fraction of one full hold
+  var CP_GROWTH = 1.5;       // ...compounding per pitch further east
+  var CP_DEPTH_K = 0.15;     // ...plus this much again per 1000 m of depth
+  var CP_MIN = 40;           // track is infrastructure; none of it is free
+  var CP_PER_LEVEL = 4;      // bounded by the mine's width, not by taste
+  var CP_PITCH_M = 120;      // metres of track between checkpoints (1200 units)
+  /* What a checkpoint charges for fuel, as a multiple of the surface price.
+   * 1.5 keeps "fill up before you go down" the correct default. */
+  var RAIL_FUEL_MARKUP = 1.5;
 
   var LIST = [];          // the catalogue, built in init()
   var BY_ID = {};
@@ -1065,6 +1146,77 @@ SM.mines = (function () {
   /** How many levels below the surface this mine sells. */
   function levelCountOf(mineOrId) { return levelsOf(mineOrId).length; }
 
+  /* =====================================================================
+   * RAILS — the lateral price list (design note 4d)
+   * ================================================================== */
+
+  var EMPTY_CPS = [];         // shared, frozen-by-convention: never written to
+
+  /**
+   * The CHECKPOINTS a company can buy on level `L` of this mine (L is 1-based
+   * and indexes levelsOf(), so L 0 — the surface — has no rails and returns
+   * empty, as does any level this mine does not sell).
+   *
+   *     [{ k: 1, outM: 120, price: 3400 }, ...]
+   *
+   * `outM` is metres EAST of the lift shaft; js/adv.js turns that into a world x
+   * through SM.advterrain.getMouthX() so the table is correct wherever the shaft
+   * is. LIVE array, cached on the mine exactly as levelsOf() is — js/adv.js
+   * holds the reference and getServiceable() walks it, so this must not allocate
+   * once it is warm. Cached LAZILY: refHoldOf() reads js/rig.js, which does not
+   * exist yet when mines.init() runs.
+   */
+  function checkpointsOf(mineOrId, L) {
+    var m = coerce(mineOrId);
+    if (!m) return EMPTY_CPS;
+    var lv = levelsOf(m);
+    var i = Math.floor(L);
+    if (!(i >= 1) || i > lv.length) return EMPTY_CPS;
+    if (!m.railTable) m.railTable = [];
+    if (m.railTable[i - 1]) return m.railTable[i - 1];
+
+    var e = lv[i - 1];
+    var hold = refHoldOf(m);
+    /* The stratum the level OPENS is the one its rails run through, so the rate
+     * term is that layer's — read off the layer rather than off the level's
+     * rounded `rate` extra, which exists for display. */
+    var rate = rateOfLayer(m.layers[e.layerIndex]);
+    var depthK = 1 + CP_DEPTH_K * (e.depthM / 1000);
+    var out = [], k, price;
+    for (k = 1; k <= CP_PER_LEVEL; k++) {
+      price = niceMoney(CP_K * hold * rate * depthK * Math.pow(CP_GROWTH, k - 1));
+      if (price < CP_MIN) price = CP_MIN;
+      out.push({ k: k, outM: k * CP_PITCH_M, price: price });
+    }
+    m.railTable[i - 1] = out;
+    return out;
+  }
+
+  /** Dollars for checkpoint `k` on level `L`, or 0 if there is no such one. */
+  function checkpointPriceOf(mineOrId, L, k) {
+    var t = checkpointsOf(mineOrId, L);
+    return (k >= 1 && k <= t.length) ? t[k - 1].price : 0;
+  }
+
+  /** How many checkpoints a level sells. 0 for the surface / an invalid level. */
+  function checkpointCountOf(mineOrId, L) { return checkpointsOf(mineOrId, L).length; }
+
+  /** Metres of track between checkpoints. js/adv.js derives world x from this. */
+  function checkpointPitchM() { return CP_PITCH_M; }
+
+  /** What a checkpoint's pump charges, as a multiple of the surface price. */
+  function railFuelMarkup() { return RAIL_FUEL_MARKUP; }
+
+  /**
+   * Dollars for `units` of fuel AT A CHECKPOINT.
+   * >> Built on fuelCost(), not on units x price x markup. fuelCost() already
+   * >> rounds up out of binary floating point (see its note); marking up the
+   * >> QUOTE and rounding once more keeps the checkpoint's price exactly 1.5x
+   * >> the number the prep screen showed for the same litres, which is the only
+   * >> way a player can check the markup for themselves.
+   */
+  function railFuelCost(units) { return dollars(fuelCost(units) * RAIL_FUEL_MARKUP); }
+
   /** Ordered list of sellable material ids, most valuable last. */
   function sellables() { return SELLABLES; }
 
@@ -1139,8 +1291,21 @@ SM.mines = (function () {
         var fillH = hardnessOf(L.fill) * L.hardnessScale;
         var tiers = [];
         for (t = 0; t <= maxT; t++) {
-          var power = SM.rig ? statAtTier('drill', t, 'power') : 0;
-          var cap = SM.rig ? statAtTier('drill', t, 'cap') : 99;
+          /* >> DEVICE UNITS. BUG, FOUND BY MEASUREMENT, REPORTING-ONLY BUT LOUD:
+           * >> these two came straight off the tier table while `fillH` below is
+           * >> the LIVE hardness js/materials.js has already multiplied by
+           * >> deviceK. js/rig.js multiplies both power and cap by exactly that
+           * >> factor (getDrillPower/getHardnessCap), so audit() was comparing
+           * >> compensated hardness against uncompensated caps and reporting the
+           * >> `fillBlocked` invariant BROKEN on eight layers that the real game
+           * >> cuts without complaint — granite live 7.99 against a raw cap of
+           * >> 8.5 rather than the live 10.96. A no-op wherever deviceK is 1,
+           * >> which is why it survived: design note 1's own numbers were read on
+           * >> a desktop grid. A tool that cries wolf on the invariant it exists
+           * >> to protect is worse than no tool, so it is fixed here. Nothing in
+           * >> the game calls audit(); it is a console instrument only. */
+          var power = SM.rig ? statAtTier('drill', t, 'power') * deviceK : 0;
+          var cap = SM.rig ? statAtTier('drill', t, 'cap') * deviceK : 99;
           var free = SM.rig ? statAtTier('engine', Math.min(t, maxT), 'speed') : 200;
           var blocked = [];
           for (var id in L.weights) {
@@ -1179,10 +1344,41 @@ SM.mines = (function () {
         holdRun: Math.round(refHoldOf(m) *
                             rateOfLayer(m.layers[m.layers.length - 1])),
         levels: levelsOf(m),
+        /* THE RAIL LADDER (design note 4d). `holds` is each checkpoint's price
+         * expressed in FULL HOLDS of the stratum it stands in — the only unit
+         * the 0.5-1.0 / 2-3 target can be read in, so it is printed rather than
+         * left to be worked out. */
+        rails: railAudit(m),
         layers: layers
       });
     }
     return rows;
+  }
+
+  /**
+   * One row per LEVEL: the rail checkpoints on it, each priced both in dollars
+   * and in full holds of the stratum it stands in. That second column is the
+   * design target from note 4d, so it is what a retune is checked against.
+   */
+  function railAudit(m) {
+    var lv = levelsOf(m), hold = refHoldOf(m), out = [], i, k, cps, one, holds;
+    for (i = 1; i <= lv.length; i++) {
+      cps = checkpointsOf(m, i);
+      one = hold * rateOfLayer(m.layers[lv[i - 1].layerIndex]);
+      holds = [];
+      for (k = 0; k < cps.length; k++) {
+        holds.push(one > 0 ? Math.round(cps[k].price / one * 100) / 100 : 0);
+      }
+      out.push({
+        level: i, name: lv[i - 1].name, depthM: lv[i - 1].depthM,
+        levelPrice: lv[i - 1].price, rate: lv[i - 1].rate,
+        holdRun: Math.round(one),
+        price: cps.map(function (c) { return c.price; }),
+        outM: cps.map(function (c) { return c.outM; }),
+        holds: holds
+      });
+    }
+    return out;
   }
 
   /* audit() needs single stats out of js/rig.js's tier tables without owning a
@@ -1222,6 +1418,22 @@ SM.mines = (function () {
     levelsOf: levelsOf,
     levelPriceOf: levelPriceOf,
     levelCountOf: levelCountOf,
+    /* --- rails (design note 4d) ----------------------------------------
+     * checkpointsOf(mine, L)  LIVE, cached [{k, outM, price}] for level L
+     *                         (1-based, indexes levelsOf()). Empty for the
+     *                         surface and for a level this mine does not sell.
+     * checkpointPriceOf()     dollars for checkpoint k on level L
+     * checkpointCountOf()     how many checkpoints a level sells
+     * checkpointPitchM()      metres of track between checkpoints
+     * railFuelMarkup()        checkpoint fuel price / surface fuel price
+     * railFuelCost(units)     dollars for `units` at a checkpoint pump
+     */
+    checkpointsOf: checkpointsOf,
+    checkpointPriceOf: checkpointPriceOf,
+    checkpointCountOf: checkpointCountOf,
+    checkpointPitchM: checkpointPitchM,
+    railFuelMarkup: railFuelMarkup,
+    railFuelCost: railFuelCost,
     depthOf: depthOf,
     recDrillOf: recDrillOf,
     seedOf: seedOf,
