@@ -110,7 +110,28 @@
 //         cache-first, so a client holding v1.9.0 would keep being served the
 //         adventure build — including nine files this deploy no longer ships —
 //         until this string changes.
-const VERSION = 'v1.9.1';
+// v1.9.2  EXCAVATION STOPS RASPING. Every rate limit in sound.js was shorter
+//         than the voice it gated — break (75-125 ms) every 50 ms, clank
+//         (240 ms) every 110 ms, sparkle (145 ms) every 100 ms — so each sound
+//         retriggered while the last copy still rang, and overlapping noise
+//         bursts read as one continuous rasp rather than as fast events. Gaps
+//         now clear their own voices. break/clank/sparkle were also three
+//         INDEPENDENT limits firing together (~39 transients a second at full
+//         drill); an accent now replaces the crack instead of stacking on it,
+//         so one destruction voice sounds at a time. The loot ladder drops
+//         from three rungs to two and slows to 75 ms, having previously
+//         climbed faster than its own 90 ms notes could decay.
+//         AND THE GENERIC CRACK IS GONE. Excavation announced every deposit
+//         it ate, but the drill spends nearly all its time in material nobody
+//         cares about — dirt, rubble, stone, granite and iron, the map's
+//         default ore. That was the bulk of the noise and carried no
+//         information the engine and grinder beds were not already giving,
+//         continuously and in proportion to load. What is left names the tier
+//         instead of the act: silence for spoil and iron, clank for Gold /
+//         Obsidian / Emerald (half the time), sparkle for Crystal / Voidstone
+//         / Starcore, impact for a real cave-in. Prize cells yield no currency
+//         but rank above every ore, so they stayed loud.
+const VERSION = 'v1.9.2';
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

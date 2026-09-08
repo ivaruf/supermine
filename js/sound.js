@@ -59,13 +59,42 @@ SM.sound = (function () {
   var ARP_STEPS        = [0, 3, 5, 7, 10, 12, 15, 17, 19, 22, 24];
   var ARP_ROOT_HZ      = 392.0;  // G4
   var ARP_RESET_TIME   = 0.45;
-  var ARP_MIN_GAP      = 0.045;  // throttle for a bare SM.sound.play('collect')
-  var ARP_NOTE_GAP     = 0.055;  // spacing of the staggered ladder in update()
+  // RATE LIMITS — a gap must be LONGER THAN THE SOUND IT GATES.
+  //   Every one of these used to be shorter than the body of its own voice, so
+  //   at full drill each sound was retriggered while the previous copy was
+  //   still ringing: break (75-125 ms) every 50 ms, clank (240 ms) every
+  //   110 ms, sparkle (145 ms) every 100 ms. Overlapping copies of a noise
+  //   burst do not read as fast events, they read as one continuous rasp,
+  //   which is what made excavation sound spammy. The gaps below each clear
+  //   their own voice with a little room to spare.
+  var ARP_MIN_GAP      = 0.075;  // throttle for a bare SM.sound.play('collect')
+  var ARP_NOTE_GAP     = 0.075;  // spacing of the staggered ladder in update()
 
-  var BREAK_MIN_GAP    = 0.05;
+  var BREAK_MIN_GAP    = 0.13;   // body 75-125 ms
   var TICK_MIN_GAP     = 0.30;   // ui.js fires one tick per second under 10s
-  var CRUNCH_MIN_GAP   = 0.16;
+  var CRUNCH_MIN_GAP   = 0.34;   // body 220-320 ms
+  var CLANK_MIN_GAP    = 0.28;   // body 240 ms
+  var SPARKLE_MIN_GAP  = 0.26;   // body ~145 ms, but it is the brightest voice
   var CRUNCH_THRESHOLD = 26;     // destroys per step that counts as a collapse
+
+  // SILENCE IS THE DEFAULT, AND A SOUND NAMES THE TIER.
+  //   Excavation used to announce every deposit it ate. But the drill spends
+  //   almost all of its time in material nobody cares about — dirt (1),
+  //   rubble (2), stone (3), granite (6, the barrier you are meant to plough
+  //   through) and iron (12, which is everywhere — the map's default ore).
+  //   Announcing those was the overwhelming bulk of the noise while carrying
+  //   no information: the engine and grinder beds already say "you are
+  //   cutting", continuously and in proportion to how hard.
+  //
+  //   So the generic crack is gone from normal play, and what remains tells
+  //   the player WHAT they hit rather than THAT they hit something:
+  //     silence  — spoil and iron, i.e. most of the game
+  //     clank    — Gold (30), Obsidian (40), Emerald (55); half the time
+  //     sparkle  — Crystal (85), Voidstone (190), Starcore (420), prize cells
+  //     impact   — a real cave-in, whatever it was made of
+  //   Turning these two numbers down makes the mine chattier; up, quieter.
+  var CLANK_MIN_VALUE   = 25;
+  var SPARKLE_MIN_VALUE = 80;
 
   var RHYTHM_BPM       = 128;
   var GRIND_ATTACK     = 6.0;
@@ -358,8 +387,8 @@ SM.sound = (function () {
     else if (name === 'collect') minGap = ARP_MIN_GAP;
     else if (name === 'hit') minGap = 0.09;
     else if (name === 'crunch') minGap = CRUNCH_MIN_GAP;
-    else if (name === 'sparkle') minGap = 0.10;
-    else if (name === 'clank') minGap = 0.11;
+    else if (name === 'sparkle') minGap = SPARKLE_MIN_GAP;
+    else if (name === 'clank') minGap = CLANK_MIN_GAP;
     else if (important) minGap = 0;
 
     var last = lastPlayed[name];
@@ -578,6 +607,10 @@ SM.sound = (function () {
     nDestroy++;
     var m = SM.materials.get(p.matIndex);
     var v = m ? m.value : 0;
+    // Prize cells (time, boost) yield no currency but are the most important
+    // thing in the level, so they rank above every ore for sound purposes.
+    // Without this, gating on value alone would render them silent.
+    if (m && (m.pickup || m.sparkle >= 0.7)) v = 9999;
     if (v > topDestroyValue) topDestroyValue = v;
   }
   function onCollected(p) {
@@ -611,14 +644,24 @@ SM.sound = (function () {
 
     /* --- destruction --------------------------------------------------- */
     if (nDestroy > 0) {
-      if (nDestroy >= CRUNCH_THRESHOLD) {
-        play('crunch');
-        if (nDestroy >= CRUNCH_THRESHOLD * 2.5) play('impact');
-      } else {
-        play('break');
+      // An accent REPLACES the crack instead of stacking on top of it. These
+      // are three independent rate limits, so they used to fire together and
+      // sustained drilling layered break + clank + sparkle into one texture
+      // where no single event was audible as an event. A collapse is rare
+      // enough to still earn both.
+      var voice = null;
+      if (topDestroyValue >= SPARKLE_MIN_VALUE) voice = 'sparkle';
+      else if (topDestroyValue >= CLANK_MIN_VALUE && Math.random() < 0.5) voice = 'clank';
+
+      if (nDestroy >= CRUNCH_THRESHOLD * 2.5) {
+        // A genuine cave-in is structural news whatever it was made of, and
+        // impact already carries the weight, so it replaces the crunch.
+        play('impact');
+        if (voice) play(voice);
+      } else if (voice) {
+        play(voice);
       }
-      if (topDestroyValue >= 80) play('sparkle');
-      else if (topDestroyValue >= 25 && Math.random() < 0.5) play('clank');
+      // else: nothing. Most excavation is heard as engine and grinder alone.
     }
 
     /* --- collection ---------------------------------------------------- */
@@ -627,7 +670,10 @@ SM.sound = (function () {
       // UP the scale instead of retriggering one note on top of itself. The
       // gate advances by exactly the length of the burst, capping the ladder
       // at ~18 notes/sec however hard the loot is pouring in.
-      var notes = nCollect > 6 ? 3 : nCollect > 2 ? 2 : 1;
+      // Two rungs, not three: at the old 55 ms spacing a torrent fired 18
+      // notes a second with 90 ms tones, so the ladder was always sounding
+      // two notes at once and climbed too fast to hear as a melody.
+      var notes = nCollect > 4 ? 2 : 1;
       if (canVoice(false)) {
         for (var i = 0; i < notes; i++) collectNote(i * ARP_NOTE_GAP);
       }
