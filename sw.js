@@ -131,7 +131,7 @@
 //         Obsidian / Emerald (half the time), sparkle for Crystal / Voidstone
 //         / Starcore, impact for a real cave-in. Prize cells yield no currency
 //         but rank above every ore, so they stayed loud.
-const VERSION = 'v1.9.3'; // a way back to the arcade when the arcade is what framed us
+const VERSION = 'v1.9.4'; // quit from the pause menu: back to the arcade, or close
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

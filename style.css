@@ -742,6 +742,26 @@ html, body {
 .sm-pause-ico .sm-btn-svg { width: 100%; height: 100%; filter: none; }
 .sm-pause-label { line-height: 1; }
 
+/* Leaving the game entirely, under a hairline that separates it from the three
+   buttons about this run. The quietest thing on the card on purpose: it is the
+   one choice here that another tap will not undo. */
+.sm-btn-quit {
+  margin-top: 15px;
+  padding-top: 16px;
+  border: 0;
+  border-top: 1px solid rgba(142, 155, 171, 0.16);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--sm-dim);
+}
+.sm-btn-quit:hover:not(:disabled),
+.sm-btn-quit:focus-visible {
+  color: #cfe0ef;
+  background: rgba(142, 155, 171, 0.08);
+}
+.sm-btn-quit:disabled { color: var(--sm-dimmer); cursor: default; }
+
 /* A frozen run must LOOK frozen. main.js holds the fixed step but CSS
    animations are not part of it, so without this the clock keeps throbbing
    red and the OVERDRIVE label keeps blinking behind the menu — which reads

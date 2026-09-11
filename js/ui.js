@@ -237,6 +237,13 @@ SM.ui = (function () {
           '<path d="M6.6 10.8h10.8v9.6H6.6z"/>' +
           '<path d="m7.4 3.6 9.2 7.2M16.6 3.6 7.4 10.8"/>',
 
+    // Quitting: the shaft, and an arrow riding up it. A door would be the
+    // obvious pick and the obvious pick is wrong here — there are no doors
+    // underground, and everything else in this set is pit furniture.
+    surface: '<path d="M4.6 20.4V6.6h6.4v13.8"/>' +
+             '<path d="M17.6 20.4V9.6"/>' +
+             '<path d="m14.1 13.1 3.5-3.5 3.5 3.5"/>',
+
     sound_on: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
               '<path d="M15.7 9.2a3.9 3.9 0 0 1 0 5.6"/>' +
               '<path d="M18.3 6.5a7.6 7.6 0 0 1 0 11"/>',
@@ -637,6 +644,34 @@ SM.ui = (function () {
       els.pauseMenuBtn.blur();
       returnToMenu();
     });
+
+    /* Leaving the game itself, which is a different thing from leaving the run.
+     * Only built when the arcade's exit.js actually loaded: it is another
+     * repo's file and it is allowed to be missing, and a quit button that
+     * cannot quit is worse than no quit button. What it SAYS depends on how
+     * this page was opened, because a button must not promise to close a tab
+     * that no script is allowed to close. */
+    if (window.ArcadeExit) {
+      els.pauseQuit = menuButton(
+        pcard,
+        'sm-btn-quit',
+        UI_ICONS.surface,
+        window.ArcadeExit.verb({ arcade: 'BACK TO ARCADE', app: 'SHUT DOWN', tab: 'SHUT DOWN' }),
+      );
+      els.pauseQuit.addEventListener('click', function (e) {
+        e.preventDefault();
+        els.pauseQuit.blur();
+        SM.sound.play('ui');
+        window.ArcadeExit.quit().then(function (how) {
+          // 'refused' means the browser would not close a tab it did not open.
+          // Say so on the button, in the pause card, rather than looking dead.
+          if (how !== 'refused') return;
+          var label = els.pauseQuit.querySelector('.sm-pause-label');
+          if (label) label.textContent = 'CLOSE THIS TAB YOURSELF';
+          els.pauseQuit.disabled = true;
+        });
+      });
+    }
 
     /* --- POWER-UP SPLASH (mid screen, above the machine) -----------------
      * The one thing on the HUD that is allowed into the middle of the screen,
