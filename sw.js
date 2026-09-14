@@ -131,7 +131,16 @@
 //         Obsidian / Emerald (half the time), sparkle for Crystal / Voidstone
 //         / Starcore, impact for a real cave-in. Prize cells yield no currency
 //         but rank above every ore, so they stayed loud.
-const VERSION = 'v1.9.4'; // quit from the pause menu: back to the arcade, or close
+// v1.9.5  A DOOR ON THE SCREEN YOU ARRIVE ON. BACK TO ARCADE has been on the
+//         pause card since v1.9.4, which covers a player who is already
+//         driving and nobody else: the pause card is behind a run, so anyone
+//         who reached the menu and did not want to pick a mode had nothing to
+//         press — and inside the arcade's iframe there is no tab strip and no
+//         visible back button either. The same plate now sits in the menu's
+//         top-left corner, in the same place SUPERMINE ADVENTURE puts its own.
+//         Presentation only: no save format, no module contract, no asset list
+//         change; the bump is what gets a cached client the new menu.
+const VERSION = 'v1.9.5'; // the way out moves to the menu too, where you actually arrive
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [

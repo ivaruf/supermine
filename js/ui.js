@@ -855,6 +855,50 @@ SM.ui = (function () {
     // file:// or first-visit load where no worker is controlling yet.
     els.version = el('div', 'sm-start-version', els.start, GAME_VERSION);
 
+    /* --- the way out of the GAME, on the screen you arrive on ---------------
+     * The pause card has carried this since the arcade learned to frame us,
+     * and that covers a player who is already driving. It covered nobody else:
+     * the pause card is behind a run, so a player who arrived here and did not
+     * want to pick a mode had nothing to press — and inside the arcade's
+     * iframe there is no tab strip and no visible back button either. That was
+     * a room with no door. The launcher's FLOOR pill is its safety net for a
+     * game that never heard of exit.js, not for one that loads it and then
+     * hides the way out behind starting a run.
+     *
+     * Built only when the arcade's exit.js actually loaded: it is another
+     * repo's file and is allowed to be missing, and a quit button that cannot
+     * quit is worse than none. What it SAYS is exit.js's answer, because a
+     * button must not promise to close a tab no script is allowed to close.
+     *
+     * DELIBERATELY SILENT, unlike its twin on the pause card. This is the one
+     * screen where audio has not been unlocked yet — the mode cards are the
+     * gesture that does that — and waking an AudioContext to click on the way
+     * OUT of the game would be the only thing it ever got used for.
+     *
+     * It hangs off the OVERLAY, not the panel, for the same reason the build
+     * stamp does: the panel scrolls on a short phone and a door must not
+     * scroll away. */
+    if (window.ArcadeExit) {
+      els.menuQuit = el('button', 'sm-btn sm-start-quit', els.start,
+        window.ArcadeExit.verb({
+          arcade: 'BACK TO ARCADE',
+          app: 'SHUT DOWN',
+          tab: 'SHUT DOWN',
+        }));
+      els.menuQuit.setAttribute('type', 'button');
+      els.menuQuit.addEventListener('click', function (e) {
+        e.preventDefault();
+        els.menuQuit.blur();
+        window.ArcadeExit.quit().then(function (how) {
+          // 'refused' means the browser would not close a tab it did not open.
+          // Say so on the button rather than leaving it looking dead.
+          if (how !== 'refused') return;
+          els.menuQuit.textContent = 'CLOSE THIS TAB YOURSELF';
+          els.menuQuit.disabled = true;
+        });
+      });
+    }
+
     /* --- hint + debug ------------------------------------------------------ */
     // The menu owns the whole screen until a mode is picked. Without this the
     // in-game hint line sits at the bottom centre repeating the menu's own key

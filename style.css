@@ -1801,6 +1801,32 @@ html, body {
   color: rgba(255,255,255,0.22);
 }
 
+/* THE WAY OUT, top left — the corner you came in by. Pinned to the overlay for
+   the same reason the build stamp is: the panel in the middle scrolls on a
+   short phone and a door must not scroll away. Quiet and gold rather than
+   loud, because it is the one control on this screen that is not the game.
+   SUPERMINE ADVENTURE carries the same plate in the same corner; the two are
+   siblings and leaving should not be a different gesture in each. See the
+   ArcadeExit block in js/ui.js for when it exists at all — it is absent
+   entirely unless ../arcade/exit.js answered. */
+.sm-start-quit {
+  position: absolute;
+  left: max(14px, env(safe-area-inset-left, 0px));
+  top: max(12px, env(safe-area-inset-top, 0px));
+  padding: 8px 14px;
+  font-size: 9.5px;
+  letter-spacing: 2px;
+  color: rgba(255, 194, 31, 0.82);
+  border-color: rgba(255, 194, 31, 0.30);
+  background: rgba(10, 14, 20, 0.72);
+}
+.sm-start-quit:hover:not(:disabled),
+.sm-start-quit:focus-visible {
+  color: var(--sm-gold);
+  border-color: rgba(255, 194, 31, 0.6);
+}
+.sm-start-quit:disabled { color: var(--sm-dimmer); border-color: var(--sm-border); }
+
 /* Freestyle: no countdown panel at all. The centred column closes the gap by
    itself — that is the whole reason it is a flex column. */
 .sm-notimer .sm-clockwrap { display: none; }
