@@ -970,14 +970,18 @@ SM.ui = (function () {
     el('div', 'sm-sound-kicker', scard, 'CAB SPEAKERS');
     el('div', 'sm-sound-title', scard, 'SOUND');
 
-    // MACHINERY, not "effects": the row is named for what it governs, which
-    // in this game is the engine, the grinder and every deposit you crack.
+    // MUSIC and EFFECTS, the same two words every game in this hub uses, and
+    // deliberately not this one's own. The row said MACHINERY because that is
+    // what it governs here — but a player reaching for a volume is not reading
+    // for flavour, they are looking for the one of two sliders they want, and
+    // a label that has to be decoded costs them that. The fiction gets the
+    // hint line underneath, where it explains rather than obstructs.
     els.volMusic = volumeRow(scard, 'sm-vol-music', 'MUSIC');
-    els.volSfx = volumeRow(scard, 'sm-vol-machinery', 'MACHINERY');
+    els.volSfx = volumeRow(scard, 'sm-vol-machinery', 'EFFECTS');
 
     el('div', 'sm-sound-hint', scard,
       'MUSIC IS THE BEAT THAT THICKENS AS THE SEAMS GET RICHER. ' +
-      'MACHINERY IS THE ENGINE, THE GRINDER AND EVERY DEPOSIT YOU CRACK. ' +
+      'EFFECTS IS THE ENGINE, THE GRINDER AND EVERY DEPOSIT YOU CRACK. ' +
       'DRAG EITHER ONE AND YOU WILL HEAR IT.');
 
     els.soundBack = el('button', 'sm-btn sm-sound-back', scard, 'BACK');

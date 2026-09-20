@@ -141,7 +141,7 @@
 //         Presentation only: no save format, no module contract, no asset list
 //         change; the bump is what gets a cached client the new menu.
 // v1.9.6  Cached shells learn the arcade moved to gophercloud.games.
-const VERSION = 'v1.9.8'; // the way out says what it does: back to arcade, or close
+const VERSION = 'v1.9.9'; // the volume rows say music-and-effects like everywhere else
 const CACHE = `supermine-${VERSION}`;
 
 const ASSETS = [
