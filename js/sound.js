@@ -4,10 +4,24 @@
  * A small procedural WebAudio engine. No assets, no network, no libraries.
  *
  * SIGNAL PATH
- *   engineBus ─┐
- *   grindBus  ─┤
- *   rhythmBus ─┼─> master (gain, muted here) ─> limiter (compressor) ─> out
+ *   rhythmBus ─> musicGain ─┐
+ *                           ├─> master (mute lives here) ─> limiter ─> out
+ *   engineBus ─┐            │
+ *   grindBus  ─┼> sfxGain ──┘
  *   sfxBus    ─┘
+ *
+ * WHY THE SPLIT IS WHERE IT IS
+ *   Two sliders, two gains, and the line between them is "would this be
+ *   playing if the machine were switched off". The rhythm grid would: it is a
+ *   soundtrack that thickens per zone and it belongs to MUSIC. The engine
+ *   drone, the grinder, every cracked deposit, the loot ladder and the UI
+ *   blips would not: they are the pit at work, and they belong to MACHINERY
+ *   (the row is labelled MACHINERY rather than Effects because that is what
+ *   this game calls its own noise). Both hang under the existing master, so
+ *   C.SOUND_MASTER_GAIN, the mute and the limiter all keep doing exactly what
+ *   they did — the sliders are attenuators ON TOP of the authored mix, which
+ *   is why they default to 1.0 rather than to some fraction that would quietly
+ *   re-balance the game on first launch.
  *
  * WHY THE HOT EVENTS ONLY INCREMENT COUNTERS
  *   material:destroyed fires ~150x per step and resource:collected ~30x.
@@ -28,6 +42,9 @@
  *                                'complete' 'ui' 'timeplus' 'timelow' 'tick'
  *                                'timeout' 'boost'
  *   SM.sound.setMuted(b) / toggleMute() / isMuted()
+ *   SM.sound.getMusicVolume() / setMusicVolume(0..1)
+ *   SM.sound.getSfxVolume()   / setSfxVolume(0..1)
+ *   SM.sound.preview('music' | 'machinery')
  *
  * PAUSE
  *   Subscribes to `game:paused` and ducks the engine and grinder BUSES to
@@ -100,6 +117,33 @@ SM.sound = (function () {
   var GRIND_ATTACK     = 6.0;
   var GRIND_RELEASE    = 2.6;
 
+  /* --- the two volumes, and where they are kept -------------------------
+   * Hub CLAUDE.md §6: <slug>.<thing>.v<n>, stored 0..1, every read and every
+   * write wrapped — private mode and a full quota are both real, and neither
+   * is a reason for the game to stop making a noise.
+   *
+   * THERE IS NO MUTE KEY TO MIGRATE, and that is worth stating rather than
+   * leaving as an absence somebody re-derives later. SUPERMINE's mute has
+   * always been session-only: `muted` starts false on every load, 'm' and the
+   * HUD speaker flip it, and nothing has ever written it down. So there is no
+   * "player who muted stays muted" case to carry across — and inventing a key
+   * to persist it now would be a second, competing idea of silence sitting
+   * next to two sliders that already express it. The mute stays what it is: a
+   * master kill switch for this session.
+   *
+   * DEFAULT 1.0 BOTH. These gains multiply a mix that was already balanced by
+   * hand (SFX_GAIN, RHYTHM_GAIN, C.SOUND_MASTER_GAIN and the limiter), so
+   * anything below 1.0 here would silently re-mix the game for every existing
+   * player on the first launch after this release. A slider that starts at the
+   * top and only comes down is exactly what an attenuator is. */
+  var MUSIC_KEY        = 'supermine.vol.music.v1';
+  var SFX_KEY          = 'supermine.vol.sfx.v1';
+  var DEFAULT_MUSIC    = 1.0;
+  var DEFAULT_SFX      = 1.0;
+
+  // Seconds of REAL time between two auditions of the same bus — see preview().
+  var PREVIEW_GAP      = 0.11;
+
   var C = SM.config;
 
   /* =====================================================================
@@ -107,10 +151,17 @@ SM.sound = (function () {
    * ================================================================== */
   var actx = null;
   var master = null, limiter = null;
+  var musicGain = null, sfxGain = null;
   var sfxBus = null, engineBus = null, grindBus = null, rhythmBus = null;
   var dead = false;              // audio permanently unavailable
 
   var muted = false;
+  // Read from storage at module load, BEFORE any graph exists, so the very
+  // first node built already carries the player's level and nothing has to
+  // be corrected after the fact (which is how a graph clicks on boot).
+  var musicVol = DEFAULT_MUSIC;
+  var sfxVol = DEFAULT_SFX;
+  var previewLast = { music: -999, machinery: -999 };
   var paused = false;
   var unlocked = false;
   var voices = 0;
@@ -146,6 +197,109 @@ SM.sound = (function () {
   var subscribed = false;
 
   /* =====================================================================
+   * VOLUMES — two persisted attenuators, read once at load
+   * ================================================================== */
+  function clamp01(v) {
+    v = Number(v);
+    if (!(v >= 0)) return 0;        // also catches NaN, which `< 0` would not
+    return v > 1 ? 1 : v;
+  }
+
+  function readVolume(key, fallback) {
+    try {
+      if (!window.localStorage) return fallback;
+      var raw = window.localStorage.getItem(key);
+      if (raw === null || raw === '') return fallback;
+      var n = Number(raw);
+      // A key somebody else wrote, or a half-finished write, must not be able
+      // to silence the game — an unparseable value falls back to the default.
+      if (!isFinite(n)) return fallback;
+      return clamp01(n);
+    } catch (e) {
+      return fallback;             // private mode: the defaults still play
+    }
+  }
+
+  function writeVolume(key, value) {
+    try {
+      if (!window.localStorage) return;
+      window.localStorage.setItem(key, String(value));
+    } catch (e) {
+      // Quota or a locked-down browser. The level is already live in the
+      // graph; it simply will not survive a reload, which is not worth a word
+      // on screen.
+    }
+  }
+
+  musicVol = readVolume(MUSIC_KEY, DEFAULT_MUSIC);
+  sfxVol = readVolume(SFX_KEY, DEFAULT_SFX);
+
+  /** Glide a gain rather than jumping it: a step change on a live graph
+   *  clicks, and a slider drag is a hundred step changes in a row. */
+  function rampGain(node, value) {
+    if (!node || !actx) return;
+    try { node.gain.setTargetAtTime(value, actx.currentTime, 0.015); }
+    catch (e) { node.gain.value = value; }
+  }
+
+  function setMusicVolume(v) {
+    musicVol = clamp01(v);
+    writeVolume(MUSIC_KEY, musicVol);
+    rampGain(musicGain, musicVol);
+  }
+
+  function setSfxVolume(v) {
+    sfxVol = clamp01(v);
+    writeVolume(SFX_KEY, sfxVol);
+    rampGain(sfxGain, sfxVol);
+  }
+
+  /**
+   * AUDITION ONE BUS, so a slider can be heard while it is being set.
+   *
+   * Both sliders live on the menu, and the menu is the one screen where
+   * neither bus is making a sound of its own: the rhythm bed does not exist
+   * until a run reaches a zone, and the engine and grinder are idle behind the
+   * overlay. Without this, MUSIC in particular would be a control you drag in
+   * silence and only discover two minutes later.
+   *
+   * IT DELIBERATELY DOES NOT GO THROUGH play(). play() rate-limits on `clock`,
+   * and `clock` only advances inside main.js's fixed step — which is HELD
+   * while the start overlay is up. The first audition would stamp
+   * lastPlayed[name] with a clock that never moves again and every later one
+   * would be swallowed, so the slider would make exactly one noise per
+   * session. This throttles on actx.currentTime, which is wall time and the
+   * only clock running on that screen.
+   *
+   * It also lifts the mute, because the alternative is a control that does
+   * nothing and says nothing about why. Moving a volume slider is the player
+   * stating how loud they want a thing; a master kill switch left over from
+   * earlier in the session should not outrank that. The HUD speaker repaints
+   * itself off the `sound:muted` event, so the two never disagree.
+   */
+  function preview(which) {
+    unlock();
+    if (!actx) return;
+    if (muted) setMuted(false);
+
+    var now = actx.currentTime;
+    var last = previewLast[which];
+    if (last !== undefined && now - last < PREVIEW_GAP) return;
+    previewLast[which] = now;
+    if (!canVoice(true)) return;
+
+    if (which === 'music') {
+      // The final zone's bass stab — one bar of the actual soundtrack, on the
+      // actual bus, rather than a beep that stands in for it.
+      tone(147, 147, 0.16, 0.24, 'sawtooth', 0, rhythmBus);
+      tone(73.5, 73.5, 0.20, 0.20, 'square', 0, rhythmBus);
+    } else {
+      // Metal on rock: the noise this game makes for a living.
+      clank(300, 0.22, 0.26);
+    }
+  }
+
+  /* =====================================================================
    * CONTEXT
    * ================================================================== */
   function ensureContext() {
@@ -169,10 +323,16 @@ SM.sound = (function () {
       master.gain.value = muted ? 0 : C.SOUND_MASTER_GAIN;
       master.connect(limiter);
 
-      sfxBus = actx.createGain();    sfxBus.gain.value = SFX_GAIN;    sfxBus.connect(master);
-      engineBus = actx.createGain(); engineBus.gain.value = 1;        engineBus.connect(master);
-      grindBus = actx.createGain();  grindBus.gain.value = 1;         grindBus.connect(master);
-      rhythmBus = actx.createGain(); rhythmBus.gain.value = RHYTHM_GAIN; rhythmBus.connect(master);
+      // The two slider gains sit BETWEEN the buses and master, so the mute,
+      // the master trim and the limiter are all downstream of them and keep
+      // behaving exactly as they did before the split.
+      musicGain = actx.createGain(); musicGain.gain.value = musicVol; musicGain.connect(master);
+      sfxGain = actx.createGain();   sfxGain.gain.value = sfxVol;     sfxGain.connect(master);
+
+      sfxBus = actx.createGain();    sfxBus.gain.value = SFX_GAIN;    sfxBus.connect(sfxGain);
+      engineBus = actx.createGain(); engineBus.gain.value = 1;        engineBus.connect(sfxGain);
+      grindBus = actx.createGain();  grindBus.gain.value = 1;         grindBus.connect(sfxGain);
+      rhythmBus = actx.createGain(); rhythmBus.gain.value = RHYTHM_GAIN; rhythmBus.connect(musicGain);
 
       buildNoise();
       buildEngine();
@@ -300,7 +460,12 @@ SM.sound = (function () {
     node.onended = function () { if (voices > 0) voices--; };
   }
 
-  function noiseBurst(dur, freq, q, gain, type, delay) {
+  /* `dest` defaults to sfxBus, which is where all but a handful of these go.
+   * It exists for the rhythm grid: two of its voices (the kick's thump and the
+   * final zone's offbeat clank) used to land on sfxBus along with everything
+   * else, so pulling MUSIC to zero left a disembodied thud and tick behind —
+   * a slider that only silenced two thirds of the thing it names. */
+  function noiseBurst(dur, freq, q, gain, type, delay, dest) {
     if (!actx) return;
     var src = actx.createBufferSource();
     src.buffer = noiseBuffer;
@@ -312,7 +477,7 @@ SM.sound = (function () {
     var t = actx.currentTime + (delay || 0);
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
-    src.connect(f); f.connect(g); g.connect(sfxBus);
+    src.connect(f); f.connect(g); g.connect(dest || sfxBus);
     // Random playback offset so repeated hits never sound identical. Clamped
     // so the burst can never run off the end of the buffer and go silent.
     var maxOff = noiseBuffer.duration - dur - 0.05;
@@ -358,13 +523,15 @@ SM.sound = (function () {
     tone(hz * 2, hz * 2, 0.05, 0.045, 'sine', delay);
   }
 
-  /** Inharmonic partial stack — the metal in "metallic clank". */
-  function clank(baseHz, dur, gain) {
+  /** Inharmonic partial stack — the metal in "metallic clank".
+   *  `dest` carries all four partials to one bus together; the rhythm grid's
+   *  offbeat hit is a musical event and has to move with the MUSIC slider. */
+  function clank(baseHz, dur, gain, dest) {
     if (!actx) return;
-    noiseBurst(0.03, baseHz * 3.2, 3, gain * 0.5, 'bandpass');
-    tone(baseHz, baseHz * 0.96, dur, gain * 0.55, 'square');
-    tone(baseHz * 2.76, baseHz * 2.7, dur * 0.7, gain * 0.30, 'sine');
-    tone(baseHz * 5.41, baseHz * 5.3, dur * 0.42, gain * 0.16, 'sine');
+    noiseBurst(0.03, baseHz * 3.2, 3, gain * 0.5, 'bandpass', 0, dest);
+    tone(baseHz, baseHz * 0.96, dur, gain * 0.55, 'square', 0, dest);
+    tone(baseHz * 2.76, baseHz * 2.7, dur * 0.7, gain * 0.30, 'sine', 0, dest);
+    tone(baseHz * 5.41, baseHz * 5.3, dur * 0.42, gain * 0.16, 'sine', 0, dest);
   }
 
   /* =====================================================================
@@ -568,7 +735,7 @@ SM.sound = (function () {
     // Kick on the downbeats from level 2.
     if (lvl >= 2 && (s === 0 || s === 8 || (lvl >= 4 && s === 6))) {
       tone(105, 40, 0.20, 0.42, 'sine', 0, rhythmBus);
-      noiseBurst(0.05, 140, 0.7, 0.18, 'lowpass');
+      noiseBurst(0.05, 140, 0.7, 0.18, 'lowpass', 0, rhythmBus);
     }
     // Industrial hat / shaker from level 3.
     if (lvl >= 3 && (s & 1) === 0) {
@@ -596,7 +763,7 @@ SM.sound = (function () {
         tone(147, 147, 0.16, 0.24, 'sawtooth', 0, rhythmBus);
         tone(73.5, 73.5, 0.20, 0.20, 'square', 0, rhythmBus);
       }
-      if (s === 14) clank(320, 0.16, 0.14);
+      if (s === 14) clank(320, 0.16, 0.14, rhythmBus);
     }
   }
 
@@ -891,6 +1058,14 @@ SM.sound = (function () {
     setMuted: setMuted,
     toggleMute: toggleMute,
     isMuted: isMuted,
+    /* The two sliders. Read as 0..1; the menu does its own 0..100 arithmetic,
+     * because a percentage is a presentation decision and this module has no
+     * other opinion about it. */
+    getMusicVolume: function () { return musicVol; },
+    setMusicVolume: setMusicVolume,
+    getSfxVolume: function () { return sfxVol; },
+    setSfxVolume: setSfxVolume,
+    preview: preview,
     reset: reset,
     isReady: function () { return unlocked && !!actx; },
     /** Introspection: the ducked bus levels, so "the beds actually stop" is a

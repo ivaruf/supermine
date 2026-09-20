@@ -361,7 +361,18 @@ SM.effects.getCount()
 SM.sound.init() / update(dt) / reset()
 SM.sound.play(name)   // 'break' 'hit' 'collect' 'impact' 'gate' 'upgrade'
 SM.sound.setMuted(b) / toggleMute() / isMuted()
+
+// Two persisted attenuators under the existing master, 0..1 each.
+// MUSIC is the rhythm grid; MACHINERY is everything the pit makes while
+// working — engine, grinder, one-shots, the loot ladder, the UI blips.
+SM.sound.getMusicVolume() / setMusicVolume(v)
+SM.sound.getSfxVolume()   / setSfxVolume(v)
+SM.sound.preview('music' | 'machinery')   // audition one bus while dragging
 ```
+
+Stored as `supermine.vol.music.v1` and `supermine.vol.sfx.v1`. The mute is
+still session-only and always has been — there is no persisted mute key, so
+there was nothing to migrate when the sliders arrived.
 
 ### `SM.ui` *(Agent 3)*
 

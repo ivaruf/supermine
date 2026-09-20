@@ -98,7 +98,7 @@ SM.ui = (function () {
   /* The build stamp shown on the menu. It lives HERE rather than in
    * config.js because config.js is frozen, and ui.js is the only module that
    * ever displays it. Bump it by hand when the game meaningfully changes. */
-  var GAME_VERSION    = 'v1.9.1';
+  var GAME_VERSION    = 'v1.9.7';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -251,6 +251,17 @@ SM.ui = (function () {
     sound_off: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
                '<path d="m16.2 9.6 5.2 4.8M21.4 9.6l-5.2 4.8"/>',
 
+    // Filling the screen, and leaving it: four corners pushing out, and the
+    // same four pulled in. Drawn on this set's own grid rather than lifted
+    // from another game — same idea, same weight as the pit furniture round
+    // it. The pressed state swaps the glyph, exactly as the speaker does,
+    // because colour alone is not a state.
+    expand: '<path d="M9.4 3.6H3.6v5.8M14.6 3.6h5.8v5.8"/>' +
+            '<path d="M3.6 14.6v5.8h5.8M20.4 14.6v5.8h-5.8"/>',
+
+    contract: '<path d="M3.6 9.4h5.8V3.6M20.4 9.4h-5.8V3.6"/>' +
+              '<path d="M9.4 14.6H3.6v5.8M14.6 20.4v-5.8h5.8"/>',
+
     // Steering pads. A double chevron, because one chevron on a transparent
     // full-height slab reads as decoration and two read as a control.
     steer_left:  '<path d="M13.4 5.4 6.9 12l6.5 6.6"/><path d="M19.2 5.4 12.7 12l6.5 6.6"/>',
@@ -288,6 +299,7 @@ SM.ui = (function () {
   var zoneName = '';
   var summaryOpen = false;
   var pauseOpen = false;
+  var soundOpen = false;         // the mixing panel, behind the corner speaker
   var started = false;
   var hudSmall = false;          // compact or portrait — set by applyCompact()
 
@@ -899,6 +911,85 @@ SM.ui = (function () {
       });
     }
 
+    /* --- the corner cluster, top right of the menu -------------------------
+     * The door is in the top-LEFT of this screen (the ArcadeExit plate above);
+     * the two things that are about the hardware rather than the game get the
+     * opposite corner. Neither is a setting of the mine, and at 42px a symbol
+     * survives in a corner where a word would have to be shrunk until nobody
+     * read it.
+     *
+     * IT BELONGS TO THE MENU, and it is gone the moment a run starts. That is
+     * deliberate and it is forced: mid-run the top of the screen is the
+     * full-width score strip with the speaker and the PAUSE plate pinned under
+     * its right end, and two clusters cannot have one corner. So this one
+     * hangs off the start overlay itself and leaves with it — volume is set
+     * once, before you drive, and the HUD speaker still kills the sound
+     * instantly from inside a run.
+     *
+     * The speaker here is NOT the HUD's mute button and carries no slash: it
+     * opens the panel below. Art carries the meaning, so both plates get a
+     * real title and aria-label, and the screen toggle rewrites its own as the
+     * state changes — see refreshScreenToggle().
+     *
+     * Safe areas need no maths: #ui-root already pads itself by all four
+     * insets and .sm-start fills that padding box, so "the corner" is already
+     * clear of a notch. */
+    els.corner = el('div', 'sm-corner', els.start);
+    els.mixBtn = iconButton(els.corner, 'sm-btn-mix', UI_ICONS.sound_on, 'Sound');
+    els.mixBtn.setAttribute('aria-expanded', 'false');
+    els.mixBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      els.mixBtn.blur();
+      openSound();
+    });
+
+    /* Hidden in the markup this builds, and un-hidden by initScreenToggle()
+     * only once a WORKING request/exit pair has answered. Safari on iPhone has
+     * no element fullscreen at all, and a plate that does nothing when pressed
+     * is worse than no plate. */
+    els.screen = iconButton(els.corner, 'sm-btn-screen', UI_ICONS.expand, 'Fullscreen');
+    els.screen.setAttribute('aria-pressed', 'false');
+    els.screen.hidden = true;
+
+    /* --- THE SOUND PANEL --------------------------------------------------
+     * Two levels and a way back, on the mine's own plate. It is a sibling of
+     * the start overlay rather than a child of it so it can paint over the
+     * top (z 22 against 20) instead of being clipped inside the panel that
+     * opened it.
+     *
+     * DELIBERATELY SILENT TO OPEN AND TO CLOSE, like the quit plate beside it
+     * and for a second reason as well: play() rate-limits on a clock that only
+     * advances inside main.js's fixed step, and the fixed step is held while
+     * the menu is up — so a 'ui' blip here would sound exactly once per
+     * session and then stop, which is worse than never. The sliders make their
+     * own noise through SM.sound.preview(), which throttles on wall time
+     * instead and is the only thing on this screen that has to be heard. */
+    els.soundPanel = el('div', 'sm-sound', root);
+    var scard = el('div', 'sm-panel sm-sound-card', els.soundPanel);
+    el('div', 'sm-stripe', scard);
+    el('div', 'sm-sound-kicker', scard, 'CAB SPEAKERS');
+    el('div', 'sm-sound-title', scard, 'SOUND');
+
+    // MACHINERY, not "effects": the row is named for what it governs, which
+    // in this game is the engine, the grinder and every deposit you crack.
+    els.volMusic = volumeRow(scard, 'sm-vol-music', 'MUSIC');
+    els.volSfx = volumeRow(scard, 'sm-vol-machinery', 'MACHINERY');
+
+    el('div', 'sm-sound-hint', scard,
+      'MUSIC IS THE BEAT THAT THICKENS AS THE SEAMS GET RICHER. ' +
+      'MACHINERY IS THE ENGINE, THE GRINDER AND EVERY DEPOSIT YOU CRACK. ' +
+      'DRAG EITHER ONE AND YOU WILL HEAR IT.');
+
+    els.soundBack = el('button', 'sm-btn sm-sound-back', scard, 'BACK TO THE PIT HEAD');
+    els.soundBack.setAttribute('type', 'button');
+    els.soundBack.addEventListener('click', function (e) {
+      e.preventDefault();
+      els.soundBack.blur();
+      closeSound();
+    });
+
+    paintVolumes();
+
     /* --- hint + debug ------------------------------------------------------ */
     // The menu owns the whole screen until a mode is picked. Without this the
     // in-game hint line sits at the bottom centre repeating the menu's own key
@@ -934,6 +1025,193 @@ SM.ui = (function () {
     ico.innerHTML = uiGlyph(icon);
     el('span', 'sm-pause-label', b, label);
     return b;
+  }
+
+  /* =====================================================================
+   * THE TWO VOLUMES
+   * ---------------------------------------------------------------------
+   * One label, one range, one readout, and the label carries the gutter so
+   * both rows start their slider at the same x (hub CLAUDE.md §2). A real
+   * <input type="range"> rather than a hand-rolled track: it arrives with
+   * keyboard support, the right ARIA role and a live value announcement, and
+   * looking like the mine is a job for CSS, not for reinventing a control.
+   * ================================================================== */
+  function volumeRow(parent, id, label) {
+    var row = el('div', 'sm-sound-row', parent);
+
+    var lab = el('label', 'sm-sound-label', row, label);
+    lab.setAttribute('for', id);
+
+    var input = el('input', 'sm-sound-range', row);
+    input.id = id;
+    input.setAttribute('type', 'range');
+    input.setAttribute('min', '0');
+    input.setAttribute('max', '100');
+    input.setAttribute('step', '1');
+
+    /* THE SAME INTEGRATION HAZARD THE NAME FIELD HAS, for the same reason.
+       input.js is frozen and listens for keydown on WINDOW in the bubble
+       phase, where ArrowLeft/ArrowRight steer and 'm' mutes. A focused slider
+       is nudged with exactly those arrows, so without this a player setting
+       MACHINERY by keyboard would also be sawing the wheel left and right.
+       Stopping propagation here keeps the key: we never preventDefault, so
+       the range still moves. */
+    input.addEventListener('keydown', function (e) { e.stopPropagation(); });
+    input.addEventListener('keyup', function (e) { e.stopPropagation(); });
+
+    var out = el('output', 'sm-sound-out', row, '100');
+    out.setAttribute('for', id);
+
+    return { input: input, out: out };
+  }
+
+  /** The only writer for one row: the drag below and paintVolumes() both come
+   *  through here, so the thumb, the number and the gauge fill cannot drift. */
+  function paintVolume(pair, pct) {
+    if (!pair) return;
+    pct = Math.round(pct);
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    var s = '' + pct;
+    if (pair.input.value !== s) pair.input.value = s;
+    if (pair.out.textContent !== s) pair.out.textContent = s;
+    // The filled part of the track is a gradient stop, so the slider reads as
+    // one more gauge on this HUD rather than as an OS control. Set on drag and
+    // on open only — this is not a per-frame write.
+    pair.input.style.setProperty('--sm-fill', pct + '%');
+  }
+
+  /** Pull both rows from the sound module. Feature-detected like every other
+   *  cross-module call in this file: on a partial merge the panel still opens
+   *  and still reads 100/100 rather than throwing on the way up. */
+  function paintVolumes() {
+    if (SM.sound && SM.sound.getMusicVolume) {
+      paintVolume(els.volMusic, SM.sound.getMusicVolume() * 100);
+    }
+    if (SM.sound && SM.sound.getSfxVolume) {
+      paintVolume(els.volSfx, SM.sound.getSfxVolume() * 100);
+    }
+  }
+
+  /* Volume is only ever wired on "input", never on "change": a level you
+   * cannot hear until you let go of the thumb is not a volume control. Each
+   * tick writes the level (sound.js persists it) and auditions the bus it just
+   * moved — which is the whole point on this screen, where neither bus is
+   * making a sound of its own. */
+  function wireVolume(pair, apply, bus) {
+    if (!pair) return;
+    pair.input.addEventListener('input', function () {
+      var pct = Number(pair.input.value);
+      if (!isFinite(pct)) pct = 0;
+      paintVolume(pair, pct);
+      if (apply) apply(pct / 100);
+      if (SM.sound.preview) SM.sound.preview(bus);
+    });
+  }
+
+  function openSound() {
+    if (!els.soundPanel || soundOpen) return;
+    soundOpen = true;
+    // The panel is built once and reopened many times, so it repaints from the
+    // module on the way up rather than trusting whatever the DOM was last left
+    // showing: the thumb can then never be sitting at a level the graph is not
+    // actually at.
+    paintVolumes();
+    els.soundPanel.classList.add('sm-sound-on');
+    if (els.mixBtn) els.mixBtn.setAttribute('aria-expanded', 'true');
+    // Put focus inside the thing that just appeared rather than leaving it on
+    // a button behind a scrim.
+    try { els.soundBack.focus(); } catch (e) { /* focus is optional */ }
+  }
+
+  function closeSound() {
+    if (!els.soundPanel || !soundOpen) return;
+    soundOpen = false;
+    els.soundPanel.classList.remove('sm-sound-on');
+    if (els.mixBtn) {
+      els.mixBtn.setAttribute('aria-expanded', 'false');
+      // Hand focus back to the plate that opened it, or a keyboard player is
+      // dropped on the body with nothing selected.
+      try { els.mixBtn.focus(); } catch (e) { /* focus is optional */ }
+    }
+  }
+
+  /* =====================================================================
+   * FILLING THE SCREEN
+   * ---------------------------------------------------------------------
+   * The second plate in the corner cluster. It lives in THIS file rather
+   * than a js/screen.js of its own for the reason index.html states at the
+   * top: that file is frozen, every script tag in it is accounted for, and
+   * ui.js is already the module that builds every control in the game. What
+   * it must NOT be called is the obvious name — uBlock Origin's default
+   * lists ban that basename across the whole of github.io, and this hub
+   * shares one origin, so a file named for the API would be blocked for
+   * every player running a blocker whether or not it was aimed at us.
+   *
+   * SUPPORT IS NOT UNIVERSAL. Safari on iPhone has no element fullscreen at
+   * all; the plate therefore starts hidden and is only revealed once a
+   * working request/exit PAIR has answered here. A shrunk cluster is a fine
+   * outcome. A button that does nothing is not.
+   *
+   * Escape and the browser's own chrome leave without ever touching this
+   * plate, so the glyph and aria-pressed are repainted from the change event
+   * rather than only from the click handler.
+   *
+   * It works inside the arcade's iframe: the launcher's allow list already
+   * grants fullscreen to every game it frames.
+   * ================================================================== */
+  var screenRequest = null;
+  var screenExit = null;
+
+  function screenFilled() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  function refreshScreenToggle() {
+    if (!els.screen) return;
+    var on = screenFilled();
+    // Plain words, and deliberately not the mine's own vocabulary. This is
+    // something the browser does, not something the game does; it has one
+    // name everywhere and the player already knows it.
+    var label = on ? 'Exit fullscreen' : 'Fullscreen';
+    els.screen.innerHTML = uiGlyph(on ? UI_ICONS.contract : UI_ICONS.expand);
+    els.screen.setAttribute('aria-pressed', on ? 'true' : 'false');
+    els.screen.setAttribute('aria-label', label);
+    els.screen.setAttribute('title', label);
+  }
+
+  function toggleScreen() {
+    if (!screenRequest || !screenExit) return;
+    var r;
+    try {
+      r = screenFilled() ? screenExit.call(document)
+                         : screenRequest.call(document.documentElement);
+    } catch (e) {
+      return;                      // an older synchronous implementation threw
+    }
+    /* Either call returns a promise that can reject — a permissions policy
+       refusing it, or the player backing out of the browser's own prompt.
+       refreshScreenToggle() via the change event already covers what actually
+       happened, so this exists only to stop a refusal surfacing as an
+       unhandled rejection. */
+    if (r && typeof r.catch === 'function') r.catch(function () {});
+  }
+
+  function initScreenToggle() {
+    var docEl = document.documentElement;
+    screenRequest = docEl.requestFullscreen || docEl.webkitRequestFullscreen || null;
+    screenExit = document.exitFullscreen || document.webkitExitFullscreen || null;
+    if (!els.screen || !screenRequest || !screenExit) return;   // stays hidden
+
+    els.screen.hidden = false;
+    refreshScreenToggle();
+    els.screen.addEventListener('click', function (e) {
+      e.preventDefault();
+      els.screen.blur();
+      toggleScreen();
+    });
+    document.addEventListener('fullscreenchange', refreshScreenToggle, false);
+    document.addEventListener('webkitfullscreenchange', refreshScreenToggle, false);
   }
 
   /* =====================================================================
@@ -1168,6 +1446,15 @@ SM.ui = (function () {
   function onKeyDown(e) {
     if (!e) return;
     var k = e.key;
+    /* The sound panel comes first and takes Escape outright. It opens from the
+       menu, where a pause is refused anyway, so without this the key would
+       find no handler and leave the panel up with no obvious way down for
+       anyone not using the mouse. */
+    if (soundOpen && (k === 'Escape' || k === 'Esc')) {
+      e.preventDefault();
+      closeSound();
+      return;
+    }
     if (k === 'Escape' || k === 'Esc' || k === 'p' || k === 'P') {
       if (!canPause() && !pauseOpen) return;
       e.preventDefault();
@@ -1787,6 +2074,10 @@ SM.ui = (function () {
   function onFirstGesture() {
     if (started) return;
     started = true;
+    // The corner cluster leaves with the overlay it hangs off, but the sound
+    // panel is the overlay's sibling and would otherwise stay up over a run
+    // that had just started underneath it.
+    closeSound();
     if (root) root.classList.remove('sm-menu');
     if (els.start) els.start.classList.add('sm-start-off');
     if (els.hint) els.hint.classList.add('sm-hint-fade');
@@ -1877,6 +2168,16 @@ SM.ui = (function () {
      * after reset had already re-armed the overlay. */
     if (els.modeTime) els.modeTime.addEventListener('click', function (e) { startRun(e, 'time'); });
     if (els.modeFree) els.modeFree.addEventListener('click', function (e) { startRun(e, 'freestyle'); });
+
+    // The two sliders, and the plate that may or may not be able to exist.
+    wireVolume(els.volMusic, function (v) {
+      if (SM.sound.setMusicVolume) SM.sound.setMusicVolume(v);
+    }, 'music');
+    wireVolume(els.volSfx, function (v) {
+      if (SM.sound.setSfxVolume) SM.sound.setSfxVolume(v);
+    }, 'machinery');
+    initScreenToggle();
+
     refreshMute();
     initPWA();
   }

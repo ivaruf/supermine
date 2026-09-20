@@ -1827,6 +1827,234 @@ html, body {
 }
 .sm-start-quit:disabled { color: var(--sm-dimmer); border-color: var(--sm-border); }
 
+/* ===========================================================================
+ * THE CORNER CLUSTER — top right of the menu, opposite the door
+ * ---------------------------------------------------------------------------
+ * Two plates: the speaker that opens the sound panel, and the one that fills
+ * the screen. They are the same gold-on-dark plate with the same hazard sliver
+ * as the in-game pair, because they are the same kind of object — this is what
+ * keeps a 42px button from reading as generic mobile chrome.
+ *
+ * Pinned to the OVERLAY, not the panel, for the reason .sm-start-quit is: the
+ * panel in the middle scrolls on a short phone, and neither the way out nor
+ * the way to the volume should be able to scroll away.
+ *
+ * Mirrors the quit plate's insets exactly, so the two corners sit on one line
+ * and clear the same notch. (#ui-root already pads by the safe area; the
+ * max() is belt and braces for a browser that reports an inset larger than the
+ * padding box can absorb.)
+ * ======================================================================== */
+.sm-corner {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  right: max(14px, env(safe-area-inset-right, 0px));
+  display: flex;
+  gap: 8px;
+}
+/* THE `hidden` ATTRIBUTE HAS TO WIN HERE, and on its own it does not: the UA
+   sheet's `[hidden] { display: none }` is a type-less rule and .sm-iconbtn
+   sets `display: flex`, which outranks it. Without this the screen plate would
+   be visible on an iPhone — the one browser the attribute exists to hide it
+   from — and pressing it would do nothing at all. */
+.sm-corner .sm-iconbtn[hidden] { display: none; }
+
+/* ===========================================================================
+ * THE SOUND PANEL — two levels and a way back
+ * ---------------------------------------------------------------------------
+ * Above the start overlay (20) because it opens from it, and below nothing:
+ * while it is up it is the only thing on screen.
+ * ======================================================================== */
+.sm-sound {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(4,6,9,0.62), rgba(2,3,5,0.94));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  z-index: 22;
+}
+.sm-sound-on { opacity: 1; pointer-events: auto; }
+
+.sm-sound-card {
+  width: min(400px, 90vw);
+  padding: 22px 22px 20px;
+  text-align: left;
+  /* A safety net on a very short viewport, not a plan — the landscape block
+     at the bottom of this section is the plan. .sm-panel clips by default;
+     this has to override it or the net is not there at all. */
+  max-height: 92vh;
+  overflow: auto;
+  transform: translateY(14px) scale(0.97);
+  transition: transform 0.3s cubic-bezier(0.16, 1.5, 0.35, 1);
+}
+.sm-sound-on .sm-sound-card { transform: none; }
+
+.sm-sound-kicker {
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 5px;
+  text-indent: 5px;
+  color: var(--sm-dimmer);
+}
+.sm-sound-title {
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 6px;
+  text-indent: 6px;
+  line-height: 1.1;
+  margin-bottom: 10px;
+  color: #fff;
+  text-shadow: 0 0 26px rgba(255, 194, 31, 0.4), 0 3px 0 rgba(0, 0, 0, 0.6);
+}
+
+.sm-sound-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+/* ONE GUTTER FOR BOTH ROWS, so MUSIC and MACHINERY start their track at the
+   same x (hub CLAUDE.md §2). 92px is MACHINERY's own width at this size and
+   tracking — the longer of the two names sets it, and the shorter one simply
+   has room. */
+.sm-sound-label {
+  flex: 0 0 92px;
+  font-family: var(--sm-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--sm-dim);
+}
+/* `1 1 0` and not `1 1 auto`: from a zero basis the two tracks are identical
+   whatever their labels say, which is the point — these are two equals. */
+.sm-sound-range {
+  flex: 1 1 0;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 44px;              /* the touch box; the visible gauge is the track */
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  /* Vertical pans still scroll the card on a short screen; horizontal is ours,
+     which is what makes the thumb draggable with a finger. */
+  touch-action: pan-y;
+}
+.sm-sound-out {
+  flex: 0 0 38px;
+  text-align: right;
+  font-family: var(--sm-mono);
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--sm-gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 10px rgba(255, 194, 31, 0.45);
+}
+
+/* --- the gauge ---------------------------------------------------------
+ * A bare range input is an OS control and belongs to no game. This one is the
+ * same cut channel with the same amber fill as the clock bar and the two
+ * meters, and the thumb is a machined lever plate with the panels' own bevel.
+ * --sm-fill is written by ui.js on drag and on open; the 100% fallback is
+ * what a browser that never runs that code still shows.
+ * Both vendor pseudo-elements are spelled out — there is no shared selector,
+ * and a rule listing both is dropped by both.
+ * ---------------------------------------------------------------------- */
+.sm-sound-range::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 2px;
+  background:
+    linear-gradient(90deg, var(--sm-gold-hot), var(--sm-gold))
+      0 0 / var(--sm-fill, 100%) 100% no-repeat,
+    #0a0705;
+  /* The amber rim is an inset ring rather than a border, so the track is
+     exactly 10px tall whatever the UA thinks box-sizing means on a vendor
+     pseudo-element — which is what makes the thumb's margin-top below an exact
+     number instead of an approximation. */
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 194, 31, 0.30),
+    inset 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+.sm-sound-range::-moz-range-track {
+  height: 10px;
+  border-radius: 2px;
+  background: #0a0705;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 194, 31, 0.30),
+    inset 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+/* Firefox fills the track itself, so it needs no --sm-fill. */
+.sm-sound-range::-moz-range-progress {
+  height: 10px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--sm-gold-hot), var(--sm-gold));
+}
+.sm-sound-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 26px;
+  margin-top: -8px;          /* (track 10 - thumb 26) / 2 */
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: linear-gradient(180deg, #5a636f 0%, #262a32 46%, #14171c 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.75),
+    0 3px 8px rgba(0, 0, 0, 0.65);
+}
+.sm-sound-range::-moz-range-thumb {
+  width: 16px;
+  height: 26px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  background: linear-gradient(180deg, #5a636f 0%, #262a32 46%, #14171c 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.75),
+    0 3px 8px rgba(0, 0, 0, 0.65);
+}
+.sm-sound-range:focus-visible {
+  outline: 2px solid var(--sm-cyan);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.sm-sound-hint {
+  margin-top: 14px;
+  font-family: var(--sm-mono);
+  font-size: 9.5px;
+  line-height: 1.7;
+  letter-spacing: 1.2px;
+  color: var(--sm-dimmer);
+}
+.sm-sound-back {
+  width: 100%;
+  margin-top: 16px;
+  min-height: 46px;
+}
+
+/* A MENU MUST NOT SCROLL ON A PHONE ON ITS SIDE (hub CLAUDE.md §2). This card
+   is short enough that it needs no re-columning — buying back the last thirty
+   pixels from the furniture is the whole fix. The kicker and the hint are the
+   two things here that are flavour rather than control, so they are what goes,
+   exactly as .sm-mode-blurb does on the picker above. Control heights stop at
+   38: this fires on a phone, where a finger is still the pointer. */
+@media (max-height: 560px) {
+  .sm-sound-card { padding: 14px 16px 14px; }
+  .sm-sound-kicker { display: none; }
+  .sm-sound-title { font-size: 22px; letter-spacing: 4px; text-indent: 4px; margin-bottom: 4px; }
+  .sm-sound-row { margin-top: 8px; }
+  .sm-sound-range { height: 38px; }
+  .sm-sound-hint { display: none; }
+  .sm-sound-back { margin-top: 12px; min-height: 40px; }
+}
+
 /* Freestyle: no countdown panel at all. The centred column closes the gap by
    itself — that is the whole reason it is a flex column. */
 .sm-notimer .sm-clockwrap { display: none; }
@@ -2067,6 +2295,10 @@ html, body {
 .sm-tiny .sm-hs-row { grid-template-columns: 18px 1fr auto; }
 .sm-tiny .sm-hs-form { flex-direction: column; }
 .sm-tiny .sm-hs-save { width: 100%; }
+/* Under 420px the gutter is eating the gauge rather than lining it up, so it
+   tightens — both rows still share it, which is the only thing it is for. */
+.sm-tiny .sm-sound-label { flex-basis: 78px; letter-spacing: 1.2px; }
+.sm-tiny .sm-sound-row { gap: 9px; }
 
 /* Users who ask for less motion get the information, not the theatre. */
 @media (prefers-reduced-motion: reduce) {
