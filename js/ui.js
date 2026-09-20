@@ -668,7 +668,7 @@ SM.ui = (function () {
         pcard,
         'sm-btn-quit',
         UI_ICONS.surface,
-        window.ArcadeExit.verb({ arcade: 'BACK TO ARCADE', app: 'SHUT DOWN', tab: 'SHUT DOWN' }),
+        window.ArcadeExit.verb({ arcade: 'BACK TO ARCADE', app: 'CLOSE', tab: 'CLOSE' }),
       );
       els.pauseQuit.addEventListener('click', function (e) {
         e.preventDefault();
@@ -894,8 +894,8 @@ SM.ui = (function () {
       els.menuQuit = el('button', 'sm-btn sm-start-quit', els.start,
         window.ArcadeExit.verb({
           arcade: 'BACK TO ARCADE',
-          app: 'SHUT DOWN',
-          tab: 'SHUT DOWN',
+          app: 'CLOSE',
+          tab: 'CLOSE',
         }));
       els.menuQuit.setAttribute('type', 'button');
       els.menuQuit.addEventListener('click', function (e) {
@@ -980,7 +980,7 @@ SM.ui = (function () {
       'MACHINERY IS THE ENGINE, THE GRINDER AND EVERY DEPOSIT YOU CRACK. ' +
       'DRAG EITHER ONE AND YOU WILL HEAR IT.');
 
-    els.soundBack = el('button', 'sm-btn sm-sound-back', scard, 'BACK TO THE PIT HEAD');
+    els.soundBack = el('button', 'sm-btn sm-sound-back', scard, 'BACK');
     els.soundBack.setAttribute('type', 'button');
     els.soundBack.addEventListener('click', function (e) {
       e.preventDefault();
