@@ -149,7 +149,7 @@
 //         here could refresh), and its cleanup filter was deleting SUPERMINE
 //         ADVENTURE's offline install, because that game's prefix starts with
 //         ours. Both scoped properly now.
-const VERSION = 'v1.10.0'; // the corner plates are fixed to the page, and we serve only our own cache
+const VERSION = 'v1.10.1'; // the exit-fullscreen glyph is symmetric again — its bottom-left arm pointed the wrong way
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.

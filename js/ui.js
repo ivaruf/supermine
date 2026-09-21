@@ -263,7 +263,7 @@ SM.ui = (function () {
             '<path d="M3.6 14.6v5.8h5.8M20.4 14.6v5.8h-5.8"/>',
 
     contract: '<path d="M3.6 9.4h5.8V3.6M20.4 9.4h-5.8V3.6"/>' +
-              '<path d="M9.4 14.6H3.6v5.8M14.6 20.4v-5.8h5.8"/>',
+              '<path d="M3.6 14.6h5.8v5.8M20.4 14.6h-5.8v5.8"/>',
 
     // Steering pads. A double chevron, because one chevron on a transparent
     // full-height slab reads as decoration and two read as a control.
