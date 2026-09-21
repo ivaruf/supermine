@@ -97,8 +97,11 @@ SM.ui = (function () {
 
   /* The build stamp shown on the menu. It lives HERE rather than in
    * config.js because config.js is frozen, and ui.js is the only module that
-   * ever displays it. Bump it by hand when the game meaningfully changes. */
-  var GAME_VERSION    = 'v1.9.7';
+   * ever displays it. Bump it by hand when the game meaningfully changes, and
+   * KEEP IT IN STEP WITH sw.js's VERSION — it had drifted two releases behind,
+   * which only ever shows on a first-visit load where nobody can check it
+   * against anything, so a wrong number there is worse than none. */
+  var GAME_VERSION    = 'v1.10.0';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -505,6 +508,30 @@ SM.ui = (function () {
     return score > list[list.length - 1].score;
   }
 
+  /**
+   * WHETHER TO DRAW A WAY OUT AT ALL, which is not the same question as
+   * whether quit() could do something. In a plain tab it could — the arcade is
+   * a URL and a navigation always works — but somebody who typed this game's
+   * address, or followed a link to it, did not come from the arcade and may
+   * never have heard of it. So: a launcher behind us, or an installed window
+   * that can genuinely close its own window.
+   *
+   * ASKED THROUGH framed()/standalone() AND NOT THROUGH offers(), even though
+   * offers() exists in exit.js and says exactly this. exit.js is ANOTHER
+   * REPOSITORY'S FILE and the copy that answers may be older than this line:
+   * it is fetched from /arcade/, and a service worker on this shared origin
+   * can hand back a version cached long before offers() was written. A guard
+   * built on the new name fails CLOSED when that happens — the way out simply
+   * disappears, inside the arcade, where it is the one control that matters.
+   * These two predicates have been in exit.js since the file existed.
+   */
+  function exitOffered() {
+    var x = window.ArcadeExit;
+    if (!x || !x.framed || !x.standalone) return false;
+    try { return !!(x.framed() || x.standalone()); }
+    catch (e) { return false; }   // a cross-origin parent is not a crash
+  }
+
   /* =====================================================================
    * BUILD
    * ================================================================== */
@@ -662,8 +689,10 @@ SM.ui = (function () {
      * repo's file and it is allowed to be missing, and a quit button that
      * cannot quit is worse than no quit button. What it SAYS depends on how
      * this page was opened, because a button must not promise to close a tab
-     * that no script is allowed to close. */
-    if (window.ArcadeExit) {
+     * that no script is allowed to close. And only when there is somewhere to
+     * go BACK to — see exitOffered(), which is why this is not simply
+     * `if (window.ArcadeExit)`. */
+    if (exitOffered()) {
       els.pauseQuit = menuButton(
         pcard,
         'sm-btn-quit',
@@ -877,10 +906,11 @@ SM.ui = (function () {
      * game that never heard of exit.js, not for one that loads it and then
      * hides the way out behind starting a run.
      *
-     * Built only when the arcade's exit.js actually loaded: it is another
-     * repo's file and is allowed to be missing, and a quit button that cannot
-     * quit is worse than none. What it SAYS is exit.js's answer, because a
-     * button must not promise to close a tab no script is allowed to close.
+     * Built only when there is somewhere to go back TO — exitOffered(), not a
+     * bare `window.ArcadeExit`: exit.js is another repo's file and is allowed
+     * to be missing, and a player who typed this address never came from the
+     * arcade and should not be offered it. What it SAYS is exit.js's answer,
+     * because a button must not promise to close a tab no script may close.
      *
      * DELIBERATELY SILENT, unlike its twin on the pause card. This is the one
      * screen where audio has not been unlocked yet — the mode cards are the
@@ -890,7 +920,7 @@ SM.ui = (function () {
      * It hangs off the OVERLAY, not the panel, for the same reason the build
      * stamp does: the panel scrolls on a short phone and a door must not
      * scroll away. */
-    if (window.ArcadeExit) {
+    if (exitOffered()) {
       els.menuQuit = el('button', 'sm-btn sm-start-quit', els.start,
         window.ArcadeExit.verb({
           arcade: 'BACK TO ARCADE',
@@ -911,36 +941,51 @@ SM.ui = (function () {
       });
     }
 
-    /* --- the corner cluster, top right of the menu -------------------------
-     * The door is in the top-LEFT of this screen (the ArcadeExit plate above);
-     * the two things that are about the hardware rather than the game get the
-     * opposite corner. Neither is a setting of the mine, and at 42px a symbol
-     * survives in a corner where a word would have to be shrunk until nobody
-     * read it.
+    /* --- THE CORNER CLUSTER — PERMANENT CHROME, NOT A MENU ORNAMENT --------
+     * The two things here that are about the HARDWARE rather than about the
+     * mine: the speaker that opens the sound panel, and the plate that fills
+     * the screen. At 42px a symbol survives in a corner where a word would
+     * have to be shrunk until nobody read it.
      *
-     * IT BELONGS TO THE MENU, and it is gone the moment a run starts. That is
-     * deliberate and it is forced: mid-run the top of the screen is the
-     * full-width score strip with the speaker and the PAUSE plate pinned under
-     * its right end, and two clusters cannot have one corner. So this one
-     * hangs off the start overlay itself and leaves with it — volume is set
-     * once, before you drive, and the HUD speaker still kills the sound
-     * instantly from inside a run.
+     * IT USED TO BELONG TO THE MENU, hanging off the start overlay and leaving
+     * with it — which meant fullscreen was unreachable from the moment you
+     * started driving, on the one screen where filling the glass matters most.
+     * A control that goes away when the screen changes is not a corner; it is
+     * a menu item that happens to sit in one. So it is a CHILD OF #ui-root
+     * now, `position: fixed`, above both the menu (z 20) and the HUD (z 8) —
+     * same two plates, same place, on the menu, mid-run, over the pause card
+     * and over the end-of-run summary.
+     *
+     * WHERE IT SITS, and why it is not the very top corner. Mid-run the top of
+     * the screen is the full-width score strip, gutter to gutter, and a plate
+     * over its right end would be a plate over the deck. So the cluster takes
+     * the row BELOW the strip — the row the run's own two plates were already
+     * on — and those move inboard to make room. Reading in from the right edge
+     * it is: fullscreen, sound, pause, mute. The page's pair outermost, always
+     * there; the run's pair inside them, only while a run is going. (maxgear
+     * reads fullscreen, sound, mute, pause; this game keeps its existing
+     * mute-then-pause DOM order, which puts a plate between the two speaker
+     * glyphs instead of side by side — no bad thing.)
      *
      * The speaker here is NOT the HUD's mute button and carries no slash: it
      * opens the panel below. Art carries the meaning, so both plates get a
      * real title and aria-label, and the screen toggle rewrites its own as the
      * state changes — see refreshScreenToggle().
      *
-     * Safe areas need no maths: #ui-root already pads itself by all four
-     * insets and .sm-start fills that padding box, so "the corner" is already
-     * clear of a notch. */
-    els.corner = el('div', 'sm-corner', els.start);
+     * It is fixed to the VIEWPORT now rather than to #ui-root's padding box,
+     * so the safe-area insets it used to inherit are added back by hand in
+     * .sm-corner — see the stylesheet. */
+    els.corner = el('div', 'sm-corner', root);
     els.mixBtn = iconButton(els.corner, 'sm-btn-mix', UI_ICONS.sound_on, 'Sound');
     els.mixBtn.setAttribute('aria-expanded', 'false');
     els.mixBtn.addEventListener('click', function (e) {
       e.preventDefault();
       els.mixBtn.blur();
-      openSound();
+      /* A TOGGLE, because the plate now paints ABOVE the panel it opens. It
+       * used to disappear under the sound panel's scrim, so "press it again"
+       * was not a gesture that existed; now it is the obvious one, and
+       * aria-expanded has been claiming it all along. */
+      if (soundOpen) closeSound(); else openSound();
     });
 
     /* Hidden in the markup this builds, and un-hidden by initScreenToggle()
@@ -1113,8 +1158,32 @@ SM.ui = (function () {
     });
   }
 
+  /**
+   * The mixing panel.
+   *
+   * NO STATE GUARD, and that is the point of this release. The speaker used to
+   * exist only on the menu, so "where can this be opened from" never had to be
+   * asked; now the plate is on every screen and mid-run, and a guard that let
+   * it fire from one of them would turn it into a button that silently does
+   * nothing everywhere else — which is worse than not being there at all.
+   *
+   * WHERE "BACK" GOES NEEDS NO BOOKKEEPING HERE. The panel is an overlay with
+   * its own scrim, not a screen in a state machine, so closing it reveals
+   * whatever it was opened over, by construction. The one thing that does have
+   * to be arranged is the state UNDERNEATH it:
+   *
+   * MID-RUN THE MINE STOPS. Opening a panel over a live run would leave the
+   * rig driving into rock behind the scrim, and closing it would drop the
+   * player straight back into a game they have not been watching. So a run is
+   * PAUSED on the way in and stays paused on the way out: closeSound() reveals
+   * the pause card, which is the honest landing, and RESUME is one tap. The
+   * menu and the end-of-run summary need none of this — canPause() already
+   * says so — and openPause() is idempotent, so a player who presses the
+   * speaker from the pause card is not paused twice.
+   */
   function openSound() {
     if (!els.soundPanel || soundOpen) return;
+    if (canPause() && !pauseOpen) openPause();
     soundOpen = true;
     // The panel is built once and reopened many times, so it repaints from the
     // module on the way up rather than trusting whatever the DOM was last left
@@ -1128,6 +1197,12 @@ SM.ui = (function () {
     try { els.soundBack.focus(); } catch (e) { /* focus is optional */ }
   }
 
+  /**
+   * DELIBERATELY DOES NOT RESUME. If openSound() paused a run, the pause card
+   * is what appears when this scrim goes — see openSound(). Both doors out of
+   * the panel come through here (the BACK button and Escape), so they cannot
+   * leave by different ones.
+   */
   function closeSound() {
     if (!els.soundPanel || !soundOpen) return;
     soundOpen = false;
@@ -1450,10 +1525,11 @@ SM.ui = (function () {
   function onKeyDown(e) {
     if (!e) return;
     var k = e.key;
-    /* The sound panel comes first and takes Escape outright. It opens from the
-       menu, where a pause is refused anyway, so without this the key would
-       find no handler and leave the panel up with no obvious way down for
-       anyone not using the mouse. */
+    /* The sound panel comes first and takes Escape outright, and it has to:
+       the panel opens from every screen now, including mid-run, and without
+       this the key would go to the pause toggle below and resume a run that
+       still has a scrim and a volume slider over it. Escape leaves by exactly
+       the door BACK does — closeSound() — so the two cannot disagree. */
     if (soundOpen && (k === 'Escape' || k === 'Esc')) {
       e.preventDefault();
       closeSound();
@@ -2078,9 +2154,11 @@ SM.ui = (function () {
   function onFirstGesture() {
     if (started) return;
     started = true;
-    // The corner cluster leaves with the overlay it hangs off, but the sound
-    // panel is the overlay's sibling and would otherwise stay up over a run
-    // that had just started underneath it.
+    // The corner cluster stays — it is the page's, not the menu's — but the
+    // mixing panel is a modal and must not be left up over a run that has just
+    // started underneath it. Belt and braces: its scrim takes every pointer
+    // while it is open, so nothing behind it can start a run in the first
+    // place. Cheaper than proving that stays true.
     closeSound();
     if (root) root.classList.remove('sm-menu');
     if (els.start) els.start.classList.add('sm-start-off');

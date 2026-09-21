@@ -141,8 +141,33 @@
 //         Presentation only: no save format, no module contract, no asset list
 //         change; the bump is what gets a cached client the new menu.
 // v1.9.6  Cached shells learn the arcade moved to gophercloud.games.
-const VERSION = 'v1.9.9'; // the volume rows say music-and-effects like everywhere else
+// v1.10.0 THE CORNER BELONGS TO THE PAGE. Sound and fullscreen are fixed
+//         chrome on every screen and mid-run instead of a menu ornament; the
+//         run's own mute and pause drop one row to make space. Two cache
+//         faults go with it: this worker was answering out of ANY cache on the
+//         origin (so it served the arcade's copy of exit.js, which no bump
+//         here could refresh), and its cleanup filter was deleting SUPERMINE
+//         ADVENTURE's offline install, because that game's prefix starts with
+//         ours. Both scoped properly now.
+const VERSION = 'v1.10.0'; // the corner plates are fixed to the page, and we serve only our own cache
 const CACHE = `supermine-${VERSION}`;
+
+/* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.
+ *
+ * Every game in this hub shares one origin, so the cache names are the only
+ * thing keeping them apart — and SUPERMINE ADVENTURE, which was split out of
+ * this game, names its caches `supermine-adventure-<version>`. That string
+ * starts with `supermine-`. So the cleanup filter below, which was a bare
+ * startsWith('supermine-'), was DELETING THE ADVENTURE'S ENTIRE OFFLINE
+ * INSTALL every time this worker activated. Its own sw.js header has warned
+ * about exactly this since the split ("neither game may ever widen its filter
+ * to the other's caches"); it was this side that was wrong.
+ *
+ * Excluding the sibling by name is the narrow fix and the honest one: a
+ * version-shaped test would quietly start evicting again the day either game
+ * changes its numbering. */
+const CACHE_PREFIX = 'supermine-';
+const SIBLING_PREFIX = 'supermine-adventure-';
 
 const ASSETS = [
   './',
@@ -189,7 +214,11 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(
-        keys.filter((k) => k.startsWith('supermine-') && k !== CACHE)
+        // OUR prefix, minus the sibling's — see the note beside CACHE_PREFIX.
+        // A cache belonging to SUPERMINE ADVENTURE must survive this untouched.
+        keys.filter((k) => k.startsWith(CACHE_PREFIX) &&
+                           !k.startsWith(SIBLING_PREFIX) &&
+                           k !== CACHE)
             .map((k) => caches.delete(k))
       ))
       .then(() => self.clients.claim())
@@ -201,8 +230,18 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   if (new URL(request.url).origin !== self.location.origin) return;
 
+  /* `cacheName: CACHE` IS LOAD-BEARING AND WAS MISSING. A bare caches.match()
+     searches EVERY cache on the origin, and every game in this hub shares one
+     — so this was free to answer out of the arcade's cache, or a sibling's. It
+     did: ../arcade/exit.js is precached by the ARCADE, and the copy it holds is
+     the copy this game kept getting, out of a cache no VERSION bump here can
+     ever reach. The game then ran new code against an old exit.js, and the way
+     out vanished inside the arcade, which is the one place it has to be.
+     Scoped to our own cache, a miss falls through to the network below and the
+     answer is at worst fresh. Same mistake as the cleanup filter above: the
+     slug is on the cache name, and then nothing asks for it. */
   event.respondWith(
-    caches.match(request, { ignoreSearch: true }).then((hit) => {
+    caches.match(request, { cacheName: CACHE, ignoreSearch: true }).then((hit) => {
       if (hit) return hit;
       return fetch(request).then((res) => {
         if (res.ok && res.type === 'basic') {
@@ -210,7 +249,12 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE).then((c) => c.put(request, copy));
         }
         return res;
-      }).catch(() => (request.mode === 'navigate' ? caches.match('./index.html') : undefined));
+      }).catch(() => (request.mode === 'navigate'
+        // Scoped for the same reason as the lookup above: offline, the shell we
+        // fall back to must be OUR shell and not whichever game on this origin
+        // happens to have an './index.html' cached.
+        ? caches.match('./index.html', { cacheName: CACHE })
+        : undefined));
     })
   );
 });

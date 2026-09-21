@@ -92,6 +92,11 @@
   --sm-top-h:     48px;      /* its height — ONE LINE, never two */
   --sm-gutter:    10px;      /* side inset shared by the strip and buttons  */
   --sm-btn-size:  42px;      /* icon button plate, 44px touch box in CSS    */
+  /* The air between two icon plates, and between the two PAIRS of them in the
+     top-right row. One declaration because .sm-corner and .sm-buttons have to
+     agree: the run's pair is placed by measuring the page's pair, and a gap
+     that only half of them knew about would push them apart or overlap. */
+  --sm-plate-gap:  8px;
 
   /* Score shrink-to-fit. ui.js publishes only --sm-cur-len (the character
      count); the arithmetic is here. --sm-cur-chrome is the width the strip's
@@ -314,10 +319,13 @@ html, body {
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
-  /* NEVER wide enough to reach the button cluster on either side. The column
-     is centred and the buttons are pinned right, so the widest it may ever be
-     is the viewport less TWO button clusters — measured off the same
-     variables the buttons themselves use, so it cannot drift out of step.
+  /* NEVER wide enough to reach the corner cluster on either side. The column
+     is centred and the plates are pinned right, so the widest it may ever be
+     is the viewport less TWO clusters — measured off the same variables the
+     plates themselves use, so it cannot drift out of step. TWO PLATES IS
+     STILL THE RIGHT NUMBER: this row holds .sm-corner only, because the run's
+     own pair moved to the row below rather than alongside it, precisely so
+     this bound would not have to double on a phone.
      What makes this necessary is the zone line: "THE MOTHERLODE  CORE
      +1 250 m" is 219px of text, which on a 360px phone ran straight into the
      sound button. Bounded here, it wraps onto a second line instead. */
@@ -583,10 +591,25 @@ html, body {
  * ======================================================================== */
 .sm-buttons {
   position: absolute;
-  top: calc(var(--sm-top-y) + var(--sm-top-h) + 7px);
+  /* ONE ROW INBOARD OF .sm-corner, which owns the corner itself now — and
+     inboard here means DOWN, not left. These two are the RUN's controls
+     (silence this instant, stop the run) and they exist only while a run does;
+     the pair above them belongs to the page and is always there. So reading
+     from the corner: fullscreen and sound on the top row, pause and mute on
+     the row beneath, each row right-aligned and the outermost plate of each
+     the one you reach for without looking.
+
+     WHY NOT ONE ROW OF FOUR, which is what maxgear does. .sm-center — the
+     countdown and the zone line — is centred on THIS row and bounded to clear
+     the buttons on either side. Four plates at 38px is 170px of a 360px phone,
+     which leaves the clock nowhere to be; two rows of two costs 44px of height
+     in a corner that has it and nothing at all in width. Same shape in both
+     layouts, so there is one arrangement to learn rather than two. */
+  top: calc(var(--sm-top-y) + var(--sm-top-h) + 7px
+            + var(--sm-btn-size) + var(--sm-plate-gap));
   right: var(--sm-gutter);
   display: flex;
-  gap: 8px;
+  gap: var(--sm-plate-gap);
   pointer-events: auto;
   /* Above the steering pads, which are full height and pass under here. The
      topmost hit target wins, so a tap on a button is never a steer. */
@@ -1828,28 +1851,48 @@ html, body {
 .sm-start-quit:disabled { color: var(--sm-dimmer); border-color: var(--sm-border); }
 
 /* ===========================================================================
- * THE CORNER CLUSTER — top right of the menu, opposite the door
+ * THE CORNER CLUSTER — PERMANENT, AND FIXED TO THE PAGE
  * ---------------------------------------------------------------------------
  * Two plates: the speaker that opens the sound panel, and the one that fills
  * the screen. They are the same gold-on-dark plate with the same hazard sliver
  * as the in-game pair, because they are the same kind of object — this is what
  * keeps a 42px button from reading as generic mobile chrome.
  *
- * Pinned to the OVERLAY, not the panel, for the reason .sm-start-quit is: the
- * panel in the middle scrolls on a short phone, and neither the way out nor
- * the way to the volume should be able to scroll away.
+ * THEY NEVER GO ANYWHERE. This used to be `position: absolute` inside the
+ * start overlay, which made it a menu ornament: it left with the menu, so
+ * fullscreen was unreachable from the moment a run began. It is a child of
+ * #ui-root now and `position: fixed`, so the same two plates are in the same
+ * place on the menu, mid-run, over the pause card and over the summary.
  *
- * Mirrors the quit plate's insets exactly, so the two corners sit on one line
- * and clear the same notch. (#ui-root already pads by the safe area; the
- * max() is belt and braces for a browser that reports an inset larger than the
- * padding box can absorb.)
+ * Z-INDEX 30 IS THE WHOLE POINT. Above the in-game plates (8), the pause card
+ * (16), the summary (15), the start overlay (20) AND the sound panel (22) —
+ * these outlive every one of them, so nothing any of them does may cover
+ * them. Sitting above the panel it opens is what lets the speaker be a real
+ * toggle; see the click handler in ui.js.
+ *
+ * WHY NOT THE VERY TOP CORNER. Mid-run the top of the screen is the score
+ * strip, gutter to gutter, one line tall — so this takes the row BELOW it,
+ * which is the row the run's own plates were already on, and THEY drop one row
+ * further (see .sm-buttons for why down rather than left). The cost is that
+ * the cluster no longer lines up with the menu's quit plate in the opposite
+ * corner, which is the honest price of a control that is always there.
+ *
+ * SAFE AREAS ARE NOW ARITHMETIC, not inheritance. `fixed` positions against
+ * the viewport, so #ui-root's padding no longer applies — both insets are
+ * added back here so the pair lands on exactly the same pixel row as
+ * .sm-buttons, which is absolute inside that padding box.
+ *
+ * pointer-events: auto because #ui-root is pointer-events:none and this used
+ * to inherit `auto` from .sm-start. Nothing inherits it out here.
  * ======================================================================== */
 .sm-corner {
-  position: absolute;
-  top: max(12px, env(safe-area-inset-top, 0px));
-  right: max(14px, env(safe-area-inset-right, 0px));
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + var(--sm-top-y) + var(--sm-top-h) + 7px);
+  right: calc(env(safe-area-inset-right, 0px) + var(--sm-gutter));
   display: flex;
-  gap: 8px;
+  gap: var(--sm-plate-gap);
+  pointer-events: auto;
+  z-index: 30;
 }
 /* THE `hidden` ATTRIBUTE HAS TO WIN HERE, and on its own it does not: the UA
    sheet's `[hidden] { display: none }` is a type-less rule and .sm-iconbtn
@@ -1861,8 +1904,11 @@ html, body {
 /* ===========================================================================
  * THE SOUND PANEL — two levels and a way back
  * ---------------------------------------------------------------------------
- * Above the start overlay (20) because it opens from it, and below nothing:
- * while it is up it is the only thing on screen.
+ * Above the start overlay (20), the pause card (16) and the summary (15),
+ * because it now opens over any of them. BELOW .sm-corner (30), and that is
+ * deliberate: the speaker that opened it stays lit above its own scrim, which
+ * is what lets a second press close it. Everything else on screen is under
+ * here while it is up.
  * ======================================================================== */
 .sm-sound {
   position: absolute;
@@ -2154,6 +2200,10 @@ html, body {
   --sm-top-h: 38px;
   --sm-gutter: 7px;
   --sm-btn-size: 38px;
+  /* Tightens BOTH plate pairs at once — see :root. It used to be a lone
+     `gap: 6px` on .sm-buttons, which is exactly the kind of half-knowledge
+     that would have left the two stacked rows out of step. */
+  --sm-plate-gap: 6px;
   --sm-cur-max: 30px;
   --sm-cur-vw: 7.6vw;
   --sm-cur-chrome: 130px;
@@ -2217,7 +2267,6 @@ html, body {
 .sm-compact .sm-debug { display: none; }
 .sm-compact .sm-zonelabel,
 .sm-compact .sm-zonecore { font-size: 9px; letter-spacing: 1.6px; }
-.sm-compact .sm-buttons { gap: 6px; }
 /* :not() because an icon plate is sized by --sm-btn-size, and a min-width
    meant for a word would stretch it into a rectangle. */
 .sm-compact .sm-btn:not(.sm-iconbtn) { min-width: 62px; padding: 9px 10px; font-size: 10px; letter-spacing: 1px; }
