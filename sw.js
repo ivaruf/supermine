@@ -149,7 +149,7 @@
 //         here could refresh), and its cleanup filter was deleting SUPERMINE
 //         ADVENTURE's offline install, because that game's prefix starts with
 //         ours. Both scoped properly now.
-const VERSION = 'v1.10.1'; // the exit-fullscreen glyph is symmetric again — its bottom-left arm pointed the wrong way
+const VERSION = 'v1.10.2'; // a tablet no longer selects the HUD or opens Copy / Look Up mid-descent (js/touch-guard.js)
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.
@@ -191,6 +191,7 @@ const ASSETS = [
   './js/sound.js',
   './js/ui.js',
   './js/main.js',
+  './js/touch-guard.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

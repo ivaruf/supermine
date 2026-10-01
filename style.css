@@ -122,7 +122,21 @@ html, body {
   overscroll-behavior: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* A game, not a document (hub CLAUDE.md §2). The block above already stops
+   selection and the tap flash; the callout line stops iOS offering Copy /
+   Look Up on a long press, and js/touch-guard.js is the half CSS cannot
+   promise. Real text fields get selection back here, generically; the
+   high-score initials also keep their own rule at .sm-hs-input. */
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 #game {
