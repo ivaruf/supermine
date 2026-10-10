@@ -96,6 +96,15 @@ js/camera.js   js/effects.js   js/sound.js   js/ui.js   style.css
 | 13 | `js/ui.js` | `SM.ui` | everything, events |
 | 14 | `js/main.js` | `SM.main` | everything |
 
+Before all fourteen, from `<head>`, `js/i18n.js` loads as a plain classic script and
+puts `window.I18N` (`t`, `getLang`, `setLang`, `paintStatic`) in place — every word a
+player reads, in bokmål (the default) and English, under the hub-wide key
+`arcade.lang.v1`. It is not part of `SM` and depends on nothing. Anything that shows
+text looks it up by key: `ui.js` for the DOM (repainting on the `arcade:lang` event),
+`upgrades.js` and `terrain.js` for the canvas. Upgrades, materials and zones keep their
+English in their own tables as a fallback; the words shown come from `i18n.js` by id
+(`up.<id>`, `mat.<id>`, and each zone's `key`).
+
 Load order only guarantees that the objects **exist**. All the cross-references above
 happen at *runtime*, inside `update()`/`render()`, so circular references are fine.
 

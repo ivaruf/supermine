@@ -799,6 +799,80 @@ textarea,
 }
 .sm-btn-quit:disabled { color: var(--sm-dimmer); cursor: default; }
 
+/* ===========================================================================
+ * LANGUAGE ROW (pause card and sound panel)
+ * ---------------------------------------------------------------------------
+ * Two equal plates, Norsk first, each a flag and its endonym. `flex: 1 1 0`
+ * so the pair is the same size whatever the two names measure — they are
+ * alternatives, and the bigger one would read as the recommended one. The
+ * chosen plate is lit the way the HUD lights a live readout: gold rim, gold
+ * word, a glow. The other stays brushed metal with its flag dimmed, so the
+ * state reads without colour alone. The DOM says "Norsk" / "English" and
+ * CSS raises the case, so a screen reader hears a word and not letters.
+ * ======================================================================== */
+.sm-lang-seg {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.sm-lang-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--sm-dim);
+}
+.sm-lang-name { text-transform: uppercase; line-height: 1; }
+/* The row hides itself when i18n.js is missing; [hidden] loses to the
+   display:flex that .sm-sound-row sets, so say it outright. */
+.sm-lang[hidden] { display: none; }
+.sm-flag {
+  display: block;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 15px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7);
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.sm-lang-btn[aria-pressed="true"] {
+  color: var(--sm-gold);
+  border-color: rgba(255, 194, 31, 0.6);
+  text-shadow: 0 0 10px rgba(255, 194, 31, 0.45);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 194, 31, 0.28),
+    inset 0 1px 0 var(--sm-edge-hi),
+    inset 0 -2px 0 var(--sm-edge-lo),
+    0 0 14px rgba(255, 194, 31, 0.22);
+}
+.sm-lang-btn[aria-pressed="true"] .sm-flag { opacity: 1; }
+.sm-lang-btn:focus-visible { outline: 2px solid var(--sm-cyan); outline-offset: 2px; }
+
+/* On the pause card: a caption over the pair, set off by the same hairline
+   the way out uses, because a language is not something you do to the run. */
+.sm-lang-stack {
+  margin-top: 15px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(142, 155, 171, 0.16);
+}
+.sm-lang-cap {
+  display: block;
+  margin-bottom: 8px;
+  font-family: var(--sm-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  text-indent: 4px;
+  color: var(--sm-dimmer);
+}
+
+
 /* A frozen run must LOOK frozen. main.js holds the fixed step but CSS
    animations are not part of it, so without this the clock keeps throbbing
    red and the OVERDRIVE label keeps blinking behind the menu — which reads
@@ -1130,7 +1204,9 @@ textarea,
   position: absolute;
   left: 10px;
   bottom: 46px;
-  width: 122px;
+  /* 134 rather than 122 since the mine learned Norwegian: STJERNEKJERNE and
+     MØRKESTEIN are the longest names it has, and they ellipsised at 122. */
+  width: 134px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2262,7 +2338,7 @@ textarea,
 .sm-compact .sm-tally {
   left: 7px;
   bottom: max(96px, 15vh);
-  width: 96px;
+  width: 104px;
   gap: 1px;
 }
 .sm-compact .sm-tally-row:not(.sm-tally-ore) { display: none !important; }
@@ -2327,6 +2403,13 @@ textarea,
 /* At 390px the tagline's 6px tracking pushes it onto a second line, orphaning
    "DEEPER." under the centre. Tighten it just enough to stay on one. */
 .sm-tiny .sm-start-sub { font-size: 9.5px; letter-spacing: 3px; text-indent: 3px; }
+/* VELG HVORDAN DU VIL SPILLE is 26 characters; at 5px tracking it wraps. */
+.sm-tiny .sm-start-pick { letter-spacing: 3px; text-indent: 3px; }
+/* On the narrowest phones the sound card cannot fit a 78px gutter AND two
+   flag plates with ENGLISH in one; the language caption takes its own line
+   there and the pair gets the full width. */
+.sm-tiny .sm-lang-inline { flex-wrap: wrap; row-gap: 6px; }
+.sm-tiny .sm-lang-inline .sm-sound-label { flex-basis: 100%; }
 
 .sm-tiny {
   --sm-top-h: 34px;
@@ -2382,4 +2465,27 @@ textarea,
   }
   .sm-toast, .sm-banner, .sm-card, .sm-summary, .sm-start,
   .sm-pause, .sm-pause-card { transition-duration: 0.01ms !important; }
+}
+
+/* A PAUSE CARD ON A PHONE ON ITS SIDE. This game has no landscape layout
+   (hub CLAUDE.md §2 names that, and it is not fixed here), and the language
+   row added ~70px to a card that was already close to the bottom of a 360px
+   screen. So this buys the height back rather than re-columning anything:
+   the flavour kicker goes, as it does on the sound card, the title shrinks,
+   controls stop at 38px (a finger is still the pointer), and the language
+   caption moves beside its buttons instead of above them. The max-height and
+   overflow are the safety net, not the plan — .sm-panel clips by default.
+   At the END of the file on purpose: the .sm-compact rules above have the
+   same specificity and would otherwise win on source order. */
+@media (max-height: 560px) {
+  .sm-pause-card,
+  .sm-compact .sm-pause-card { width: min(360px, 82vw); padding: 12px 16px 12px; max-height: 94vh; overflow: auto; }
+  .sm-pause-kicker { display: none; }
+  .sm-pause-title,
+  .sm-compact .sm-pause-title { font-size: 22px; letter-spacing: 4px; text-indent: 4px; margin-bottom: 2px; }
+  .sm-pause-btn { min-height: 38px; margin-top: 6px; }
+  .sm-btn-quit { margin-top: 8px; padding-top: 8px; }
+  .sm-lang-stack { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 8px; }
+  .sm-lang-cap { margin: 0; flex: 0 0 auto; }
+  .sm-lang-btn { min-height: 38px; padding: 6px 8px; }
 }

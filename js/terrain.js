@@ -891,7 +891,9 @@ SM.terrain = (function () {
         ? 'bold 40px ui-sans-serif, system-ui, Arial, sans-serif'
         : 'bold 26px ui-sans-serif, system-ui, Arial, sans-serif';
       ctx.fillStyle = hot ? 'rgba(255,150,230,0.30)' : 'rgba(255,220,150,0.16)';
-      ctx.fillText(z.name, 0, wy - 30);
+      // In the player's language (i18n.js). z.key is a constant built into
+      // the zone table, so this is a table lookup, not a per-frame string.
+      ctx.fillText(window.I18N && z.key ? window.I18N.t(z.key) : z.name, 0, wy - 30);
     }
   }
 

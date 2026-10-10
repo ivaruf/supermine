@@ -101,19 +101,14 @@ SM.ui = (function () {
    * KEEP IT IN STEP WITH sw.js's VERSION — it had drifted two releases behind,
    * which only ever shows on a first-visit load where nobody can check it
    * against anything, so a wrong number there is worse than none. */
-  var GAME_VERSION    = 'v1.10.0';
+  var GAME_VERSION    = 'v1.11.0';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
   var NAME_MAX        = 12;
 
-  var ZONE_LABELS = {
-    opening: 'SURFACE WORKINGS',
-    rich:    'RICH SEAM',
-    barrier: 'HARD BARRIER',
-    narrow:  'NARROW PASS',
-    final:   'THE MOTHERLODE'
-  };
+  /* Zone kinds, as a fallback name for a zone that arrives without one. The
+   * words themselves are in js/i18n.js under 'zonekind.<kind>'. */
 
   /* ---------------------------------------------------------------------
    * UPGRADE GLYPHS
@@ -299,7 +294,10 @@ SM.ui = (function () {
   var overdriveLeft = 0, overdriveTotal = 0;
   var boostLeft = 0, boostTotal = 0;
   var freestyle = false;         // chosen on the menu, survives restarts
-  var zoneName = '';
+  var zoneName = '';             // what the HUD shows, in the current language
+  var zoneKey = '';              // i18n.js key from zone:entered, if it had one
+  var zoneRaw = '';              // the event's own name, for a zone with no key
+  var zoneKind = '';
   var summaryOpen = false;
   var pauseOpen = false;
   var soundOpen = false;         // the mixing panel, behind the corner speaker
@@ -359,6 +357,35 @@ SM.ui = (function () {
     if (cls) n.className = cls;
     if (text !== undefined) n.textContent = text;
     if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  /* --- WORDS -----------------------------------------------------------
+   * Every player-facing string comes through T(), which is js/i18n.js's t().
+   * A node whose text is a plain key carries data-i18n, so I18N.setLang()
+   * repaints it with no help from here. A node whose text has ARGUMENTS in
+   * it (the seconds on the mode card) is listed in `bound` and repainted by
+   * onLang(). Everything else that speaks — the verdicts, the toast that is
+   * up, the zone line — is rebuilt from state in onLang(), because it was
+   * assembled from state in the first place.
+   * ------------------------------------------------------------------ */
+  function T(key) {
+    if (!window.I18N) return key;
+    return window.I18N.t.apply(null, arguments);
+  }
+
+  /** el() whose text is a translation key, repainted on a language switch. */
+  function elT(tag, cls, parent, key) {
+    var n = el(tag, cls, parent, T(key));
+    n.setAttribute('data-i18n', key);
+    return n;
+  }
+
+  var bound = [];
+  /** el() whose text is a key WITH arguments; onLang() repaints it. */
+  function elA(tag, cls, parent, key, args) {
+    var n = el(tag, cls, parent, T.apply(null, [key].concat(args)));
+    bound.push({ node: n, key: key, args: args });
     return n;
   }
 
@@ -540,6 +567,8 @@ SM.ui = (function () {
     if (!root) return;
     root.innerHTML = '';
     built = true;
+    bound.length = 0;              // a rebuild must not repaint dead nodes
+    langButtons.length = 0;
 
     /* --- STEERING PADS -----------------------------------------------------
      * Built FIRST and left at the bottom of the paint order on purpose: every
@@ -560,9 +589,9 @@ SM.ui = (function () {
     // score, so the strip stays ONE line tall. Compact hides them outright —
     // the upgrade rail says what is installed far better than three numbers.
     var row = el('div', 'sm-statrow', bar);
-    els.power  = el('div', 'sm-stat', row, 'PWR 0');
-    els.blade  = el('div', 'sm-stat', row, 'CUT 0');
-    els.magnet = el('div', 'sm-stat', row, 'MAG 0');
+    els.power  = el('div', 'sm-stat', row, T('hud.pwr', 0));
+    els.blade  = el('div', 'sm-stat', row, T('hud.cut', 0));
+    els.magnet = el('div', 'sm-stat', row, T('hud.mag', 0));
 
     // The slot is absolutely centred and the group inside it is what the
     // payout pop scales — two elements so the animation's `transform` can
@@ -590,7 +619,7 @@ SM.ui = (function () {
     el('div', 'sm-stripe', els.clock);
     var clockInner = el('div', 'sm-clock-inner', els.clock);
     els.clockInner = clockInner;
-    el('div', 'sm-clock-label', clockInner, 'TIME');
+    elT('div', 'sm-clock-label', clockInner, 'hud.time');
     els.clockDigits = el('div', 'sm-clock-digits', clockInner, '0:00');
     var clockBar = el('div', 'sm-clock-bar', els.clock);
     els.clockFill = el('div', 'sm-clock-fill', clockBar);
@@ -625,12 +654,12 @@ SM.ui = (function () {
      * player can already see, so they live on the bottom edge instead. */
     var meters = el('div', 'sm-meters', root);
     els.odWrap = el('div', 'sm-od', meters);
-    el('div', 'sm-od-label', els.odWrap, 'OVERDRIVE');
+    elT('div', 'sm-od-label', els.odWrap, 'hud.overdrive');
     var odBar = el('div', 'sm-od-bar', els.odWrap);
     els.odFill = el('div', 'sm-od-fill', odBar);
 
     els.boostWrap = el('div', 'sm-od sm-boost', meters);
-    el('div', 'sm-od-label', els.boostWrap, 'SPEED BOOST');
+    elT('div', 'sm-od-label', els.boostWrap, 'hud.boost');
     var boostBar = el('div', 'sm-od-bar', els.boostWrap);
     els.boostFill = el('div', 'sm-od-fill', boostBar);
 
@@ -640,8 +669,8 @@ SM.ui = (function () {
      * on a phone — and the pause menu is a much better place to ask "are you
      * sure" than a confirm dialog would be. */
     var btns = el('div', 'sm-buttons', root);
-    els.mute = iconButton(btns, 'sm-btn-sound', UI_ICONS.sound_on, 'Sound on / off');
-    els.pause = iconButton(btns, 'sm-btn-pause', UI_ICONS.pause, 'Pause');
+    els.mute = iconButton(btns, 'sm-btn-sound', UI_ICONS.sound_on, 'aria.mute');
+    els.pause = iconButton(btns, 'sm-btn-pause', UI_ICONS.pause, 'aria.pause');
 
     els.mute.addEventListener('click', function (e) {
       e.preventDefault();
@@ -659,10 +688,10 @@ SM.ui = (function () {
     els.pauseMenu = el('div', 'sm-pause', root);
     var pcard = el('div', 'sm-panel sm-pause-card', els.pauseMenu);
     el('div', 'sm-stripe', pcard);
-    el('div', 'sm-pause-kicker', pcard, 'ENGINE IDLING');
-    el('div', 'sm-pause-title', pcard, 'PAUSED');
-    els.pauseResume = menuButton(pcard, 'sm-btn-primary', UI_ICONS.play, 'RESUME');
-    els.pauseRestart = menuButton(pcard, '', UI_ICONS.restart, 'RESTART');
+    elT('div', 'sm-pause-kicker', pcard, 'pause.kicker');
+    elT('div', 'sm-pause-title', pcard, 'pause.title');
+    els.pauseResume = menuButton(pcard, 'sm-btn-primary', UI_ICONS.play, 'pause.resume');
+    els.pauseRestart = menuButton(pcard, '', UI_ICONS.restart, 'pause.restart');
     els.pauseResume.addEventListener('click', function (e) {
       e.preventDefault();
       els.pauseResume.blur();
@@ -677,12 +706,17 @@ SM.ui = (function () {
       SM.sound.play('ui');
       SM.events.emit('input:restart', null);
     });
-    els.pauseMenuBtn = menuButton(pcard, '', UI_ICONS.home, 'MAIN MENU');
+    els.pauseMenuBtn = menuButton(pcard, '', UI_ICONS.home, 'pause.menu');
     els.pauseMenuBtn.addEventListener('click', function (e) {
       e.preventDefault();
       els.pauseMenuBtn.blur();
       returnToMenu();
     });
+
+    /* The language row, under the three things you can do with this run and
+     * above the way out of the game. Switching here repaints in place: the
+     * card stays up and the run stays paused (hub CLAUDE.md §2). */
+    langRow(pcard, 'sm-lang-stack', 'sm-lang-cap', 'p');
 
     /* Leaving the game itself, which is a different thing from leaving the run.
      * Only built when the arcade's exit.js actually loaded: it is another
@@ -697,8 +731,12 @@ SM.ui = (function () {
         pcard,
         'sm-btn-quit',
         UI_ICONS.surface,
-        window.ArcadeExit.verb({ arcade: 'BACK TO ARCADE', app: 'CLOSE', tab: 'CLOSE' }),
+        'exit.arcade'
       );
+      // exit.js's verb() picks WHICH word; this file says it in the player's
+      // language. paintQuit() writes it now and again on every switch.
+      els.pauseQuitLabel = els.pauseQuit.querySelector('.sm-pause-label');
+      if (els.pauseQuitLabel) els.pauseQuitLabel.removeAttribute('data-i18n');
       els.pauseQuit.addEventListener('click', function (e) {
         e.preventDefault();
         els.pauseQuit.blur();
@@ -707,9 +745,9 @@ SM.ui = (function () {
           // 'refused' means the browser would not close a tab it did not open.
           // Say so on the button, in the pause card, rather than looking dead.
           if (how !== 'refused') return;
-          var label = els.pauseQuit.querySelector('.sm-pause-label');
-          if (label) label.textContent = 'CLOSE THIS TAB YOURSELF';
+          quitRefused = true;
           els.pauseQuit.disabled = true;
+          paintQuit();
         });
       });
     }
@@ -732,7 +770,7 @@ SM.ui = (function () {
 
     /* --- upgrade announcement (upper centre, above the machine) --------- */
     els.toast = el('div', 'sm-toast', root);
-    els.toastKicker = el('div', 'sm-toast-kicker', els.toast, 'UPGRADE ACQUIRED');
+    els.toastKicker = elT('div', 'sm-toast-kicker', els.toast, 'hud.upgradeKicker');
     els.toastTitle = el('div', 'sm-toast-title', els.toast, '');
     els.toastSub = el('div', 'sm-toast-sub', els.toast, '');
 
@@ -745,7 +783,7 @@ SM.ui = (function () {
     // Bottom-anchored so it grows UPWARD toward the rail: the row you just
     // unlocked never shoves the others off the bottom of the screen.
     els.tally = el('div', 'sm-tally', root);
-    el('div', 'sm-tally-head', els.tally, 'HAUL');
+    elT('div', 'sm-tally-head', els.tally, 'hud.haul');
     tallyRows.length = 0;
     for (var ti = 0; ti < TALLY_ORDER.length; ti++) {
       // POWER-UPS GET NO ROW. They used to be pinned to the top of this list,
@@ -769,12 +807,13 @@ SM.ui = (function () {
     els.summary = el('div', 'sm-summary', root);
     var card = el('div', 'sm-card', els.summary);
     el('div', 'sm-stripe', card);
-    els.sumKicker = el('div', 'sm-card-kicker', card, 'EXCAVATION COMPLETE');
-    els.sumTitle = el('div', 'sm-card-title', card, 'RUN COMPLETE');
+    // Rewritten per run by paintSummaryText(), so no data-i18n on these two.
+    els.sumKicker = el('div', 'sm-card-kicker', card, T('sum.kicker'));
+    els.sumTitle = el('div', 'sm-card-title', card, T('sum.title'));
 
     // The haul IS the score in a time attack, so it gets the hero slot.
     var score = el('div', 'sm-score', card);
-    el('div', 'sm-score-label', score, 'FINAL SCORE');
+    elT('div', 'sm-score-label', score, 'sum.score');
     els.sumScore = el('div', 'sm-score-value', score, '0');
 
     // Where that score actually came from. Sits directly under the hero
@@ -785,25 +824,26 @@ SM.ui = (function () {
     // biggest number on the card. TIME LEFT is the interesting one now —
     // zero on a timeout, whatever you had left if you reached the bottom.
     var grid = el('div', 'sm-card-grid', card);
-    els.sumTime   = statCell(grid, 'TIME LEFT', '0.0 s');
-    els.sumDepth  = statCell(grid, 'DEPTH', '0 m');
-    els.sumUpg    = statCell(grid, 'UPGRADES', '0');
-    els.sumPick   = statCell(grid, 'RESOURCES', '0');
-    els.sumPower  = statCell(grid, 'MINING POWER', '0');
-    els.sumBurst  = statCell(grid, 'BEST BURST', '0');
+    els.sumTime   = statCell(grid, 'sum.timeLeft', '0.0 s');
+    els.sumDepth  = statCell(grid, 'sum.depth', '0 m');
+    els.sumUpg    = statCell(grid, 'sum.upgrades', '0');
+    els.sumPick   = statCell(grid, 'sum.resources', '0');
+    els.sumPower  = statCell(grid, 'sum.power', '0');
+    els.sumBurst  = statCell(grid, 'sum.burst', '0');
     /* --- local top-10 table + name entry --------------------------------- */
     var hs = el('div', 'sm-hs', card);
-    el('div', 'sm-hs-head', hs, 'TOP HAULS');
-    els.hsCta = el('div', 'sm-hs-cta', hs, 'NEW TOP 10 — ENTER YOUR NAME');
+    elT('div', 'sm-hs-head', hs, 'hs.head');
+    els.hsCta = elT('div', 'sm-hs-cta', hs, 'hs.cta');
     els.hsForm = el('div', 'sm-hs-form', hs);
     els.hsInput = el('input', 'sm-hs-input', els.hsForm);
     els.hsInput.setAttribute('type', 'text');
     els.hsInput.setAttribute('maxlength', '' + NAME_MAX);
-    els.hsInput.setAttribute('placeholder', 'YOUR NAME');
+    els.hsInput.setAttribute('placeholder', T('hs.placeholder'));
+    els.hsInput.setAttribute('data-i18n-placeholder', 'hs.placeholder');
     els.hsInput.setAttribute('autocomplete', 'off');
     els.hsInput.setAttribute('autocorrect', 'off');
     els.hsInput.setAttribute('spellcheck', 'false');
-    els.hsSave = el('button', 'sm-btn sm-btn-primary sm-hs-save', els.hsForm, 'SAVE');
+    els.hsSave = elT('button', 'sm-btn sm-btn-primary sm-hs-save', els.hsForm, 'hs.save');
     els.hsSave.setAttribute('type', 'button');
     els.hsRows = el('div', 'sm-hs-rows', hs);
     els.hsNote = el('div', 'sm-hs-note', hs, '');
@@ -835,7 +875,7 @@ SM.ui = (function () {
       submitScore();
     });
 
-    els.sumBtn = el('button', 'sm-btn sm-btn-primary sm-btn-big', card, 'RUN IT AGAIN');
+    els.sumBtn = elT('button', 'sm-btn sm-btn-primary sm-btn-big', card, 'sum.again');
     els.sumBtn.setAttribute('type', 'button');
     els.sumBtn.addEventListener('click', function (e) {
       e.preventDefault();
@@ -857,32 +897,28 @@ SM.ui = (function () {
 
     var head = el('div', 'sm-start-head', sc);
     el('div', 'sm-start-logo', head, 'SUPERMINE');
-    el('div', 'sm-start-sub', head, 'DRIVE. DESTROY. DIG DEEPER.');
+    elT('div', 'sm-start-sub', head, 'start.sub');
 
-    el('div', 'sm-start-pick', sc, 'CHOOSE YOUR RUN');
+    elT('div', 'sm-start-pick', sc, 'start.pick');
 
+    /* The two modes are named for what they ARE — against the clock, or
+     * free — rather than TIME ATTACK and FREESTYLE (hub CLAUDE.md §2, "Menus
+     * speak plainly"). The voice stays in the brass and the blurbs. */
     var modes = el('div', 'sm-modes', sc);
-    els.modeTime = modeCard(modes, 'time', 'TIME ATTACK',
-      (t0 > 0 ? Math.round(t0) + ' SECONDS ON THE CLOCK' : 'BEAT THE CLOCK'),
-      'Your haul when the clock hits zero is your score. Some gates pay ' +
-      '+10 SECONDS instead of an upgrade — trade power for time.',
-      'RANKED');
-    els.modeFree = modeCard(modes, 'freestyle', 'FREESTYLE',
-      'NO CLOCK · NO LIMIT',
-      'Dig as far as you like. Nothing is timed and nothing ends the run — ' +
-      'every gate pays an upgrade instead of seconds.',
-      'SANDBOX');
+    els.modeTime = modeCard(modes, 'time', 'mode.time',
+      ['mode.timeTag', t0 > 0 ? Math.round(t0) : 0],
+      'mode.timeBlurb', 'mode.timeBadge');
+    els.modeFree = modeCard(modes, 'freestyle', 'mode.free',
+      ['mode.freeTag'], 'mode.freeBlurb', 'mode.freeBadge');
 
     // Two lines, one shown at a time: a phone player has no keyboard to be
     // told about and a desktop player has no side pads to find.
     var keys = el('div', 'sm-start-keys', sc);
-    el('div', 'sm-keys-desk', keys,
-      'A / D  ·  ARROWS  ·  DRAG  to steer      ESC  pause      M  mute');
-    el('div', 'sm-keys-touch', keys,
-      'HOLD OR TAP EITHER SIDE TO STEER');
+    elT('div', 'sm-keys-desk', keys, 'keys.desk');
+    elT('div', 'sm-keys-touch', keys, 'keys.touch');
 
     /* --- opt-in update, shown only when a new build is parked and waiting --- */
-    els.update = el('button', 'sm-update', sc, 'UPDATE READY — TAP TO INSTALL');
+    els.update = el('button', 'sm-update', sc, T('update.ready'));
     els.update.setAttribute('type', 'button');
     els.update.style.display = 'none';
     els.update.addEventListener('click', function (e) {
@@ -921,12 +957,7 @@ SM.ui = (function () {
      * stamp does: the panel scrolls on a short phone and a door must not
      * scroll away. */
     if (exitOffered()) {
-      els.menuQuit = el('button', 'sm-btn sm-start-quit', els.start,
-        window.ArcadeExit.verb({
-          arcade: 'BACK TO ARCADE',
-          app: 'CLOSE',
-          tab: 'CLOSE',
-        }));
+      els.menuQuit = el('button', 'sm-btn sm-start-quit', els.start, '');
       els.menuQuit.setAttribute('type', 'button');
       els.menuQuit.addEventListener('click', function (e) {
         e.preventDefault();
@@ -935,8 +966,9 @@ SM.ui = (function () {
           // 'refused' means the browser would not close a tab it did not open.
           // Say so on the button rather than leaving it looking dead.
           if (how !== 'refused') return;
-          els.menuQuit.textContent = 'CLOSE THIS TAB YOURSELF';
+          quitRefused = true;
           els.menuQuit.disabled = true;
+          paintQuit();
         });
       });
     }
@@ -976,7 +1008,7 @@ SM.ui = (function () {
      * so the safe-area insets it used to inherit are added back by hand in
      * .sm-corner — see the stylesheet. */
     els.corner = el('div', 'sm-corner', root);
-    els.mixBtn = iconButton(els.corner, 'sm-btn-mix', UI_ICONS.sound_on, 'Sound');
+    els.mixBtn = iconButton(els.corner, 'sm-btn-mix', UI_ICONS.sound_on, 'aria.sound');
     els.mixBtn.setAttribute('aria-expanded', 'false');
     els.mixBtn.addEventListener('click', function (e) {
       e.preventDefault();
@@ -992,7 +1024,11 @@ SM.ui = (function () {
      * only once a WORKING request/exit pair has answered. Safari on iPhone has
      * no element fullscreen at all, and a plate that does nothing when pressed
      * is worse than no plate. */
-    els.screen = iconButton(els.corner, 'sm-btn-screen', UI_ICONS.expand, 'Fullscreen');
+    els.screen = iconButton(els.corner, 'sm-btn-screen', UI_ICONS.expand, 'aria.fullscreen');
+    // Its label follows its STATE, so refreshScreenToggle() owns it rather
+    // than paintStatic() — which would otherwise write "Fullscreen" over
+    // "Exit fullscreen" on a switch made while the screen is filled.
+    els.screen.removeAttribute('data-i18n-label');
     els.screen.setAttribute('aria-pressed', 'false');
     els.screen.hidden = true;
 
@@ -1012,8 +1048,8 @@ SM.ui = (function () {
     els.soundPanel = el('div', 'sm-sound', root);
     var scard = el('div', 'sm-panel sm-sound-card', els.soundPanel);
     el('div', 'sm-stripe', scard);
-    el('div', 'sm-sound-kicker', scard, 'CAB SPEAKERS');
-    el('div', 'sm-sound-title', scard, 'SOUND');
+    elT('div', 'sm-sound-kicker', scard, 'sound.kicker');
+    elT('div', 'sm-sound-title', scard, 'sound.title');
 
     // MUSIC and EFFECTS, the same two words every game in this hub uses, and
     // deliberately not this one's own. The row said MACHINERY because that is
@@ -1021,15 +1057,20 @@ SM.ui = (function () {
     // for flavour, they are looking for the one of two sliders they want, and
     // a label that has to be decoded costs them that. The fiction gets the
     // hint line underneath, where it explains rather than obstructs.
-    els.volMusic = volumeRow(scard, 'sm-vol-music', 'MUSIC');
-    els.volSfx = volumeRow(scard, 'sm-vol-machinery', 'EFFECTS');
+    els.volMusic = volumeRow(scard, 'sm-vol-music', 'sound.music');
+    els.volSfx = volumeRow(scard, 'sm-vol-machinery', 'sound.effects');
 
-    el('div', 'sm-sound-hint', scard,
-      'MUSIC IS THE BEAT THAT THICKENS AS THE SEAMS GET RICHER. ' +
-      'EFFECTS IS THE ENGINE, THE GRINDER AND EVERY DEPOSIT YOU CRACK. ' +
-      'DRAG EITHER ONE AND YOU WILL HEAR IT.');
+    /* THE LANGUAGE ROW, AGAIN — this is the copy a stranger can reach before
+     * a run. The start screen has no settings panel of its own; this one,
+     * behind the corner speaker, is the panel it has (hub CLAUDE.md §2: "if
+     * the start screen has a settings or sound panel, the row goes there").
+     * It shares the volume rows' label gutter, so its buttons start at the
+     * same x as the two tracks above it. */
+    langRow(scard, 'sm-sound-row sm-lang-inline', 'sm-sound-label', 's');
 
-    els.soundBack = el('button', 'sm-btn sm-sound-back', scard, 'BACK');
+    elT('div', 'sm-sound-hint', scard, 'sound.hint');
+
+    els.soundBack = elT('button', 'sm-btn sm-sound-back', scard, 'sound.back');
     els.soundBack.setAttribute('type', 'button');
     els.soundBack.addEventListener('click', function (e) {
       e.preventDefault();
@@ -1045,7 +1086,7 @@ SM.ui = (function () {
     // list and colliding with the version stamp.
     root.classList.add('sm-menu');
 
-    els.hint = el('div', 'sm-hint', root, 'A / D  •  ARROWS  •  DRAG   —   ESC pause, M mute');
+    els.hint = elT('div', 'sm-hint', root, 'hud.hint');
     els.debug = el('div', 'sm-debug', root, '');
     if (!C.DEBUG_STATS) els.debug.style.display = 'none';
 
@@ -1053,27 +1094,139 @@ SM.ui = (function () {
     showForm(false);
     els.hsNote.style.display = 'none';
 
+    paintQuit();
+    paintLangRows();
     applyCompact();
   }
 
-  /** A square icon control. 38px plate, 20px glyph, 44px touch box in CSS. */
-  function iconButton(parent, cls, icon, title) {
+  /** A square icon control. 38px plate, 20px glyph, 44px touch box in CSS.
+   *  `key` names its aria-label and title in js/i18n.js. */
+  function iconButton(parent, cls, icon, key) {
     var b = el('button', 'sm-btn sm-iconbtn ' + cls, parent);
     b.setAttribute('type', 'button');
+    var title = T(key);
     b.setAttribute('title', title);
     b.setAttribute('aria-label', title);
+    b.setAttribute('data-i18n-label', key);
     b.innerHTML = uiGlyph(icon);
     return b;
   }
 
   /** Icon + word, for the pause menu where there is room to be explicit. */
-  function menuButton(parent, cls, icon, label) {
+  function menuButton(parent, cls, icon, key) {
     var b = el('button', 'sm-btn sm-pause-btn ' + cls, parent);
     b.setAttribute('type', 'button');
     var ico = el('span', 'sm-pause-ico', b);
     ico.innerHTML = uiGlyph(icon);
-    el('span', 'sm-pause-label', b, label);
+    elT('span', 'sm-pause-label', b, key);
     return b;
+  }
+
+  /* =====================================================================
+   * THE WAY OUT, IN THE PLAYER'S LANGUAGE
+   * exit.js's verb() decides WHICH of its three cases this is and hands
+   * back the word we gave it for that case, so it can never promise
+   * something quit() will not do. We hand it the words in the current
+   * language, and ask again on every switch.
+   * ================================================================== */
+  var quitRefused = false;       // the browser would not close this tab
+
+  function quitWord() {
+    if (quitRefused) return T('exit.refused');
+    var close = T('exit.close');
+    try {
+      return window.ArcadeExit.verb({ arcade: T('exit.arcade'), app: close, tab: close });
+    } catch (e) {
+      return T('exit.arcade');
+    }
+  }
+
+  function paintQuit() {
+    if (!window.ArcadeExit) return;
+    var w = null;
+    if (els.pauseQuitLabel) { w = quitWord(); els.pauseQuitLabel.textContent = w; }
+    if (els.menuQuit) els.menuQuit.textContent = w || quitWord();
+  }
+
+  /* =====================================================================
+   * LANGUAGE ROW
+   * ---------------------------------------------------------------------
+   * Two equal buttons, Norsk first, each with its flag and its endonym —
+   * always written in its OWN language, with a lang attribute so a screen
+   * reader says it right. The flags are the hub's shared drawings, copied
+   * from kitchens/index.html as they are. The row exists twice in this page
+   * (pause card and sound panel) and the Union Jack's clipPath ids are
+   * page-global, so each copy gets its own suffix — or the second flag
+   * would silently clip against the first one's paths.
+   *
+   * Silent on purpose, like everything else in the sound panel: play()
+   * rate-limits on the sim clock, which is held while either panel is up.
+   * ================================================================== */
+  var FLAG_NB =
+    '<svg class="sm-flag" viewBox="0 0 22 16" aria-hidden="true">' +
+      '<rect width="22" height="16" fill="#ba0c2f"/>' +
+      '<path d="M6 0h4v16H6zM0 6h22v4H0z" fill="#fff"/>' +
+      '<path d="M7 0h2v16H7zM0 7h22v2H0z" fill="#00205b"/>' +
+    '</svg>';
+
+  function flagEN(id) {
+    var clip = 'sm-uk-clip-' + id, diag = 'sm-uk-diag-' + id;
+    return '<svg class="sm-flag" viewBox="0 0 60 30" aria-hidden="true">' +
+      '<clipPath id="' + clip + '"><path d="M0 0v30h60V0z"/></clipPath>' +
+      '<clipPath id="' + diag + '"><path d="M30 15h30v15zv15H0zH0V0zV0h30z"/></clipPath>' +
+      '<g clip-path="url(#' + clip + ')">' +
+        '<path d="M0 0v30h60V0z" fill="#012169"/>' +
+        '<path d="M0 0l60 30m0-30L0 30" stroke="#fff" stroke-width="6"/>' +
+        '<path d="M0 0l60 30m0-30L0 30" clip-path="url(#' + diag + ')" stroke="#c8102e" stroke-width="4"/>' +
+        '<path d="M30 0v30M0 15h60" stroke="#fff" stroke-width="10"/>' +
+        '<path d="M30 0v30M0 15h60" stroke="#c8102e" stroke-width="6"/>' +
+      '</g>' +
+    '</svg>';
+  }
+
+  var langButtons = [];
+
+  function langRow(parent, rowCls, capCls, id) {
+    var row = el('div', 'sm-lang ' + rowCls, parent);
+    if (!window.I18N) { row.hidden = true; return row; }   // nothing to switch
+    var cap = elT('span', capCls, row, 'lang.caption');
+    cap.id = 'sm-lang-cap-' + id;
+    var seg = el('div', 'sm-lang-seg', row);
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-labelledby', cap.id);
+    langButton(seg, 'nb', 'Norsk', FLAG_NB);
+    langButton(seg, 'en', 'English', flagEN(id));
+    return row;
+  }
+
+  function langButton(seg, code, name, flag) {
+    var b = el('button', 'sm-btn sm-lang-btn', seg);
+    b.setAttribute('type', 'button');
+    b.setAttribute('lang', code);
+    b.setAttribute('data-lang', code);
+    b.setAttribute('aria-pressed', 'false');
+    b.innerHTML = flag;
+    el('span', 'sm-lang-name', b, name);
+    /* Keys typed on a focused button belong to the button. input.js listens
+       on window, and the name field and the sliders already shield it the
+       same way. */
+    b.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' && e.key !== 'Esc') e.stopPropagation();
+    });
+    b.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (window.I18N && window.I18N.getLang() !== code) window.I18N.setLang(code);
+    });
+    langButtons.push(b);
+    return b;
+  }
+
+  function paintLangRows() {
+    var cur = window.I18N ? window.I18N.getLang() : '';
+    for (var i = 0; i < langButtons.length; i++) {
+      var b = langButtons[i];
+      b.setAttribute('aria-pressed', b.getAttribute('data-lang') === cur ? 'true' : 'false');
+    }
   }
 
   /* =====================================================================
@@ -1085,10 +1238,10 @@ SM.ui = (function () {
    * keyboard support, the right ARIA role and a live value announcement, and
    * looking like the mine is a job for CSS, not for reinventing a control.
    * ================================================================== */
-  function volumeRow(parent, id, label) {
+  function volumeRow(parent, id, key) {
     var row = el('div', 'sm-sound-row', parent);
 
-    var lab = el('label', 'sm-sound-label', row, label);
+    var lab = elT('label', 'sm-sound-label', row, key);
     lab.setAttribute('for', id);
 
     var input = el('input', 'sm-sound-range', row);
@@ -1252,7 +1405,7 @@ SM.ui = (function () {
     // Plain words, and deliberately not the mine's own vocabulary. This is
     // something the browser does, not something the game does; it has one
     // name everywhere and the player already knows it.
-    var label = on ? 'Exit fullscreen' : 'Fullscreen';
+    var label = T(on ? 'aria.exitFullscreen' : 'aria.fullscreen');
     els.screen.innerHTML = uiGlyph(on ? UI_ICONS.contract : UI_ICONS.expand);
     els.screen.setAttribute('aria-pressed', on ? 'true' : 'false');
     els.screen.setAttribute('aria-label', label);
@@ -1325,7 +1478,9 @@ SM.ui = (function () {
     // Never focusable: a focused pad would eat the space bar and paint a focus
     // ring across half the screen.
     b.setAttribute('tabindex', '-1');
-    b.setAttribute('aria-label', 'Steer ' + side);
+    var padKey = side === 'left' ? 'aria.steerLeft' : 'aria.steerRight';
+    b.setAttribute('aria-label', T(padKey));
+    b.setAttribute('data-i18n-label', padKey);
     b.innerHTML = uiGlyph(side === 'left' ? UI_ICONS.steer_left : UI_ICONS.steer_right,
                           'sm-pad-svg');
 
@@ -1546,22 +1701,22 @@ SM.ui = (function () {
    * One selectable mode card. Returns the node; the click handler is attached
    * in init() alongside the rest of the gesture plumbing.
    */
-  function modeCard(parent, mode, title, tag, blurb, badge) {
+  function modeCard(parent, mode, titleKey, tag, blurbKey, badgeKey) {
     var card = el('button', 'sm-mode sm-mode-' + mode, parent);
     card.setAttribute('type', 'button');
     card.setAttribute('data-mode', mode);
     el('div', 'sm-stripe', card);
-    el('div', 'sm-mode-badge', card, badge);
-    el('div', 'sm-mode-title', card, title);
-    el('div', 'sm-mode-tag', card, tag);
-    el('div', 'sm-mode-blurb', card, blurb);
-    el('div', 'sm-mode-go', card, 'START ▸');
+    elT('div', 'sm-mode-badge', card, badgeKey);
+    elT('div', 'sm-mode-title', card, titleKey);
+    elA('div', 'sm-mode-tag', card, tag[0], tag.slice(1));
+    elT('div', 'sm-mode-blurb', card, blurbKey);
+    elT('div', 'sm-mode-go', card, 'mode.go');
     return card;
   }
 
-  function statCell(parent, label, value) {
+  function statCell(parent, key, value) {
     var cell = el('div', 'sm-cell', parent);
-    el('div', 'sm-cell-label', cell, label);
+    elT('div', 'sm-cell-label', cell, key);
     return el('div', 'sm-cell-value', cell, value);
   }
 
@@ -1599,7 +1754,7 @@ SM.ui = (function () {
       if (t.id !== u.id) {
         t.id = u.id;
         t.icon.innerHTML = ICONS[u.id] ? glyph(ICONS[u.id]) : glyph(ICON_FALLBACK);
-        t.node.setAttribute('title', u.title || u.id);
+        t.node.setAttribute('title', upTitle(u.id, u.title));
         t.node.style.display = '';
         t.lvl = -1;                       // force the badge pass below
         retrigger(t.node, 'sm-rail-pop');
@@ -1640,7 +1795,8 @@ SM.ui = (function () {
   function makeTallyRow(mi) {
     var m = SM.materials.get(mi);
     var node = el('div', 'sm-tally-row', els.tally);
-    node.setAttribute('title', m.name);
+    var mname = matName(m);
+    node.setAttribute('title', mname);
     node.style.display = 'none';
 
     var sw = el('span', 'sm-tally-sw', node);
@@ -1650,11 +1806,11 @@ SM.ui = (function () {
     sw.style.boxShadow = '0 0 7px ' + m.colors[0];
     if (m.glow) sw.style.borderColor = m.colors[2];
 
-    el('span', 'sm-tally-name', node, m.name);
+    var nameNode = el('span', 'sm-tally-name', node, mname);
     var cnt = el('span', 'sm-tally-count', node, '0');
     if (m.ore) node.classList.add('sm-tally-ore');
 
-    return { mi: mi, node: node, count: cnt, shown: -1, on: false };
+    return { mi: mi, node: node, name: nameNode, count: cnt, shown: -1, on: false };
   }
 
   /**
@@ -1731,9 +1887,9 @@ SM.ui = (function () {
         // colour for its glow or the chip reads as a black dot on a black card.
         // `c` is only used as "did you get any at all" — see renderHaulPickups
         // for why the chip does NOT report it.
-        picks.push({ kind: m.pickup, name: m.name, color: m.colors[0], glow: m.colors[2] });
+        picks.push({ kind: m.pickup, name: matName(m), color: m.colors[0], glow: m.colors[2] });
       } else if (m.ore) {
-        rows.push({ name: m.name, color: m.colors[0], count: c, value: oreValue[mi] });
+        rows.push({ name: matName(m), color: m.colors[0], count: c, value: oreValue[mi] });
       } else {
         spoilVal += oreValue[mi];
         spoilCount += c;
@@ -1742,22 +1898,22 @@ SM.ui = (function () {
     rows.sort(function (a, b) { return b.value - a.value; });
     if (spoilCount > 0) {
       rows.push({
-        name: 'Spoil', color: SPOIL_COLOR,
+        name: T('mat.spoil'), color: SPOIL_COLOR,
         count: spoilCount, value: spoilVal, spoil: true
       });
     }
 
     if (!rows.length && !picks.length) {
-      el('div', 'sm-haul-empty', els.haul, 'NOTHING BANKED');
+      el('div', 'sm-haul-empty', els.haul, T('haul.nothing'));
       return;
     }
     if (!rows.length) {
-      el('div', 'sm-haul-empty', els.haul, 'NO ORE BANKED');
+      el('div', 'sm-haul-empty', els.haul, T('haul.noOre'));
       renderHaulPickups(picks);
       return;
     }
 
-    el('div', 'sm-haul-head', els.haul, 'WHERE IT CAME FROM');
+    el('div', 'sm-haul-head', els.haul, T('haul.head'));
 
     // Bars are scaled against the biggest single line, not the total, so the
     // composition is still readable when one ore dominates the run.
@@ -1832,15 +1988,18 @@ SM.ui = (function () {
     if (!els.hsRows) return;
     els.hsRows.innerHTML = '';
     if (!list) {
-      setText('hsnote', els.hsNote, 'HIGH SCORES UNAVAILABLE — STORAGE IS BLOCKED');
+      hsNoteKey = 'hs.blocked';
+      setText('hsnote', els.hsNote, T(hsNoteKey));
       els.hsNote.style.display = '';
       return;
     }
     if (!list.length) {
-      setText('hsnote', els.hsNote, 'NO RUNS RECORDED YET');
+      hsNoteKey = 'hs.none';
+      setText('hsnote', els.hsNote, T(hsNoteKey));
       els.hsNote.style.display = '';
       return;
     }
+    hsNoteKey = '';
     els.hsNote.style.display = 'none';
     for (var i = 0; i < list.length; i++) {
       var e = list[i];
@@ -1864,7 +2023,7 @@ SM.ui = (function () {
 
     var name = (els.hsInput.value || '').toUpperCase().replace(/\s+/g, ' ').replace(/^ | $/g, '');
     if (name.length > NAME_MAX) name = name.slice(0, NAME_MAX);
-    if (!name) name = 'MINER';
+    if (!name) name = T('hs.defaultName');
 
     var list = loadScores() || [];
     var entry = { name: name, score: runScore, depth: runDepth, date: todayStr() };
@@ -1878,7 +2037,8 @@ SM.ui = (function () {
     renderScores(list, list.indexOf(entry));
     if (!ok) {
       // The row is still shown — it just will not survive a reload.
-      setText('hsnote', els.hsNote, 'COULD NOT WRITE TO STORAGE — THIS RUN WILL NOT BE KEPT');
+      hsNoteKey = 'hs.failed';
+      setText('hsnote', els.hsNote, T(hsNoteKey));
       els.hsNote.style.display = '';
     }
     SM.sound.play('ui');
@@ -1962,12 +2122,39 @@ SM.ui = (function () {
   }
 
   function onUpgrade(p) {
-    toast(p && p.title ? p.title : 'UPGRADE', p && p.description ? p.description : '', TOAST_TIME);
+    // Payload objects are reused by upgrades.js: copy what we need now.
+    var id = (p && p.id) || '';
+    var title = p && p.title ? p.title : '';
+    var desc = p && p.description ? p.description : '';
+    toastFrom(function () {
+      return [upTitle(id, title || T('toast.upgrade')), upDesc(id, desc)];
+    }, TOAST_TIME);
+  }
+
+  /* --- names of things, in the player's language -------------------------
+   * Upgrades, zones and materials are tables in other modules, written in
+   * English and keyed by id. The words a player reads come from i18n.js by
+   * that id; the table's own English is only a fallback for an id i18n.js
+   * has never heard of (a gameplay addition nobody translated yet). */
+  function has(key) {
+    return !!(window.I18N && T(key) !== key);
+  }
+  function upTitle(id, en) { return id && has('up.' + id) ? T('up.' + id) : (en || id); }
+  function upDesc(id, en) { return id && has('up.' + id + '.desc') ? T('up.' + id + '.desc') : (en || ''); }
+  function matName(m) { return m && m.id && has('mat.' + m.id) ? T('mat.' + m.id) : (m ? m.name : ''); }
+  function zoneText() {
+    if (zoneKey && has(zoneKey)) return T(zoneKey);
+    if (zoneRaw) return zoneRaw;
+    if (!zoneKind) return '';
+    return has('zonekind.' + zoneKind) ? T('zonekind.' + zoneKind) : zoneKind.toUpperCase();
   }
 
   function onZone(p) {
     var kind = (p && p.kind) || 'opening';
-    zoneName = (p && p.name) || ZONE_LABELS[kind] || kind.toUpperCase();
+    zoneKind = kind;
+    zoneKey = (p && p.key) || '';
+    zoneRaw = (p && p.name) || '';
+    zoneName = zoneText();
     if (!els.banner) return;
     els.bannerText.textContent = zoneName;
     if (els.banner.classList) {
@@ -2011,6 +2198,16 @@ SM.ui = (function () {
    *              never the amount a whole block is worth: clip the edge of a
    *              cell and it says +2 SEC, because it paid you two.
    */
+  /* The splash and the toast are each built from a small function rather
+   * than from two strings, so a language switch while one is still up can
+   * ask it again (onLang). They are short-lived; this is not a hot path. */
+  var splashSrc = null;
+  function splashFrom(kind, src) {
+    splashSrc = src;
+    var w = src();
+    splash(kind, w[0], w[1]);
+  }
+
   function splash(kind, big, sub) {
     if (!els.splash) return;
     els.splashBig.textContent = big;
@@ -2033,7 +2230,8 @@ SM.ui = (function () {
     // The bar under the progress gauge is the sustained readout; this is the
     // moment of collection. The duration goes in the SUB line because the
     // headline is the state you just entered, not a number.
-    splash('boost', 'BOOST MODE', '+' + Math.round(boostTotal) + ' SEC  ·  SPEED SURGE');
+    var bsecs = Math.round(boostTotal);
+    splashFrom('boost', function () { return [T('splash.boost'), T('splash.boostSub', bsecs)]; });
   }
 
   function onBoostEnd() {
@@ -2054,7 +2252,10 @@ SM.ui = (function () {
     // makes the moment noisy. So the splash is the cell's voice, and the toast
     // stays the gate's. Anything that adds a new source lands here as 'gate'
     // and stays quiet until someone decides otherwise.
-    if (source === 'cell') splash('time', '+' + Math.round(secs) + ' SEC', 'TIME CELL');
+    var rsecs = Math.round(secs);
+    if (source === 'cell') {
+      splashFrom('time', function () { return [T('splash.secs', rsecs), T('splash.cell')]; });
+    }
 
     if (!els.clockGain) return;
     els.clockGain.textContent = '+' + Math.round(secs) + 's';
@@ -2089,7 +2290,7 @@ SM.ui = (function () {
    */
   function onLevelComplete() {
     if (summaryOpen) return;
-    splash('core', 'THE CORE', 'MAP CLEARED  ·  KEEP DIGGING');
+    splashFrom('core', function () { return [T('splash.core'), T('splash.coreSub')]; });
   }
 
   function openSummary(reason, dist, timeLeft) {
@@ -2115,11 +2316,8 @@ SM.ui = (function () {
     // actually earned — the last stretch is worth several times the whole
     // map above it, so the card should name it rather than bury it in DEPTH.
     var overtime = SM.level.getOvertime ? Math.round(SM.level.getOvertime()) : 0;
-    setText('sumkick', els.sumKicker,
-            reachedCore ? ('THE WHOLE MAP IS BEHIND YOU  ·  ' + fmt(overtime) + ' m INTO THE CORE')
-                        : (outOfTime ? 'THE CLOCK BEAT YOU' : 'EXCAVATION ENDED'));
-    setText('sumtitle', els.sumTitle,
-            reachedCore ? 'YOU REACHED THE CORE' : "TIME'S UP");
+    summaryState = { core: reachedCore, outOfTime: outOfTime, overtime: overtime };
+    paintSummaryText();
     setClass('sumtimeout', els.summary, 'sm-summary-timeout', !reachedCore);
 
     setText('sumscore', els.sumScore, fmt(runScore));
@@ -2149,6 +2347,22 @@ SM.ui = (function () {
       // input.js instead of the name field.
       try { els.hsInput.focus(); } catch (e) { /* focus is optional */ }
     }
+  }
+
+  var summaryState = null;       // what the verdict was built from; see onLang
+  var hsNoteKey = '';            // which note the score table is showing
+
+  function paintSummaryText() {
+    var st = summaryState;
+    if (!st) {
+      setText('sumkick', els.sumKicker, T('sum.kicker'));
+      setText('sumtitle', els.sumTitle, T('sum.title'));
+      return;
+    }
+    setText('sumkick', els.sumKicker,
+            st.core ? T('sum.kickCore', fmt(st.overtime))
+                    : T(st.outOfTime ? 'sum.kickClock' : 'sum.kickEnded'));
+    setText('sumtitle', els.sumTitle, T(st.core ? 'sum.titleCore' : 'sum.titleTime'));
   }
 
   function onFirstGesture() {
@@ -2197,7 +2411,17 @@ SM.ui = (function () {
     else root.classList.remove('sm-notimer');
   }
 
+  var toastSrc = null;
+  function toastFrom(src, seconds) {
+    var w = src();
+    toast(w[0], w[1], seconds);
+    toastSrc = src;              // after toast(), which clears it
+  }
+
+  /** Public: a caller outside this file hands over finished strings, which
+   *  a language switch cannot re-ask, so toastSrc is cleared. */
   function toast(title, sub, seconds) {
+    toastSrc = null;
     if (!els.toast) return;
     els.toastTitle.textContent = title;
     els.toastSub.textContent = sub || '';
@@ -2220,7 +2444,9 @@ SM.ui = (function () {
       SM.events.on('overdrive:end', onOverdriveEnd);
       SM.events.on('boost:start', onBoostStart);
       SM.events.on('boost:end', onBoostEnd);
-      SM.events.on('gate:missed', function () { toast('GATE MISSED', 'Steer into the arch next time', 1.8); });
+      SM.events.on('gate:missed', function () {
+        toastFrom(function () { return [T('toast.missed'), T('toast.missedSub')]; }, 1.8);
+      });
       SM.events.on('gate:passed', function () { pendingPop = true; });
       SM.events.on('time:granted', onTimeGranted);
       SM.events.on('time:low', onTimeLow);
@@ -2232,6 +2458,9 @@ SM.ui = (function () {
       // Contract from the gameplay side. Subscribed unconditionally: if
       // nothing ever emits it the handler simply never runs.
       SM.events.on('game:paused', onGamePaused);
+      // js/i18n.js announces a switch after repainting every [data-i18n]
+      // node; what is left is everything this file assembled from state.
+      document.addEventListener('arcade:lang', onLang, false);
       window.addEventListener('resize', onResize, false);
       window.addEventListener('orientationchange', onResize, false);
       window.addEventListener('keydown', onKeyDown, false);
@@ -2280,7 +2509,14 @@ SM.ui = (function () {
     burstAcc = 0;
     burstTimer = 0;
     summaryOpen = false;
+    summaryState = null;
+    hsNoteKey = '';
+    toastSrc = null;
+    splashSrc = null;
     zoneName = '';
+    zoneKey = '';
+    zoneRaw = '';
+    zoneKind = '';
 
     // countdown
     lastTickSec = -1;
@@ -2380,9 +2616,7 @@ SM.ui = (function () {
     }
 
     /* --- stat chips ---------------------------------------------------- */
-    setText('pwr', els.power, 'PWR ' + Math.round(SM.vehicle.getMiningPower()));
-    setText('cut', els.blade, 'CUT ' + Math.round(SM.vehicle.getBladeWidth()));
-    setText('mag', els.magnet, 'MAG ' + Math.round(SM.vehicle.getCollectRadius()));
+    paintChips();
     setText('mul', els.mult, '×' + (multiplier >= 10 ? Math.round(multiplier) : multiplier.toFixed(1)));
     setClass('mulon', els.mult, 'sm-stat-hot', multiplier > 1.01);
 
@@ -2450,12 +2684,7 @@ SM.ui = (function () {
      * an exact metre count would rewrite the node on every single step.
      * Fifty-metre steps land at about four writes a second, and fifty metres
      * is finer than anyone reads off a 10px label at speed. */
-    setText('zone', els.zoneLabel, zoneName);
-    var over = SM.level.getOvertime ? SM.level.getOvertime() : 0;
-    setClass('zonecore', els.zoneLine, 'sm-zone-core', over > 0);
-    if (over > 0) {
-      setText('zonecoretxt', els.zoneCore, 'CORE +' + fmt(Math.round(over / 50) * 50) + ' m');
-    }
+    paintZoneLine();
 
     /* --- overdrive countdown --------------------------------------------- */
     if (overdriveLeft > 0) {
@@ -2512,6 +2741,79 @@ SM.ui = (function () {
     }
   }
 
+  /* The two pieces of update() that carry words, split out so onLang() can
+   * repaint them while the fixed step is held (it is, behind every menu). */
+  function paintChips() {
+    setText('pwr', els.power, T('hud.pwr', Math.round(SM.vehicle.getMiningPower())));
+    setText('cut', els.blade, T('hud.cut', Math.round(SM.vehicle.getBladeWidth())));
+    setText('mag', els.magnet, T('hud.mag', Math.round(SM.vehicle.getCollectRadius())));
+  }
+
+  function paintZoneLine() {
+    setText('zone', els.zoneLabel, zoneName);
+    var ot = SM.level.getOvertime ? SM.level.getOvertime() : 0;
+    setClass('zonecore', els.zoneLine, 'sm-zone-core', ot > 0);
+    if (ot > 0) {
+      setText('zonecoretxt', els.zoneCore, T('hud.core', fmt(Math.round(ot / 50) * 50)));
+    }
+  }
+
+  /* =====================================================================
+   * A LANGUAGE SWITCH
+   * ---------------------------------------------------------------------
+   * Live: nothing reloads, nothing restarts, nothing unpauses, and whatever
+   * panel was open stays open. By the time this runs I18N.setLang() has
+   * already repainted every [data-i18n] node and every [data-i18n-label];
+   * this is everything that was assembled from state instead. Canvas text
+   * needs nothing — upgrades.js and terrain.js look their words up per frame.
+   * ================================================================== */
+  function onLang() {
+    if (!built) return;
+    var i;
+    for (i = 0; i < bound.length; i++) {
+      bound[i].node.textContent = T.apply(null, [bound[i].key].concat(bound[i].args));
+    }
+    paintLangRows();
+    paintQuit();
+    refreshScreenToggle();
+    paintUpdate();
+
+    // Written through the setText() cache, which would otherwise call the
+    // new words "unchanged" — the cache compares strings, not languages.
+    delete lastStrings.pwr; delete lastStrings.cut; delete lastStrings.mag;
+    delete lastStrings.zone; delete lastStrings.zonecoretxt;
+    delete lastStrings.sumkick; delete lastStrings.sumtitle; delete lastStrings.hsnote;
+    zoneName = zoneText();
+    paintChips();
+    paintZoneLine();
+    if (els.bannerText && zoneName) els.bannerText.textContent = zoneName;
+
+    if (toastSrc && els.toast) {
+      var tw = toastSrc();
+      els.toastTitle.textContent = tw[0];
+      els.toastSub.textContent = tw[1] || '';
+    }
+    if (splashSrc && els.splash) {
+      var sw = splashSrc();
+      els.splashBig.textContent = sw[0];
+      els.splashSub.textContent = sw[1];
+    }
+
+    for (i = 0; i < railTiles.length; i++) {
+      if (railTiles[i].id) railTiles[i].node.setAttribute('title', upTitle(railTiles[i].id, ''));
+    }
+    for (i = 0; i < tallyRows.length; i++) {
+      var m = SM.materials.get(tallyRows[i].mi);
+      var nm = matName(m);
+      tallyRows[i].name.textContent = nm;
+      tallyRows[i].node.setAttribute('title', nm);
+    }
+
+    paintSummaryText();
+    if (summaryOpen) renderHaul();
+    if (hsNoteKey) setText('hsnote', els.hsNote, T(hsNoteKey));
+  }
+
   function getCurrency() { return currency; }
 
   /* =====================================================================
@@ -2553,10 +2855,20 @@ SM.ui = (function () {
     if (v && els.version) setText('ver', els.version, v);
   }
 
+  var updState = '';             // '' | 'ready' | 'installing'
+  var updVersion = '';
+
+  function paintUpdate() {
+    if (!els.update || !updState) return;
+    els.update.textContent = updState === 'installing' ? T('update.installing')
+      : updVersion ? T('update.readyV', updVersion) : T('update.ready');
+  }
+
   function offerUpdate(version) {
     if (!els.update) return;
-    els.update.textContent = (version ? version + ' READY' : 'UPDATE READY') +
-                             ' — TAP TO INSTALL';
+    updState = 'ready';
+    updVersion = version || '';
+    paintUpdate();
     els.update.style.display = '';
     els.update.classList.add('sm-update-on');
   }
@@ -2564,7 +2876,8 @@ SM.ui = (function () {
   function applyUpdate() {
     if (!swReg || !swReg.waiting) return;
     SM.sound.play('ui');
-    els.update.textContent = 'INSTALLING…';
+    updState = 'installing';
+    paintUpdate();
     els.update.disabled = true;
     swReg.waiting.postMessage({ type: 'SKIP_WAITING' });
   }

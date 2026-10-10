@@ -44,7 +44,9 @@
  *   level:complete   {distance}       100% reached. A MILESTONE — the run does
  *                                     NOT end here, it carries on into the
  *                                     core. Fires exactly once per run.
- *   zone:entered     {name, kind}     kind: opening|rich|barrier|narrow|final
+ *   zone:entered     {name, key, kind} kind: opening|rich|barrier|narrow|final
+ *                    `name` is the English name; `key` is its i18n.js key,
+ *                    which is what anything a player reads should show
  *   time:granted     {seconds, left, source}   seconds went on the clock.
  *                                     source: 'gate' (a +10 SECONDS arch, the
  *                                     default) | 'cell' (a shattered time-cell
@@ -173,35 +175,35 @@ SM.level = (function () {
    * ================================================================== */
   var ZONES = [
     {
-      name: 'SURFACE CUT', kind: 'opening', len: 1800,
+      name: 'SURFACE CUT', key: 'zone.surface', kind: 'opening', len: 1800,
       stoneW: 0.12, graniteW: 0, pocketRate: 0.75,
       ores: [['iron', 5], ['gold', 2]],
       bigChance: 0, voidChance: 0.14, rubble: 0.10,
       veins: 0, veinOre: 'iron', veinWidth: 0
     },
     {
-      name: 'IRON LANES', kind: 'rich', len: 2900,
+      name: 'IRON LANES', key: 'zone.iron', kind: 'rich', len: 2900,
       stoneW: 0.34, graniteW: 0, pocketRate: 1.15,
       ores: [['iron', 6], ['gold', 3], ['stone', 2]],
       bigChance: 0.05, voidChance: 0.10, rubble: 0.12,
       veins: 2, veinOre: 'iron', veinWidth: 78
     },
     {
-      name: 'THE GRANITE WALL', kind: 'barrier', len: 2100,
+      name: 'THE GRANITE WALL', key: 'zone.granite', kind: 'barrier', len: 2100,
       stoneW: 0.58, graniteW: 0.22, pocketRate: 0.85,
       ores: [['gold', 4], ['iron', 3], ['gem', 2]],
       bigChance: 0.06, voidChance: 0.08, rubble: 0.18,
       veins: 0, veinOre: 'gold', veinWidth: 0
     },
     {
-      name: 'GOLDFIELDS', kind: 'rich', len: 3100,
+      name: 'GOLDFIELDS', key: 'zone.gold', kind: 'rich', len: 3100,
       stoneW: 0.40, graniteW: 0, pocketRate: 1.45,
       ores: [['gold', 7], ['iron', 3], ['gem', 3]],
       bigChance: 0.14, voidChance: 0.10, rubble: 0.12,
       veins: 2, veinOre: 'gold', veinWidth: 88
     },
     {
-      name: 'THE THROAT', kind: 'narrow', len: 1700,
+      name: 'THE THROAT', key: 'zone.throat', kind: 'narrow', len: 1700,
       stoneW: 0.55, graniteW: 0.30, pocketRate: 0.6,
       ores: [['gem', 4], ['gold', 3], ['crystal', 2]],
       bigChance: 0.05, voidChance: 0.05, rubble: 0.30,
@@ -211,14 +213,14 @@ SM.level = (function () {
       corridorHalf: 300, corridorWave: 70, corridorDrift: 190
     },
     {
-      name: 'GEM HOLLOWS', kind: 'rich', len: 3300,
+      name: 'GEM HOLLOWS', key: 'zone.gems', kind: 'rich', len: 3300,
       stoneW: 0.42, graniteW: 0.05, pocketRate: 1.55,
       ores: [['gem', 6], ['gold', 3], ['crystal', 3], ['iron', 2]],
       bigChance: 0.18, voidChance: 0.18, rubble: 0.14,
       veins: 2, veinOre: 'gem', veinWidth: 84
     },
     {
-      name: 'DEEP BARRIER', kind: 'barrier', len: 2300,
+      name: 'DEEP BARRIER', key: 'zone.deep', kind: 'barrier', len: 2300,
       stoneW: 0.50, graniteW: 0.34, pocketRate: 0.95,
       ores: [['crystal', 4], ['gem', 3], ['rare', 1]],
       bigChance: 0.10, voidChance: 0.07, rubble: 0.20,
@@ -228,14 +230,14 @@ SM.level = (function () {
       wallMat: 'obsidian'
     },
     {
-      name: 'CRYSTAL CAVERNS', kind: 'rich', len: 3900,
+      name: 'CRYSTAL CAVERNS', key: 'zone.crystal', kind: 'rich', len: 3900,
       stoneW: 0.35, graniteW: 0.04, pocketRate: 1.75,
       ores: [['crystal', 8], ['gem', 4], ['rare', 2], ['gold', 2]],
       bigChance: 0.34, voidChance: 0.18, rubble: 0.16,
       veins: 1, veinOre: 'crystal', veinWidth: 100
     },
     {
-      name: 'PRESSURE LOCK', kind: 'narrow', len: 1600,
+      name: 'PRESSURE LOCK', key: 'zone.pressure', kind: 'narrow', len: 1600,
       stoneW: 0.45, graniteW: 0.40, pocketRate: 0.7,
       ores: [['crystal', 4], ['rare', 2], ['gem', 2]],
       bigChance: 0.06, voidChance: 0.04, rubble: 0.34,
@@ -244,7 +246,7 @@ SM.level = (function () {
       wallMat: 'obsidian'
     },
     {
-      name: 'THE MOTHERLODE', kind: 'rich', len: 4400,
+      name: 'THE MOTHERLODE', key: 'zone.motherlode', kind: 'rich', len: 4400,
       stoneW: 0.28, graniteW: 0.03, pocketRate: 2.0,
       ores: [['crystal', 6], ['gem', 5], ['gold', 5], ['rare', 4]],
       bigChance: 0.30, voidChance: 0.09, rubble: 0.12,
@@ -254,7 +256,7 @@ SM.level = (function () {
       // THE FINAL SPECTACLE. No dirt at all: the base rock IS treasure, and
       // starcore formations are stacked on top of it. A maxed machine deletes
       // a wall of this per second.
-      name: 'THE CORE', kind: 'final', len: 6400,
+      name: 'THE CORE', key: 'zone.core', kind: 'final', len: 6400,
       stoneW: 0, graniteW: 0, pocketRate: 2.4,
       baseOres: [['gold', 3], ['gem', 3], ['crystal', 4], ['rare', 2]],
       ores: [['starcore', 6], ['rare', 6], ['crystal', 5], ['gem', 3]],
@@ -397,7 +399,7 @@ SM.level = (function () {
   var lowFired = false;          // `time:low` is once per run, not once per dip
 
   var evComplete = { distance: 0 };
-  var evZone = { name: '', kind: '' };
+  var evZone = { name: '', key: '', kind: '' };
   // Reused like evZone / evGate: emitted several times a run, never stashed.
   var evTimeGranted = { seconds: 0, left: 0, source: '' };
   var MI_TIME = -1;              // 'timecell' material index, resolved in init()
@@ -582,6 +584,7 @@ SM.level = (function () {
         zoneIndex = zi2;
         var z = ZONES[zi2];
         evZone.name = z.name;
+        evZone.key = z.key;     // i18n.js — what the HUD actually shows
         evZone.kind = z.kind;
         SM.events.emit('zone:entered', evZone);
         // Entering the final zone kicks the machine into a long frenzy — the

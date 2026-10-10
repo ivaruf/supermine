@@ -149,7 +149,8 @@
 //         here could refresh), and its cleanup filter was deleting SUPERMINE
 //         ADVENTURE's offline install, because that game's prefix starts with
 //         ours. Both scoped properly now.
-const VERSION = 'v1.10.2'; // a tablet no longer selects the HUD or opens Copy / Look Up mid-descent (js/touch-guard.js)
+// v1.10.2 A tablet no longer selects the HUD or opens Copy / Look Up.
+const VERSION = 'v1.11.0'; // the mine speaks bokmål first and English on request (js/i18n.js), and its menus say PLAY and BACK
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.
@@ -177,6 +178,7 @@ const ASSETS = [
   './moved.js',
   './manifest.webmanifest',
   './style.css',
+  './js/i18n.js',
   './js/config.js',
   './js/events.js',
   './js/materials.js',

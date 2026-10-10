@@ -79,6 +79,14 @@ SM.upgrades = (function () {
   var C = SM.config;
   var TAU = Math.PI * 2;
 
+  /** Canvas text in the player's language (js/i18n.js), looked up at draw
+   *  time so a switch from the menu shows on the very next frame. Keys are
+   *  constants, so this allocates nothing; `en` is only for a page where
+   *  i18n.js failed to load. */
+  function L(key, en) {
+    return window.I18N ? window.I18N.t(key) : en;
+  }
+
   var gates = [];
   var prevFrontY = 0;
   var animTime = 0;
@@ -128,6 +136,11 @@ SM.upgrades = (function () {
       y: spec.y,
       width: spec.width || (station ? C.LANE_HALF_WIDTH * 2 - 24 : C.GATE_WIDTH),
       label: spec.label || (tr && tr.label) || (eff && eff.title) || 'UPGRADE',
+      // What the arch actually shows: an i18n.js key, built ONCE here so the
+      // draw loop only ever does a table lookup. An explicit spec.label has
+      // no key and is drawn as given.
+      labelKey: spec.label ? '' : tr ? 'up.' + spec.upgradeId + '.label'
+              : eff ? 'up.' + spec.upgradeId : 'gate.upgrade',
       description: spec.description ||
                    (tr && tr.description) || (eff && eff.description) || '',
       passed: false,
@@ -410,10 +423,10 @@ SM.upgrades = (function () {
       ctx.strokeRect(g.x - half - PILLAR_W * 0.5, archY, g.width + PILLAR_W, ARCH_H);
 
       var text;
-      if (g.passed) text = g.isTime ? '+10 SEC' : 'INSTALLED';
-      else if (g.rejected) text = 'CLOSED';
-      else if (g.missed) text = 'MISSED';
-      else text = g.label;
+      if (g.passed) text = L(g.isTime ? 'gate.timeDone' : 'gate.installed', g.isTime ? '+10 SEC' : 'INSTALLED');
+      else if (g.rejected) text = L('gate.closed', 'CLOSED');
+      else if (g.missed) text = L('gate.missed', 'MISSED');
+      else text = g.labelKey ? L(g.labelKey, g.label) : g.label;
 
       ctx.fillStyle = g.passed ? 'rgba(150,255,190,0.95)'
         : (g.rejected || g.missed) ? 'rgba(180,180,190,0.7)'
@@ -431,7 +444,8 @@ SM.upgrades = (function () {
         ctx.font = 'bold 12px ui-sans-serif, system-ui, Arial, sans-serif';
         ctx.fillStyle = 'rgba(' + col + ',0.8)';
         ctx.fillText(
-          g.isTime ? 'TIME' : (g.tone === 'risk' ? 'HARD ROUTE' : 'SAFE ROUTE'),
+          g.isTime ? L('gate.time', 'TIME')
+            : (g.tone === 'risk' ? L('gate.hard', 'HARD ROUTE') : L('gate.safe', 'SAFE ROUTE')),
           g.x, archY - 12);
         if (g.isTime) {
           drawClock(ctx, g.x, archY - 34, col, animTime * 2.4);
