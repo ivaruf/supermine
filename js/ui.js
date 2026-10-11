@@ -101,7 +101,7 @@ SM.ui = (function () {
    * KEEP IT IN STEP WITH sw.js's VERSION — it had drifted two releases behind,
    * which only ever shows on a first-visit load where nobody can check it
    * against anything, so a wrong number there is worse than none. */
-  var GAME_VERSION    = 'v1.12.0';
+  var GAME_VERSION    = 'v1.13.0';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -213,13 +213,27 @@ SM.ui = (function () {
    * shapes (pause bars, play triangle) are filled rather than stroked for the
    * same reason — a stroked triangle at 20px is a smudge.
    *
-   * The two sound states are deliberately the SAME speaker with a different
-   * right-hand side, so the button reads as one control in two states rather
-   * than two different buttons.
+   * THE THREE CORNER GLYPHS ARE NOT OURS. Menu, speaker and fullscreen are
+   * the hub's drawings TO THE PATH DATA (CLAUDE.md §2, "The three glyphs are
+   * the same drawing in every game"), so a player crossing from the next
+   * cabinet is looking at the same object rather than a family resemblance.
+   * The stroke, the gold and the plate behind them are still the mine's.
+   * Both toggles carry BOTH of their states in one drawing — .sm-g-rest and
+   * .sm-g-pressed — and style.css shows one of them off aria-pressed, which
+   * the JS writes in the same breath as the label, so what is engraved and
+   * what a screen reader hears cannot drift apart.
    * ------------------------------------------------------------------ */
   var UI_ICONS = {
-    pause: '<rect x="7.2" y="4.6" width="3.7" height="14.8" rx="1.1" fill="currentColor" stroke="none"/>' +
-           '<rect x="13.1" y="4.6" width="3.7" height="14.8" rx="1.1" fill="currentColor" stroke="none"/>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+
+    // Audible at rest (waves), muted when pressed (slash).
+    speaker: '<path d="M11 5 6 9H3v6h3l5 4Z"/>' +
+             '<path class="sm-g-rest" d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>' +
+             '<path class="sm-g-pressed" d="m15.5 9.5 6 5m0-5-6 5"/>',
+
+    // Four corners pushing out at rest, the same four pulled in when filled.
+    screen: '<path class="sm-g-rest" d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/>' +
+            '<path class="sm-g-pressed" d="M3 9h6V3M21 9h-6V3M3 15h6v6M21 15h-6v6"/>',
 
     play: '<path d="M7.8 4.7 19.4 12 7.8 19.3z" fill="currentColor" stroke="none"/>',
 
@@ -243,24 +257,6 @@ SM.ui = (function () {
     // next door finds it here without reading. The stroke and colour are
     // still ours, via uiGlyph().
     back: '<path d="M19 12H5m6-6-6 6 6 6"/>',
-
-    sound_on: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
-              '<path d="M15.7 9.2a3.9 3.9 0 0 1 0 5.6"/>' +
-              '<path d="M18.3 6.5a7.6 7.6 0 0 1 0 11"/>',
-
-    sound_off: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
-               '<path d="m16.2 9.6 5.2 4.8M21.4 9.6l-5.2 4.8"/>',
-
-    // Filling the screen, and leaving it: four corners pushing out, and the
-    // same four pulled in. Drawn on this set's own grid rather than lifted
-    // from another game — same idea, same weight as the pit furniture round
-    // it. The pressed state swaps the glyph, exactly as the speaker does,
-    // because colour alone is not a state.
-    expand: '<path d="M9.4 3.6H3.6v5.8M14.6 3.6h5.8v5.8"/>' +
-            '<path d="M3.6 14.6v5.8h5.8M20.4 14.6v5.8h-5.8"/>',
-
-    contract: '<path d="M3.6 9.4h5.8V3.6M20.4 9.4h-5.8V3.6"/>' +
-              '<path d="M3.6 14.6h5.8v5.8M20.4 14.6h-5.8v5.8"/>',
 
     // Steering pads. A double chevron, because one chevron on a transparent
     // full-height slab reads as decoration and two read as a control.
@@ -302,7 +298,7 @@ SM.ui = (function () {
   var zoneKind = '';
   var summaryOpen = false;
   var pauseOpen = false;
-  var soundOpen = false;         // the mixing panel, behind the corner speaker
+  var settingsOpen = false;      // the menu card's Settings face, off a run
   var started = false;
   var hudSmall = false;          // compact or portrait — set by applyCompact()
 
@@ -665,35 +661,47 @@ SM.ui = (function () {
     var boostBar = el('div', 'sm-od-bar', els.boostWrap);
     els.boostFill = el('div', 'sm-od-fill', boostBar);
 
-    /* --- top-right icon buttons ------------------------------------------
-     * RESTART used to live here as a word, one tap from throwing a run away.
-     * It is now behind PAUSE, which is the button you actually want mid-run
-     * on a phone — and the pause menu is a much better place to ask "are you
-     * sure" than a confirm dialog would be. */
-    var btns = el('div', 'sm-buttons', root);
-    els.mute = iconButton(btns, 'sm-btn-sound', UI_ICONS.sound_on, 'aria.mute');
-    els.pause = iconButton(btns, 'sm-btn-pause', UI_ICONS.pause, 'aria.pause');
-
-    els.mute.addEventListener('click', function (e) {
-      e.preventDefault();
-      SM.sound.toggleMute();
-      refreshMute();
-      els.mute.blur();
-    });
-    els.pause.addEventListener('click', function (e) {
-      e.preventDefault();
-      els.pause.blur();
-      openPause();
-    });
-
-    /* --- PAUSE MENU ------------------------------------------------------ */
+    /* --- THE MENU CARD: pause card in a run, Settings everywhere else ------
+     * ONE PANEL BEHIND THE THREE BARS, with two faces (hub CLAUDE.md §2, "The
+     * corner: three plates"). Mid-run it is the pause card it always was —
+     * the run stops, RESUME is the first thing on it. Opened from the menu or
+     * over the end-of-run summary there is nothing to pause or resume, so the
+     * same card shows its Settings face: the run's three buttons go, a plain
+     * BACK takes RESUME's place, and the volumes, the language and the way out
+     * are exactly where they are in a run. .sm-pause-settings on the overlay
+     * is the whole switch; see openSettings().
+     *
+     * There used to be a second panel for the volumes, behind a speaker of its
+     * own in the corner, beside the HUD's mute speaker — "one mute and one
+     * sound menu" side by side, in the owner's words. The volumes live here
+     * now, and the speaker in the corner only mutes.
+     *
+     * TWO COLUMNS INSIDE THE CARD, the run's buttons and the settings, so a
+     * phone on its side can stand them next to each other rather than run off
+     * the bottom (the landscape block at the end of style.css). Stacked
+     * everywhere else, which is exactly the order they had. */
     els.pauseMenu = el('div', 'sm-pause', root);
     var pcard = el('div', 'sm-panel sm-pause-card', els.pauseMenu);
+    els.pauseCard = pcard;
+    pcard.setAttribute('role', 'dialog');
+    pcard.setAttribute('aria-modal', 'true');
     el('div', 'sm-stripe', pcard);
-    elT('div', 'sm-pause-kicker', pcard, 'pause.kicker');
-    elT('div', 'sm-pause-title', pcard, 'pause.title');
-    els.pauseResume = menuButton(pcard, 'sm-btn-primary', UI_ICONS.play, 'pause.resume');
-    els.pauseRestart = menuButton(pcard, '', UI_ICONS.restart, 'pause.restart');
+    var phead = el('div', 'sm-pause-head', pcard);
+    elT('div', 'sm-pause-kicker', phead, 'pause.kicker');
+    els.pauseTitle = elT('div', 'sm-pause-title', phead, 'pause.title');
+    els.setTitle = elT('div', 'sm-pause-title sm-set-title', phead, 'settings.title');
+    var prun = el('div', 'sm-pause-run', pcard);
+    var pset = el('div', 'sm-pause-set', pcard);
+    els.pauseResume = menuButton(prun, 'sm-btn-primary sm-run-only', UI_ICONS.play, 'pause.resume');
+    /* The Settings face's way back to whatever it was opened over. Silent,
+     * like the rest of this card off a run: play() rate-limits on the sim
+     * clock, which is held while the menu is up. */
+    els.setBack = menuButton(prun, 'sm-set-only', UI_ICONS.back, 'sound.back');
+    els.setBack.addEventListener('click', function (e) {
+      e.preventDefault();
+      closeSettings();
+    });
+    els.pauseRestart = menuButton(prun, 'sm-run-only', UI_ICONS.restart, 'pause.restart');
     els.pauseResume.addEventListener('click', function (e) {
       e.preventDefault();
       els.pauseResume.blur();
@@ -708,17 +716,29 @@ SM.ui = (function () {
       SM.sound.play('ui');
       SM.events.emit('input:restart', null);
     });
-    els.pauseMenuBtn = menuButton(pcard, '', UI_ICONS.home, 'pause.menu');
+    els.pauseMenuBtn = menuButton(prun, 'sm-run-only', UI_ICONS.home, 'pause.menu');
     els.pauseMenuBtn.addEventListener('click', function (e) {
       e.preventDefault();
       els.pauseMenuBtn.blur();
       returnToMenu();
     });
 
-    /* The language row, under the three things you can do with this run and
-     * above the way out of the game. Switching here repaints in place: the
-     * card stays up and the run stays paused (hub CLAUDE.md §2). */
-    langRow(pcard, 'sm-lang-stack', 'sm-lang-cap', 'p');
+    /* MUSIC and EFFECTS, the same two words every game in this hub uses, and
+     * deliberately not this one's own. The row said MACHINERY because that is
+     * what it governs here — but a player reaching for a volume is not
+     * reading for flavour, they are looking for the one of two sliders they
+     * want. The fiction gets the hint line underneath, where it explains
+     * rather than obstructs. Storage is sound.js's and unchanged (§6). */
+    els.volMusic = volumeRow(pset, 'sm-vol-music', 'sound.music');
+    els.volSfx = volumeRow(pset, 'sm-vol-machinery', 'sound.effects');
+
+    /* The language row, under the volumes and above the way out of the game.
+     * It shares the volume rows' label gutter, so its plates start at the
+     * same x as the two tracks above it. Switching here repaints in place:
+     * the card stays up and the run stays paused (hub CLAUDE.md §2). */
+    langRow(pset, 'sm-sound-row sm-lang-inline', 'sm-sound-label', 'p');
+
+    elT('div', 'sm-sound-hint', pset, 'sound.hint');
 
     /* Leaving the game itself, which is a different thing from leaving the run.
      * Only built when the arcade's exit.js actually loaded: it is another
@@ -730,7 +750,7 @@ SM.ui = (function () {
      * `if (window.ArcadeExit)`. */
     if (exitOffered()) {
       els.pauseQuit = menuButton(
-        pcard,
+        pset,
         'sm-btn-quit',
         UI_ICONS.back,
         'exit.arcade'
@@ -742,7 +762,7 @@ SM.ui = (function () {
       els.pauseQuit.addEventListener('click', function (e) {
         e.preventDefault();
         els.pauseQuit.blur();
-        SM.sound.play('ui');
+        if (!settingsOpen) SM.sound.play('ui');
         window.ArcadeExit.quit().then(function (how) {
           // 'refused' means the browser would not close a tab it did not open.
           // Say so on the button, in the pause card, rather than looking dead.
@@ -934,6 +954,14 @@ SM.ui = (function () {
     // file:// or first-visit load where no worker is controlling yet.
     els.version = el('div', 'sm-start-version', els.start, GAME_VERSION);
 
+    /* THE LANGUAGE ROW ON THE SCREEN YOU ARRIVE ON, as a visible row and not
+     * behind anything (hub CLAUDE.md §2, "Two languages", Where): the player
+     * who needs it most is the stranger who cannot read the Norwegian the
+     * mine opened in, and the owner could not find it when it lived only
+     * behind a corner plate. Above the way out, which stays last. Its own
+     * clipPath suffix, because the menu card carries a second copy. */
+    langRow(sc, 'sm-lang-start', 'sm-lang-cap', 'm');
+
     /* --- the way out of the GAME, on the screen you arrive on ---------------
      * The pause card has carried this since the arcade learned to frame us,
      * and that covers a player who is already driving. It covered nobody else:
@@ -977,110 +1005,61 @@ SM.ui = (function () {
       });
     }
 
-    /* --- THE CORNER CLUSTER — PERMANENT CHROME, NOT A MENU ORNAMENT --------
-     * The two things here that are about the HARDWARE rather than about the
-     * mine: the speaker that opens the sound panel, and the plate that fills
-     * the screen. At 42px a symbol survives in a corner where a word would
-     * have to be shrunk until nobody read it.
+    /* --- THE CORNER: THREE PLATES, ON EVERY SCREEN ------------------------
+     * Menu, sound, fullscreen, left to right, and nothing else up there (hub
+     * CLAUDE.md §2, "The corner: three plates, on every screen"). The same
+     * three on the menu, mid-run, over the pause card and over the summary:
+     * a CHILD OF #ui-root, `position: fixed`, above every overlay this game
+     * has, so no screen change can take one away.
      *
-     * IT USED TO BELONG TO THE MENU, hanging off the start overlay and leaving
-     * with it — which meant fullscreen was unreachable from the moment you
-     * started driving, on the one screen where filling the glass matters most.
-     * A control that goes away when the screen changes is not a corner; it is
-     * a menu item that happens to sit in one. So it is a CHILD OF #ui-root
-     * now, `position: fixed`, above both the menu (z 20) and the HUD (z 8) —
-     * same two plates, same place, on the menu, mid-run, over the pause card
-     * and over the end-of-run summary.
+     * They are three kinds of thing. FULLSCREEN changes the window. SOUND
+     * mutes and unmutes, one tap, live — nothing opens, nothing pauses, no
+     * focus moves, so a player silencing the room mid-corner keeps the run.
+     * Only the MENU touches the game: in a run it pauses and shows the pause
+     * card; anywhere else it shows that card's Settings face. It replaced a
+     * pause plate, and the speaker that opened a separate sound panel is gone
+     * with the panel — the volumes live on the card now.
      *
-     * WHERE IT SITS, and why it is not the very top corner. Mid-run the top of
-     * the screen is the full-width score strip, gutter to gutter, and a plate
-     * over its right end would be a plate over the deck. So the cluster takes
-     * the row BELOW the strip — the row the run's own two plates were already
-     * on — and those move inboard to make room. Reading in from the right edge
-     * it is: fullscreen, sound, pause, mute. The page's pair outermost, always
-     * there; the run's pair inside them, only while a run is going. (maxgear
-     * reads fullscreen, sound, mute, pause; this game keeps its existing
-     * mute-then-pause DOM order, which puts a plate between the two speaker
-     * glyphs instead of side by side — no bad thing.)
+     * THE ACTUAL CORNER, and the score strip yields it. Until 2026-10-11 the
+     * strip ran gutter to gutter and this cluster took the row beneath it,
+     * with the run's pause and mute a row lower still. The hub settled which
+     * wins: the plates are the same in every cabinet and the strip is not, so
+     * .sm-topbar now stops short of them — see the stylesheet.
      *
-     * The speaker here is NOT the HUD's mute button and carries no slash: it
-     * opens the panel below. Art carries the meaning, so both plates get a
-     * real title and aria-label, and the screen toggle rewrites its own as the
-     * state changes — see refreshScreenToggle().
-     *
-     * It is fixed to the VIEWPORT now rather than to #ui-root's padding box,
-     * so the safe-area insets it used to inherit are added back by hand in
-     * .sm-corner — see the stylesheet. */
+     * It is fixed to the VIEWPORT rather than to #ui-root's padding box, so
+     * the safe-area insets are added back by hand in .sm-corner. */
     els.corner = el('div', 'sm-corner', root);
-    els.mixBtn = iconButton(els.corner, 'sm-btn-mix', UI_ICONS.sound_on, 'aria.sound');
-    els.mixBtn.setAttribute('aria-expanded', 'false');
-    els.mixBtn.addEventListener('click', function (e) {
+    els.menuBtn = iconButton(els.corner, 'sm-btn-menu', UI_ICONS.menu, 'aria.menu');
+    els.menuBtn.setAttribute('aria-haspopup', 'dialog');
+    els.menuBtn.setAttribute('aria-expanded', 'false');
+    els.menuBtn.addEventListener('click', function (e) {
       e.preventDefault();
-      els.mixBtn.blur();
-      /* A TOGGLE, because the plate now paints ABOVE the panel it opens. It
-       * used to disappear under the sound panel's scrim, so "press it again"
-       * was not a gesture that existed; now it is the obvious one, and
-       * aria-expanded has been claiming it all along. */
-      if (soundOpen) closeSound(); else openSound();
+      els.menuBtn.blur();
+      menuPlate();
+    });
+
+    els.mute = iconButton(els.corner, 'sm-btn-sound', UI_ICONS.speaker, 'aria.mute');
+    // Its label follows its STATE ("Mute" / "Unmute"), so refreshMute() owns
+    // it rather than paintStatic().
+    els.mute.removeAttribute('data-i18n-label');
+    els.mute.addEventListener('click', function (e) {
+      e.preventDefault();
+      SM.sound.toggleMute();
+      refreshMute();
+      els.mute.blur();
     });
 
     /* Hidden in the markup this builds, and un-hidden by initScreenToggle()
      * only once a WORKING request/exit pair has answered. Safari on iPhone has
      * no element fullscreen at all, and a plate that does nothing when pressed
      * is worse than no plate. */
-    els.screen = iconButton(els.corner, 'sm-btn-screen', UI_ICONS.expand, 'aria.fullscreen');
+    els.screen = iconButton(els.corner, 'sm-btn-screen', UI_ICONS.screen, 'aria.fullscreen');
     // Its label follows its STATE, so refreshScreenToggle() owns it rather
     // than paintStatic() — which would otherwise write "Fullscreen" over
     // "Exit fullscreen" on a switch made while the screen is filled.
     els.screen.removeAttribute('data-i18n-label');
     els.screen.setAttribute('aria-pressed', 'false');
     els.screen.hidden = true;
-
-    /* --- THE SOUND PANEL --------------------------------------------------
-     * Two levels and a way back, on the mine's own plate. It is a sibling of
-     * the start overlay rather than a child of it so it can paint over the
-     * top (z 22 against 20) instead of being clipped inside the panel that
-     * opened it.
-     *
-     * DELIBERATELY SILENT TO OPEN AND TO CLOSE, like the quit plate beside it
-     * and for a second reason as well: play() rate-limits on a clock that only
-     * advances inside main.js's fixed step, and the fixed step is held while
-     * the menu is up — so a 'ui' blip here would sound exactly once per
-     * session and then stop, which is worse than never. The sliders make their
-     * own noise through SM.sound.preview(), which throttles on wall time
-     * instead and is the only thing on this screen that has to be heard. */
-    els.soundPanel = el('div', 'sm-sound', root);
-    var scard = el('div', 'sm-panel sm-sound-card', els.soundPanel);
-    el('div', 'sm-stripe', scard);
-    elT('div', 'sm-sound-kicker', scard, 'sound.kicker');
-    elT('div', 'sm-sound-title', scard, 'sound.title');
-
-    // MUSIC and EFFECTS, the same two words every game in this hub uses, and
-    // deliberately not this one's own. The row said MACHINERY because that is
-    // what it governs here — but a player reaching for a volume is not reading
-    // for flavour, they are looking for the one of two sliders they want, and
-    // a label that has to be decoded costs them that. The fiction gets the
-    // hint line underneath, where it explains rather than obstructs.
-    els.volMusic = volumeRow(scard, 'sm-vol-music', 'sound.music');
-    els.volSfx = volumeRow(scard, 'sm-vol-machinery', 'sound.effects');
-
-    /* THE LANGUAGE ROW, AGAIN — this is the copy a stranger can reach before
-     * a run. The start screen has no settings panel of its own; this one,
-     * behind the corner speaker, is the panel it has (hub CLAUDE.md §2: "if
-     * the start screen has a settings or sound panel, the row goes there").
-     * It shares the volume rows' label gutter, so its buttons start at the
-     * same x as the two tracks above it. */
-    langRow(scard, 'sm-sound-row sm-lang-inline', 'sm-sound-label', 's');
-
-    elT('div', 'sm-sound-hint', scard, 'sound.hint');
-
-    els.soundBack = elT('button', 'sm-btn sm-sound-back', scard, 'sound.back');
-    els.soundBack.setAttribute('type', 'button');
-    els.soundBack.addEventListener('click', function (e) {
-      e.preventDefault();
-      els.soundBack.blur();
-      closeSound();
-    });
 
     paintVolumes();
 
@@ -1100,6 +1079,7 @@ SM.ui = (function () {
 
     paintQuit();
     paintLangRows();
+    refreshMute();
     applyCompact();
   }
 
@@ -1173,12 +1153,12 @@ SM.ui = (function () {
    * always written in its OWN language, with a lang attribute so a screen
    * reader says it right. The flags are the hub's shared drawings, copied
    * from kitchens/index.html as they are. The row exists twice in this page
-   * (pause card and sound panel) and the Union Jack's clipPath ids are
+   * (the menu card and the start screen) and the Union Jack's clipPath ids are
    * page-global, so each copy gets its own suffix — or the second flag
    * would silently clip against the first one's paths.
    *
-   * Silent on purpose, like everything else in the sound panel: play()
-   * rate-limits on the sim clock, which is held while either panel is up.
+   * Silent on purpose, like everything else on the menu card: play()
+   * rate-limits on the sim clock, which is held while either screen is up.
    * ================================================================== */
   var FLAG_NB =
     '<svg class="sm-flag" viewBox="0 0 22 16" aria-hidden="true">' +
@@ -1335,66 +1315,62 @@ SM.ui = (function () {
   }
 
   /**
-   * The mixing panel.
-   *
-   * NO STATE GUARD, and that is the point of this release. The speaker used to
-   * exist only on the menu, so "where can this be opened from" never had to be
-   * asked; now the plate is on every screen and mid-run, and a guard that let
-   * it fire from one of them would turn it into a button that silently does
-   * nothing everywhere else — which is worse than not being there at all.
-   *
-   * WHERE "BACK" GOES NEEDS NO BOOKKEEPING HERE. The panel is an overlay with
-   * its own scrim, not a screen in a state machine, so closing it reveals
-   * whatever it was opened over, by construction. The one thing that does have
-   * to be arranged is the state UNDERNEATH it:
-   *
-   * MID-RUN THE MINE STOPS. Opening a panel over a live run would leave the
-   * rig driving into rock behind the scrim, and closing it would drop the
-   * player straight back into a game they have not been watching. So a run is
-   * PAUSED on the way in and stays paused on the way out: closeSound() reveals
-   * the pause card, which is the honest landing, and RESUME is one tap. The
-   * menu and the end-of-run summary need none of this — canPause() already
-   * says so — and openPause() is idempotent, so a player who presses the
-   * speaker from the pause card is not paused twice.
+   * THE MENU PLATE. One press, and what it opens depends only on whether a
+   * run is going: mid-run it is the pause card (and a second press closes it,
+   * exactly as Escape does); anywhere else it is that card's Settings face.
+   * NO OTHER STATE GUARD, on purpose: the plate is on every screen, and a
+   * guard that let it fire from one of them would turn it into a button that
+   * silently does nothing everywhere else.
    */
-  function openSound() {
-    if (!els.soundPanel || soundOpen) return;
-    if (canPause() && !pauseOpen) openPause();
-    soundOpen = true;
-    // The panel is built once and reopened many times, so it repaints from the
-    // module on the way up rather than trusting whatever the DOM was last left
-    // showing: the thumb can then never be sitting at a level the graph is not
-    // actually at.
-    paintVolumes();
-    els.soundPanel.classList.add('sm-sound-on');
-    if (els.mixBtn) els.mixBtn.setAttribute('aria-expanded', 'true');
-    // Put focus inside the thing that just appeared rather than leaving it on
-    // a button behind a scrim.
-    try { els.soundBack.focus(); } catch (e) { /* focus is optional */ }
+  function menuPlate() {
+    if (pauseOpen) { closePause(); return; }
+    if (canPause()) { openPause(); return; }
+    if (settingsOpen) closeSettings(); else openSettings();
   }
 
   /**
-   * DELIBERATELY DOES NOT RESUME. If openSound() paused a run, the pause card
-   * is what appears when this scrim goes — see openSound(). Both doors out of
-   * the panel come through here (the BACK button and Escape), so they cannot
-   * leave by different ones.
+   * The Settings face, over the menu or the end-of-run summary. The panel is
+   * an overlay with its own scrim, not a screen in a state machine, so
+   * closing it reveals whatever it was opened over, by construction.
+   *
+   * DELIBERATELY SILENT TO OPEN AND TO CLOSE: play() rate-limits on a clock
+   * that only advances inside main.js's fixed step, and the fixed step is
+   * held off a run — so a 'ui' blip here would sound exactly once per
+   * session and then stop, which is worse than never. The sliders make their
+   * own noise through SM.sound.preview(), which throttles on wall time.
    */
-  function closeSound() {
-    if (!els.soundPanel || !soundOpen) return;
-    soundOpen = false;
-    els.soundPanel.classList.remove('sm-sound-on');
-    if (els.mixBtn) {
-      els.mixBtn.setAttribute('aria-expanded', 'false');
+  function openSettings() {
+    if (!els.pauseMenu || settingsOpen || pauseOpen) return;
+    settingsOpen = true;
+    // Built once and reopened many times, so it repaints from the module on
+    // the way up rather than trusting whatever the DOM was last left showing.
+    paintVolumes();
+    els.pauseMenu.classList.add('sm-pause-settings');
+    els.pauseMenu.classList.add('sm-pause-on');
+    if (els.menuBtn) els.menuBtn.setAttribute('aria-expanded', 'true');
+    // Focus inside the thing that just appeared rather than behind a scrim.
+    try { els.setBack.focus(); } catch (e) { /* focus is optional */ }
+  }
+
+  /** Both doors out of the Settings face come through here (BACK, the menu
+   *  plate and Escape), so they cannot leave by different ones. */
+  function closeSettings() {
+    if (!els.pauseMenu || !settingsOpen) return;
+    settingsOpen = false;
+    els.pauseMenu.classList.remove('sm-pause-on');
+    els.pauseMenu.classList.remove('sm-pause-settings');
+    if (els.menuBtn) {
+      els.menuBtn.setAttribute('aria-expanded', 'false');
       // Hand focus back to the plate that opened it, or a keyboard player is
       // dropped on the body with nothing selected.
-      try { els.mixBtn.focus(); } catch (e) { /* focus is optional */ }
+      try { els.menuBtn.focus(); } catch (e) { /* focus is optional */ }
     }
   }
 
   /* =====================================================================
    * FILLING THE SCREEN
    * ---------------------------------------------------------------------
-   * The second plate in the corner cluster. It lives in THIS file rather
+   * The third plate in the corner. It lives in THIS file rather
    * than a js/screen.js of its own for the reason index.html states at the
    * top: that file is frozen, every script tag in it is accounted for, and
    * ui.js is already the module that builds every control in the game. What
@@ -1429,7 +1405,6 @@ SM.ui = (function () {
     // something the browser does, not something the game does; it has one
     // name everywhere and the player already knows it.
     var label = T(on ? 'aria.exitFullscreen' : 'aria.fullscreen');
-    els.screen.innerHTML = uiGlyph(on ? UI_ICONS.contract : UI_ICONS.expand);
     els.screen.setAttribute('aria-pressed', on ? 'true' : 'false');
     els.screen.setAttribute('aria-label', label);
     els.screen.setAttribute('title', label);
@@ -1620,6 +1595,8 @@ SM.ui = (function () {
     pauseOpen = true;
     padsRelease();                 // never freeze with a key held down
     SM.sound.play('ui');
+    paintVolumes();
+    if (els.menuBtn) els.menuBtn.setAttribute('aria-expanded', 'true');
     if (els.pauseMenu) els.pauseMenu.classList.add('sm-pause-on');
     if (root) root.classList.add('sm-paused');
   }
@@ -1629,6 +1606,7 @@ SM.ui = (function () {
     pauseOpen = false;
     if (silent !== true) SM.sound.play('ui');
     if (SM.main.setPaused) SM.main.setPaused(false);
+    if (els.menuBtn) els.menuBtn.setAttribute('aria-expanded', 'false');
     if (els.pauseMenu) els.pauseMenu.classList.remove('sm-pause-on');
     if (root) root.classList.remove('sm-paused');
   }
@@ -1650,6 +1628,7 @@ SM.ui = (function () {
     // run must stay frozen from here until a mode is picked.
     pauseOpen = false;
     padsRelease();                 // never leave the menu with a key held
+    if (els.menuBtn) els.menuBtn.setAttribute('aria-expanded', 'false');
     if (els.pauseMenu) els.pauseMenu.classList.remove('sm-pause-on');
     if (root) root.classList.remove('sm-paused');
     SM.sound.play('ui');
@@ -1685,6 +1664,8 @@ SM.ui = (function () {
     if (on && !canPause()) return;
     pauseOpen = on;
     if (on) padsRelease();
+    if (on) paintVolumes();
+    if (els.menuBtn) els.menuBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
     if (els.pauseMenu) {
       if (on) els.pauseMenu.classList.add('sm-pause-on');
       else els.pauseMenu.classList.remove('sm-pause-on');
@@ -1701,9 +1682,12 @@ SM.ui = (function () {
    * start screen that step is the arcade") in this game's states, checked in
    * this order because the first one that is true is the one on top:
    *
-   *   sound panel open    -> its BACK (closeSound), over any screen
-   *   pause card open     -> close it, the run carries on
-   *   driving             -> open the pause card (and pause)
+   *   Settings face open  -> its BACK (closeSettings), over the menu or the
+   *                          summary
+   *   pause card open     -> close it, the run carries on — the same thing
+   *                          the menu plate does when pressed again
+   *   driving             -> open the pause card (and pause), exactly as
+   *                          the menu plate does
    *   main menu, nothing  -> the "Back to arcade" button, exactly as if it
    *     else open            were pressed — and only when it is shown
    *   end-of-run summary  -> nothing. It is not the start screen, it is not a
@@ -1738,10 +1722,10 @@ SM.ui = (function () {
     var p = (k === 'p' || k === 'P');
     if (!esc && !p) return;
 
-    if (soundOpen) {
+    if (settingsOpen) {
       if (!esc) return;
       e.preventDefault();
-      if (!e.repeat) closeSound();
+      if (!e.repeat) closeSettings();
       return;
     }
     if (pauseOpen || canPause()) {
@@ -2110,12 +2094,17 @@ SM.ui = (function () {
    */
   function refreshMute() {
     if (!els.mute) return;
-    var m = SM.sound.isMuted();
-    els.mute.innerHTML = uiGlyph(m ? UI_ICONS.sound_off : UI_ICONS.sound_on);
+    var m = !!(SM.sound && SM.sound.isMuted && SM.sound.isMuted());
+    // aria-pressed says "muted"; the label says what a press will DO. Both
+    // written here, together, and CSS reads the first to pick the glyph.
+    var label = T(m ? 'aria.unmute' : 'aria.mute');
     els.mute.setAttribute('aria-pressed', m ? 'true' : 'false');
+    els.mute.setAttribute('aria-label', label);
+    els.mute.setAttribute('title', label);
     if (m) els.mute.classList.add('sm-btn-off');
     else els.mute.classList.remove('sm-btn-off');
   }
+
 
   /** One class toggle drives every responsive rule in style.css. */
   function applyCompact() {
@@ -2426,12 +2415,12 @@ SM.ui = (function () {
   function onFirstGesture() {
     if (started) return;
     started = true;
-    // The corner cluster stays — it is the page's, not the menu's — but the
-    // mixing panel is a modal and must not be left up over a run that has just
+    // The corner stays — it is the page's, not the menu's — but the Settings
+    // face is a modal and must not be left up over a run that has just
     // started underneath it. Belt and braces: its scrim takes every pointer
     // while it is open, so nothing behind it can start a run in the first
     // place. Cheaper than proving that stays true.
-    closeSound();
+    closeSettings();
     if (root) root.classList.remove('sm-menu');
     if (els.start) els.start.classList.add('sm-start-off');
     if (els.hint) els.hint.classList.add('sm-hint-fade');
@@ -2834,6 +2823,7 @@ SM.ui = (function () {
     paintLangRows();
     paintQuit();
     refreshScreenToggle();
+    refreshMute();
     paintUpdate();
 
     // Written through the setText() cache, which would otherwise call the

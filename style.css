@@ -92,10 +92,7 @@
   --sm-top-h:     48px;      /* its height — ONE LINE, never two */
   --sm-gutter:    10px;      /* side inset shared by the strip and buttons  */
   --sm-btn-size:  42px;      /* icon button plate, 44px touch box in CSS    */
-  /* The air between two icon plates, and between the two PAIRS of them in the
-     top-right row. One declaration because .sm-corner and .sm-buttons have to
-     agree: the run's pair is placed by measuring the page's pair, and a gap
-     that only half of them knew about would push them apart or overlap. */
+  /* The air between two icon plates in the corner. */
   --sm-plate-gap:  8px;
 
   /* Score shrink-to-fit. ui.js publishes only --sm-cur-len (the character
@@ -204,7 +201,13 @@ textarea,
   position: absolute;
   top: var(--sm-top-y);
   left: var(--sm-gutter);
-  right: var(--sm-gutter);
+  /* SHORT OF THE CORNER. The three plates own the top-right corner on every
+     screen (hub CLAUDE.md §2), so the strip ends one plate-gap before them
+     instead of running gutter to gutter under them. The score stays centred
+     in what is left. Spelled out rather than kept in a --sm-corner-w on
+     :root: a var() there would be resolved against :root's plate size and
+     ignore the smaller one .sm-compact sets on #ui-root. */
+  right: calc(var(--sm-gutter) + var(--sm-btn-size) * 3 + var(--sm-plate-gap) * 3);
   height: var(--sm-top-h);
   display: flex;
   align-items: center;
@@ -252,7 +255,8 @@ textarea,
      `em` and ride the number instead of being pinned to the root font. */
   font-size: min(var(--sm-cur-max), var(--sm-cur-vw));
   font-size: min(var(--sm-cur-max), var(--sm-cur-vw),
-                 calc((100vw - var(--sm-cur-chrome)) /
+                 calc((100vw - var(--sm-cur-chrome)
+                       - var(--sm-btn-size) * 3 - var(--sm-plate-gap) * 2) /
                       ((var(--sm-cur-len, 9) + 2) * 0.62)));
 }
 .sm-ico {
@@ -333,16 +337,12 @@ textarea,
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
-  /* NEVER wide enough to reach the corner cluster on either side. The column
-     is centred and the plates are pinned right, so the widest it may ever be
-     is the viewport less TWO clusters — measured off the same variables the
-     plates themselves use, so it cannot drift out of step. TWO PLATES IS
-     STILL THE RIGHT NUMBER: this row holds .sm-corner only, because the run's
-     own pair moved to the row below rather than alongside it, precisely so
-     this bound would not have to double on a phone.
-     What makes this necessary is the zone line: "THE MOTHERLODE  CORE
-     +1 250 m" is 219px of text, which on a 360px phone ran straight into the
-     sound button. Bounded here, it wraps onto a second line instead. */
+  /* BOUNDED, so a long zone line wraps rather than spreading edge to edge:
+     "THE MOTHERLODE  CORE +1 250 m" is 219px of text, which on a 360px phone
+     used to run straight into the plates that sat on this row. The corner
+     moved up into the strip's row on 2026-10-11, so nothing sits beside the
+     column any more — the bound stays because the upgrade rail runs down the
+     left edge from here, and an unbounded line would print across it. */
   max-width: calc(100vw - 2 * (var(--sm-gutter) + var(--sm-btn-size) * 2 + 14px));
   display: flex;
   flex-direction: column;
@@ -597,38 +597,10 @@ textarea,
 /* ===========================================================================
  * BUTTONS
  * ---------------------------------------------------------------------------
- * The in-game pair sits on the same row as the countdown, at the right end,
- * and they are ICONS now. Two reasons: a word needs ~74px of plate on a
- * screen that is 360px wide, and RESTART-as-a-word was one mis-tap away from
- * throwing a run in the bin. Restart now lives inside the pause menu, which
- * is a far better place to be asked than a confirm dialog would be.
+ * RESTART used to be a word on the HUD, one mis-tap from throwing a run in
+ * the bin. It lives inside the pause card now, behind the three bars in the
+ * corner, which is a far better place to be asked than a confirm dialog.
  * ======================================================================== */
-.sm-buttons {
-  position: absolute;
-  /* ONE ROW INBOARD OF .sm-corner, which owns the corner itself now — and
-     inboard here means DOWN, not left. These two are the RUN's controls
-     (silence this instant, stop the run) and they exist only while a run does;
-     the pair above them belongs to the page and is always there. So reading
-     from the corner: fullscreen and sound on the top row, pause and mute on
-     the row beneath, each row right-aligned and the outermost plate of each
-     the one you reach for without looking.
-
-     WHY NOT ONE ROW OF FOUR, which is what maxgear does. .sm-center — the
-     countdown and the zone line — is centred on THIS row and bounded to clear
-     the buttons on either side. Four plates at 38px is 170px of a 360px phone,
-     which leaves the clock nowhere to be; two rows of two costs 44px of height
-     in a corner that has it and nothing at all in width. Same shape in both
-     layouts, so there is one arrangement to learn rather than two. */
-  top: calc(var(--sm-top-y) + var(--sm-top-h) + 7px
-            + var(--sm-btn-size) + var(--sm-plate-gap));
-  right: var(--sm-gutter);
-  display: flex;
-  gap: var(--sm-plate-gap);
-  pointer-events: auto;
-  /* Above the steering pads, which are full height and pass under here. The
-     topmost hit target wins, so a tap on a button is never a steer. */
-  z-index: 8;
-}
 .sm-btn {
   position: relative;
   font-family: var(--sm-mono);
@@ -709,6 +681,11 @@ textarea,
 .sm-iconbtn.sm-btn-off { color: var(--sm-dimmer); }
 .sm-iconbtn.sm-btn-off .sm-btn-svg { filter: none; }
 .sm-iconbtn.sm-btn-off::before { opacity: 0.35; }
+/* BOTH STATES ARE IN THE DRAWING, and aria-pressed picks one. ui.js writes
+   aria-pressed and the label together, so the engraving cannot say one thing
+   while a screen reader says another (hub CLAUDE.md §2). */
+.sm-iconbtn[aria-pressed="true"] .sm-g-rest,
+.sm-iconbtn:not([aria-pressed="true"]) .sm-g-pressed { display: none; }
 
 /* ===========================================================================
  * PAUSE MENU
@@ -726,14 +703,20 @@ textarea,
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.22s ease;
-  /* Above the summary (15) so a pause can never open behind an end screen,
-     below the start overlay (20) which owns the screen outright. */
-  z-index: 16;
+  /* Above the summary (15) AND the start overlay (20), because the same card
+     is the Settings face over both of them now. In a run neither is up.
+     BELOW .sm-corner (30): the three bars that opened it stay lit above its
+     scrim, which is what lets a second press close it. */
+  z-index: 22;
 }
 .sm-pause-on { opacity: 1; pointer-events: auto; }
 
 .sm-pause-card {
-  width: min(320px, 82vw);
+  width: min(380px, 90vw);
+  /* A safety net on a very short viewport, not a plan — the landscape block
+     at the end of this file is the plan. .sm-panel clips by default. */
+  max-height: 94vh;
+  overflow: auto;
   padding: 22px 22px 20px;
   text-align: center;
   transform: translateY(14px) scale(0.97);
@@ -776,6 +759,24 @@ textarea,
   margin-top: 9px;
 }
 .sm-pause-ico { display: block; width: 17px; height: 17px; }
+/* THE TWO FACES. In a run: kicker, PAUSE, RESUME / RESTART / MAIN MENU. Off a
+   run: SETTINGS and a plain BACK, because there is nothing to resume. The
+   settings half underneath is the same in both. */
+.sm-set-title,
+.sm-pause:not(.sm-pause-settings) .sm-set-only,
+.sm-pause-settings .sm-run-only,
+.sm-pause-settings .sm-pause-kicker { display: none; }
+.sm-pause-settings .sm-set-title { display: block; }
+.sm-pause-settings .sm-pause-title:not(.sm-set-title) { display: none; }
+/* The settings half: the volumes, the language and the way out, set off from
+   the run's buttons by the same hairline the way out has always had, and
+   left-aligned so every row's control starts on one gutter. */
+.sm-pause-set {
+  margin-top: 14px;
+  padding-top: 2px;
+  border-top: 1px solid rgba(142, 155, 171, 0.16);
+  text-align: left;
+}
 .sm-pause-ico .sm-btn-svg { width: 100%; height: 100%; filter: none; }
 .sm-pause-label { line-height: 1; }
 
@@ -819,7 +820,7 @@ textarea,
 .sm-start-quit:disabled { color: var(--sm-dimmer); border-color: var(--sm-border); cursor: default; }
 
 /* ===========================================================================
- * LANGUAGE ROW (pause card and sound panel)
+ * LANGUAGE ROW (start screen and menu card)
  * ---------------------------------------------------------------------------
  * Two equal plates, Norsk first, each a flag and its endonym. `flex: 1 1 0`
  * so the pair is the same size whatever the two names measure — they are
@@ -873,16 +874,20 @@ textarea,
 .sm-lang-btn[aria-pressed="true"] .sm-flag { opacity: 1; }
 .sm-lang-btn:focus-visible { outline: 2px solid var(--sm-cyan); outline-offset: 2px; }
 
-/* On the pause card: a caption over the pair, set off by the same hairline
-   the way out uses, because a language is not something you do to the run. */
-.sm-lang-stack {
-  margin-top: 15px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(142, 155, 171, 0.16);
+/* On the start screen: one row as wide as the way out beneath it, the caption
+   beside its two plates. A visible row on the screen you arrive on (hub
+   CLAUDE.md §2, "Two languages", Where) — the stranger who cannot read the
+   Norwegian the mine opened in should not have to hunt behind a plate. */
+.sm-lang-start {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 696px;
 }
 .sm-lang-cap {
   display: block;
-  margin-bottom: 8px;
+  flex: 0 0 auto;
   font-family: var(--sm-mono);
   font-size: 9px;
   font-weight: 800;
@@ -1954,43 +1959,36 @@ textarea,
 }
 
 /* ===========================================================================
- * THE CORNER CLUSTER — PERMANENT, AND FIXED TO THE PAGE
+ * THE CORNER — THREE PLATES, ON EVERY SCREEN, FIXED TO THE PAGE
  * ---------------------------------------------------------------------------
- * Two plates: the speaker that opens the sound panel, and the one that fills
- * the screen. They are the same gold-on-dark plate with the same hazard sliver
- * as the in-game pair, because they are the same kind of object — this is what
- * keeps a 42px button from reading as generic mobile chrome.
+ * Menu, sound, fullscreen (hub CLAUDE.md §2). The same gold-on-dark plate with
+ * the same hazard sliver as every other control here — that is what keeps a
+ * 42px button from reading as generic mobile chrome — but the glyphs are the
+ * hub's, to the path data.
  *
- * THEY NEVER GO ANYWHERE. This used to be `position: absolute` inside the
- * start overlay, which made it a menu ornament: it left with the menu, so
- * fullscreen was unreachable from the moment a run began. It is a child of
- * #ui-root now and `position: fixed`, so the same two plates are in the same
- * place on the menu, mid-run, over the pause card and over the summary.
+ * THEY NEVER GO ANYWHERE. A child of #ui-root and `position: fixed`, so the
+ * same three are in the same place on the menu, mid-run, over the pause card
+ * and over the summary.
  *
- * Z-INDEX 30 IS THE WHOLE POINT. Above the in-game plates (8), the pause card
- * (16), the summary (15), the start overlay (20) AND the sound panel (22) —
- * these outlive every one of them, so nothing any of them does may cover
- * them. Sitting above the panel it opens is what lets the speaker be a real
- * toggle; see the click handler in ui.js.
+ * Z-INDEX 30 IS THE WHOLE POINT. Above the pause card (22), the start overlay
+ * (20) and the summary (15): these outlive every one of them, so nothing any
+ * of them does may cover them. Sitting above the card it opens is what lets
+ * the three bars be a real toggle.
  *
- * WHY NOT THE VERY TOP CORNER. Mid-run the top of the screen is the score
- * strip, gutter to gutter, one line tall — so this takes the row BELOW it,
- * which is the row the run's own plates were already on, and THEY drop one row
- * further (see .sm-buttons for why down rather than left). The cost is that
- * the cluster no longer lines up with the menu's quit plate in the opposite
- * corner, which is the honest price of a control that is always there.
+ * THE VERY TOP CORNER, on the strip's own row and centred on its height. The
+ * strip yields — it stops short of these (see .sm-topbar) — because the
+ * plates are the same in every cabinet and the strip is not.
  *
- * SAFE AREAS ARE NOW ARITHMETIC, not inheritance. `fixed` positions against
- * the viewport, so #ui-root's padding no longer applies — both insets are
- * added back here so the pair lands on exactly the same pixel row as
- * .sm-buttons, which is absolute inside that padding box.
+ * SAFE AREAS ARE ARITHMETIC, not inheritance: `fixed` positions against the
+ * viewport, so #ui-root's padding does not apply and both insets are added
+ * back here, landing the plates on exactly the strip's row.
  *
- * pointer-events: auto because #ui-root is pointer-events:none and this used
- * to inherit `auto` from .sm-start. Nothing inherits it out here.
+ * pointer-events: auto because #ui-root is pointer-events:none.
  * ======================================================================== */
 .sm-corner {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + var(--sm-top-y) + var(--sm-top-h) + 7px);
+  top: calc(env(safe-area-inset-top, 0px) + var(--sm-top-y)
+            + (var(--sm-top-h) - var(--sm-btn-size)) / 2);
   right: calc(env(safe-area-inset-right, 0px) + var(--sm-gutter));
   display: flex;
   gap: var(--sm-plate-gap);
@@ -2005,61 +2003,12 @@ textarea,
 .sm-corner .sm-iconbtn[hidden] { display: none; }
 
 /* ===========================================================================
- * THE SOUND PANEL — two levels and a way back
+ * THE TWO VOLUMES — on the menu card
  * ---------------------------------------------------------------------------
- * Above the start overlay (20), the pause card (16) and the summary (15),
- * because it now opens over any of them. BELOW .sm-corner (30), and that is
- * deliberate: the speaker that opened it stays lit above its own scrim, which
- * is what lets a second press close it. Everything else on screen is under
- * here while it is up.
+ * Labelled rows, one gutter, a real range styled as one more gauge on this
+ * HUD. They used to live on a panel of their own behind a second speaker in
+ * the corner; the hub folded that into the one menu (CLAUDE.md §2).
  * ======================================================================== */
-.sm-sound {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(ellipse at center, rgba(4,6,9,0.62), rgba(2,3,5,0.94));
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.22s ease;
-  z-index: 22;
-}
-.sm-sound-on { opacity: 1; pointer-events: auto; }
-
-.sm-sound-card {
-  width: min(400px, 90vw);
-  padding: 22px 22px 20px;
-  text-align: left;
-  /* A safety net on a very short viewport, not a plan — the landscape block
-     at the bottom of this section is the plan. .sm-panel clips by default;
-     this has to override it or the net is not there at all. */
-  max-height: 92vh;
-  overflow: auto;
-  transform: translateY(14px) scale(0.97);
-  transition: transform 0.3s cubic-bezier(0.16, 1.5, 0.35, 1);
-}
-.sm-sound-on .sm-sound-card { transform: none; }
-
-.sm-sound-kicker {
-  font-family: var(--sm-mono);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 5px;
-  text-indent: 5px;
-  color: var(--sm-dimmer);
-}
-.sm-sound-title {
-  font-size: 30px;
-  font-weight: 900;
-  letter-spacing: 6px;
-  text-indent: 6px;
-  line-height: 1.1;
-  margin-bottom: 10px;
-  color: #fff;
-  text-shadow: 0 0 26px rgba(255, 194, 31, 0.4), 0 3px 0 rgba(0, 0, 0, 0.6);
-}
-
 .sm-sound-row {
   display: flex;
   align-items: center;
@@ -2182,28 +2131,6 @@ textarea,
   letter-spacing: 1.2px;
   color: var(--sm-dimmer);
 }
-.sm-sound-back {
-  width: 100%;
-  margin-top: 16px;
-  min-height: 46px;
-}
-
-/* A MENU MUST NOT SCROLL ON A PHONE ON ITS SIDE (hub CLAUDE.md §2). This card
-   is short enough that it needs no re-columning — buying back the last thirty
-   pixels from the furniture is the whole fix. The kicker and the hint are the
-   two things here that are flavour rather than control, so they are what goes,
-   exactly as .sm-mode-blurb does on the picker above. Control heights stop at
-   38: this fires on a phone, where a finger is still the pointer. */
-@media (max-height: 560px) {
-  .sm-sound-card { padding: 14px 16px 14px; }
-  .sm-sound-kicker { display: none; }
-  .sm-sound-title { font-size: 22px; letter-spacing: 4px; text-indent: 4px; margin-bottom: 4px; }
-  .sm-sound-row { margin-top: 8px; }
-  .sm-sound-range { height: 38px; }
-  .sm-sound-hint { display: none; }
-  .sm-sound-back { margin-top: 12px; min-height: 40px; }
-}
-
 /* Freestyle: no countdown panel at all. The centred column closes the gap by
    itself — that is the whole reason it is a flex column. */
 .sm-notimer .sm-clockwrap { display: none; }
@@ -2257,7 +2184,8 @@ textarea,
      collapsed to just its padding. Height must come from content here. */
   .sm-mode { flex: 0 0 auto; width: 100%; max-width: 380px; }
   .sm-mode-blurb { flex: 0 0 auto; }
-  .sm-start-quit { max-width: 380px; }
+  .sm-start-quit,
+  .sm-lang-start { max-width: 380px; }
 }
 @media (max-height: 560px) {
   .sm-start-logo { font-size: clamp(30px, 6vw, 52px); }
@@ -2304,9 +2232,8 @@ textarea,
   --sm-top-h: 38px;
   --sm-gutter: 7px;
   --sm-btn-size: 38px;
-  /* Tightens BOTH plate pairs at once — see :root. It used to be a lone
-     `gap: 6px` on .sm-buttons, which is exactly the kind of half-knowledge
-     that would have left the two stacked rows out of step. */
+  /* Tightens the corner and the strip's clearance from it at once — both
+     read this one variable. */
   --sm-plate-gap: 6px;
   --sm-cur-max: 30px;
   --sm-cur-vw: 7.6vw;
@@ -2486,37 +2413,74 @@ textarea,
   .sm-pause, .sm-pause-card { transition-duration: 0.01ms !important; }
 }
 
-/* A PAUSE CARD ON A PHONE ON ITS SIDE. This game has no landscape layout
-   (hub CLAUDE.md §2 names that, and it is not fixed here), and the language
-   row added ~70px to a card that was already close to the bottom of a 360px
-   screen. So this buys the height back rather than re-columning anything:
-   the flavour kicker goes, as it does on the sound card, the title shrinks,
-   controls stop at 38px (a finger is still the pointer), and the language
-   caption moves beside its buttons instead of above them. The max-height and
-   overflow are the safety net, not the plan — .sm-panel clips by default.
-   At the END of the file on purpose: the .sm-compact rules above have the
-   same specificity and would otherwise win on source order. */
+/* THE MENU CARD ON A SHORT SCREEN. The card carries the run's three buttons,
+   the two volumes, the language and the way out since 2026-10-11, when the
+   separate sound panel folded into it — far too much for one column on a
+   360-390px-tall screen. Two moves, the second only where it is needed:
+
+   1. Anything under 560px tall buys height back from the furniture: the
+      flavour kicker and the hint line go, the title shrinks, and controls
+      stop at 38px (this fires on a phone, where a finger is still the
+      pointer).
+   2. A phone ON ITS SIDE (landscape, under 500px — maxgear's query, which a
+      tablet never meets either way up) stands the two halves next to each
+      other: the run's buttons on the left, the settings on the right, and
+      the title across both. Nothing moves in the DOM; .sm-pause-run and
+      .sm-pause-set are already the two halves, so this is grid placement.
+
+   The card's max-height and overflow are the safety net, not the plan. At
+   the END of the file on purpose: the .sm-compact rules above have the same
+   specificity and would otherwise win on source order. */
 @media (max-height: 560px) {
   .sm-pause-card,
-  .sm-compact .sm-pause-card { width: min(360px, 82vw); padding: 12px 16px 12px; max-height: 94vh; overflow: auto; }
+  .sm-compact .sm-pause-card { padding: 12px 16px 12px; }
   .sm-pause-kicker { display: none; }
   .sm-pause-title,
   .sm-compact .sm-pause-title { font-size: 22px; letter-spacing: 4px; text-indent: 4px; margin-bottom: 2px; }
   .sm-pause-btn { min-height: 38px; margin-top: 6px; }
+  .sm-pause-set { margin-top: 10px; }
+  .sm-sound-row { margin-top: 6px; }
+  .sm-sound-range { height: 38px; }
+  .sm-sound-hint { display: none; }
   .sm-btn-quit { margin-top: 12px; }
-  .sm-lang-stack { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 8px; }
-  .sm-lang-cap { margin: 0; flex: 0 0 auto; }
   .sm-lang-btn { min-height: 38px; padding: 6px 8px; }
 
-  /* THE MAIN MENU ON A PHONE ON ITS SIDE, since the way out moved into its
-     column (2026-10-11) and a 360-390px screen has no room for one more row
-     unless something gives. What gives: the CHOOSE HOW TO PLAY caption,
-     which the two cards below it say again in larger type; a little of the
-     column's rhythm; and 6px of the door's own height, stopping at 40 like
-     every other control here. That keeps the door clear of the build stamp
-     pinned to the overlay's bottom edge, and the panel stops scrolling. */
+  /* THE MAIN MENU ON A PHONE ON ITS SIDE. The way out moved into its column
+     and the language row joined it above the way out (both 2026-10-11), and
+     a 360-390px screen has no room for two more rows unless something gives.
+     What gives: the CHOOSE HOW TO PLAY caption, which the two cards below it
+     say again in larger type; some of the logo, which is still the biggest
+     thing on the screen; a little of the column's rhythm; and the doors' own
+     height, stopping at 38-40 like every other control here. That keeps the
+     way out clear of the build stamp pinned to the overlay's bottom edge, and
+     the panel stops scrolling. */
   .sm-start-pick { display: none; }
+  .sm-start-logo { font-size: clamp(28px, 5vw, 42px); }
+  .sm-start-head { gap: 5px; }
   .sm-start-inner,
-  .sm-compact .sm-start-inner { gap: 10px; padding-top: 10px; padding-bottom: 22px; }
-  .sm-start-quit { min-height: 40px; margin-top: 4px; }
+  .sm-compact .sm-start-inner { gap: 9px; padding-top: 8px; padding-bottom: 22px; }
+  .sm-start-quit { min-height: 40px; margin-top: 3px; }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .sm-pause-card,
+  .sm-compact .sm-pause-card {
+    width: min(660px, 94vw);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+    grid-template-areas: "head head" "run set";
+    column-gap: 18px;
+    align-content: start;
+    align-items: start;
+  }
+  .sm-pause-head { grid-area: head; }
+  .sm-pause-run { grid-area: run; }
+  /* The hairline turns from a rule above the settings into one beside them. */
+  .sm-pause-set {
+    grid-area: set;
+    margin-top: 0;
+    padding: 0 0 0 16px;
+    border-top: 0;
+    border-left: 1px solid rgba(142, 155, 171, 0.16);
+  }
+  .sm-pause-set > .sm-sound-row:first-child { margin-top: 6px; }
 }

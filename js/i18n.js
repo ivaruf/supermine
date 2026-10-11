@@ -2,7 +2,7 @@
  * SUPERMINE — js/i18n.js                       [every word the mine says]
  * -----------------------------------------------------------------------------
  * Two languages, Norwegian first (hub CLAUDE.md §2, "Two languages"): bokmål
- * and English, switchable live from the pause menu or the sound panel.
+ * and English, switchable live from the start screen or the menu card behind the three bars.
  *
  * A CLASSIC SCRIPT, loaded from <head> before the SM scripts and before the
  * body paints, because this game is classic scripts on one global and must
@@ -51,9 +51,11 @@
       'lang.caption': 'SPRÅK',
 
       /* --- the corner and the HUD plates (aria-label + title) ---------- */
-      'aria.mute': 'Lyd på / av',
-      'aria.pause': 'Pause',
-      'aria.sound': 'Lyd',
+      /* The speaker names what a press DOES, and changes with the state:
+         aria-pressed carries "muted", the label carries the action. */
+      'aria.menu': 'Meny',
+      'aria.mute': 'Lyd av',
+      'aria.unmute': 'Lyd på',
       'aria.fullscreen': 'Fullskjerm',
       'aria.exitFullscreen': 'Avslutt fullskjerm',
       'aria.steerLeft': 'Styr til venstre',
@@ -77,6 +79,9 @@
       'pause.resume': 'FORTSETT',
       'pause.restart': 'START PÅ NYTT',
       'pause.menu': 'HOVEDMENY',
+      /* The same card opened from the three bars when no run is going: no
+         Resume, because there is nothing to resume. */
+      'settings.title': 'INNSTILLINGER',
       /* The way out is the one button in the mine NOT in brass capitals: the
          hub makes it the same object in every cabinet, words and case
          included (CLAUDE.md §2, "One button..."), and style.css leaves its
@@ -148,9 +153,7 @@
       'update.readyV': function (v) { return v + ' KLAR — TRYKK FOR Å INSTALLERE'; },
       'update.installing': 'INSTALLERER …',
 
-      /* --- sound panel --------------------------------------------------- */
-      'sound.kicker': 'HØYTTALERNE I FØRERHUSET',
-      'sound.title': 'LYD',
+      /* --- the volumes, on the menu card ---------------------------------- */
       'sound.music': 'MUSIKK',
       'sound.effects': 'EFFEKTER',
       'sound.hint': 'MUSIKKEN ER TAKTEN, OG DEN BLIR TYKKERE JO RIKERE ÅRENE BLIR. ' +
@@ -237,9 +240,9 @@
     en: {
       'lang.caption': 'LANGUAGE',
 
-      'aria.mute': 'Sound on / off',
-      'aria.pause': 'Pause',
-      'aria.sound': 'Sound',
+      'aria.menu': 'Menu',
+      'aria.mute': 'Mute',
+      'aria.unmute': 'Unmute',
       'aria.fullscreen': 'Fullscreen',
       'aria.exitFullscreen': 'Exit fullscreen',
       'aria.steerLeft': 'Steer left',
@@ -261,6 +264,7 @@
       'pause.resume': 'RESUME',
       'pause.restart': 'RESTART',
       'pause.menu': 'MAIN MENU',
+      'settings.title': 'SETTINGS',
       'exit.arcade': 'Back to arcade',
       'exit.close': 'Close',
       'exit.refused': 'Close this tab yourself',
@@ -323,8 +327,6 @@
       'update.readyV': function (v) { return v + ' READY — TAP TO INSTALL'; },
       'update.installing': 'INSTALLING…',
 
-      'sound.kicker': 'CAB SPEAKERS',
-      'sound.title': 'SOUND',
       'sound.music': 'MUSIC',
       'sound.effects': 'EFFECTS',
       'sound.hint': 'MUSIC IS THE BEAT THAT THICKENS AS THE SEAMS GET RICHER. ' +
