@@ -820,7 +820,7 @@ textarea,
 .sm-start-quit:disabled { color: var(--sm-dimmer); border-color: var(--sm-border); cursor: default; }
 
 /* ===========================================================================
- * LANGUAGE ROW (start screen and menu card)
+ * LANGUAGE ROW (menu card)
  * ---------------------------------------------------------------------------
  * Two equal plates, Norsk first, each a flag and its endonym. `flex: 1 1 0`
  * so the pair is the same size whatever the two names measure — they are
@@ -874,27 +874,6 @@ textarea,
 .sm-lang-btn[aria-pressed="true"] .sm-flag { opacity: 1; }
 .sm-lang-btn:focus-visible { outline: 2px solid var(--sm-cyan); outline-offset: 2px; }
 
-/* On the start screen: one row as wide as the way out beneath it, the caption
-   beside its two plates. A visible row on the screen you arrive on (hub
-   CLAUDE.md §2, "Two languages", Where) — the stranger who cannot read the
-   Norwegian the mine opened in should not have to hunt behind a plate. */
-.sm-lang-start {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  max-width: 696px;
-}
-.sm-lang-cap {
-  display: block;
-  flex: 0 0 auto;
-  font-family: var(--sm-mono);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 4px;
-  text-indent: 4px;
-  color: var(--sm-dimmer);
-}
 
 
 /* A frozen run must LOOK frozen. main.js holds the fixed step but CSS
@@ -2184,8 +2163,7 @@ textarea,
      collapsed to just its padding. Height must come from content here. */
   .sm-mode { flex: 0 0 auto; width: 100%; max-width: 380px; }
   .sm-mode-blurb { flex: 0 0 auto; }
-  .sm-start-quit,
-  .sm-lang-start { max-width: 380px; }
+  .sm-start-quit { max-width: 380px; }
 }
 @media (max-height: 560px) {
   .sm-start-logo { font-size: clamp(30px, 6vw, 52px); }
@@ -2445,21 +2423,17 @@ textarea,
   .sm-btn-quit { margin-top: 12px; }
   .sm-lang-btn { min-height: 38px; padding: 6px 8px; }
 
-  /* THE MAIN MENU ON A PHONE ON ITS SIDE. The way out moved into its column
-     and the language row joined it above the way out (both 2026-10-11), and
-     a 360-390px screen has no room for two more rows unless something gives.
-     What gives: the CHOOSE HOW TO PLAY caption, which the two cards below it
-     say again in larger type; some of the logo, which is still the biggest
-     thing on the screen; a little of the column's rhythm; and the doors' own
-     height, stopping at 38-40 like every other control here. That keeps the
-     way out clear of the build stamp pinned to the overlay's bottom edge, and
-     the panel stops scrolling. */
+  /* THE MAIN MENU ON A PHONE ON ITS SIDE, since the way out moved into its
+     column (2026-10-11) and a 360-390px screen has no room for one more row
+     unless something gives. What gives: the CHOOSE HOW TO PLAY caption,
+     which the two cards below it say again in larger type; a little of the
+     column's rhythm; and 6px of the door's own height, stopping at 40 like
+     every other control here. That keeps the door clear of the build stamp
+     pinned to the overlay's bottom edge, and the panel stops scrolling. */
   .sm-start-pick { display: none; }
-  .sm-start-logo { font-size: clamp(28px, 5vw, 42px); }
-  .sm-start-head { gap: 5px; }
   .sm-start-inner,
-  .sm-compact .sm-start-inner { gap: 9px; padding-top: 8px; padding-bottom: 22px; }
-  .sm-start-quit { min-height: 40px; margin-top: 3px; }
+  .sm-compact .sm-start-inner { gap: 10px; padding-top: 10px; padding-bottom: 22px; }
+  .sm-start-quit { min-height: 40px; margin-top: 4px; }
 }
 @media (orientation: landscape) and (max-height: 500px) {
   .sm-pause-card,

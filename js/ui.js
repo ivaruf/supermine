@@ -101,7 +101,7 @@ SM.ui = (function () {
    * KEEP IT IN STEP WITH sw.js's VERSION — it had drifted two releases behind,
    * which only ever shows on a first-visit load where nobody can check it
    * against anything, so a wrong number there is worse than none. */
-  var GAME_VERSION    = 'v1.13.0';
+  var GAME_VERSION    = 'v1.13.2';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -954,14 +954,6 @@ SM.ui = (function () {
     // file:// or first-visit load where no worker is controlling yet.
     els.version = el('div', 'sm-start-version', els.start, GAME_VERSION);
 
-    /* THE LANGUAGE ROW ON THE SCREEN YOU ARRIVE ON, as a visible row and not
-     * behind anything (hub CLAUDE.md §2, "Two languages", Where): the player
-     * who needs it most is the stranger who cannot read the Norwegian the
-     * mine opened in, and the owner could not find it when it lived only
-     * behind a corner plate. Above the way out, which stays last. Its own
-     * clipPath suffix, because the menu card carries a second copy. */
-    langRow(sc, 'sm-lang-start', 'sm-lang-cap', 'm');
-
     /* --- the way out of the GAME, on the screen you arrive on ---------------
      * The pause card has carried this since the arcade learned to frame us,
      * and that covers a player who is already driving. It covered nobody else:
@@ -1152,10 +1144,11 @@ SM.ui = (function () {
    * Two equal buttons, Norsk first, each with its flag and its endonym —
    * always written in its OWN language, with a lang attribute so a screen
    * reader says it right. The flags are the hub's shared drawings, copied
-   * from kitchens/index.html as they are. The row exists twice in this page
-   * (the menu card and the start screen) and the Union Jack's clipPath ids are
-   * page-global, so each copy gets its own suffix — or the second flag
-   * would silently clip against the first one's paths.
+   * from kitchens/index.html as they are. The row lives on the menu card
+   * only — language is a setting, and settings live behind the three bars
+   * (hub CLAUDE.md §2, "Two languages", Where) — but the Union Jack's
+   * clipPath ids are page-global, so they still carry a suffix, in case a
+   * second copy ever joins the page.
    *
    * Silent on purpose, like everything else on the menu card: play()
    * rate-limits on the sim clock, which is held while either screen is up.

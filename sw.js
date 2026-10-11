@@ -152,7 +152,7 @@
 // v1.10.2 A tablet no longer selects the HUD or opens Copy / Look Up.
 // v1.12.0 One way out, the same as every other cabinet: Back to arcade, last in
 //         the menu column, and Escape walks toward it.
-const VERSION = 'v1.13.1'; // precache reads past the browser's HTTP cache, so an update can never mix old and new files
+const VERSION = 'v1.13.2'; // language lives on the menu card only; the start screen spends its room on the ways in and the way out
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.
