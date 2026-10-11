@@ -152,7 +152,7 @@
 // v1.10.2 A tablet no longer selects the HUD or opens Copy / Look Up.
 // v1.12.0 One way out, the same as every other cabinet: Back to arcade, last in
 //         the menu column, and Escape walks toward it.
-const VERSION = 'v1.13.0'; // three plates in the corner (menu, mute, fullscreen) on every screen; volumes on the menu card; language on the start screen
+const VERSION = 'v1.13.1'; // precache reads past the browser's HTTP cache, so an update can never mix old and new files
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.
@@ -201,10 +201,17 @@ const ASSETS = [
   './icons/icon-maskable-512.png',
 ];
 
+// `cache: 'reload'` on everything the install stores. Without it the precache
+// reads through the browser's HTTP cache, which may still hold yesterday's copy
+// of a file, so a new version could be filed with some of the old files in it —
+// on 2026-10-11 dam_break ran a new screens.js against a stale sound.js and the
+// menu never wired up. The arcade learned this first (arcade/sw.js, `fresh`).
+const fresh = (url) => new Request(url, { cache: 'reload' });
+
 self.addEventListener('install', (event) => {
   // Deliberately NO skipWaiting(): once precached the new worker parks in
   // WAITING until the player accepts the update from the menu.
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS.map(fresh))));
 });
 
 self.addEventListener('message', (event) => {
