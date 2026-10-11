@@ -779,25 +779,44 @@ textarea,
 .sm-pause-ico .sm-btn-svg { width: 100%; height: 100%; filter: none; }
 .sm-pause-label { line-height: 1; }
 
-/* Leaving the game entirely, under a hairline that separates it from the three
-   buttons about this run. The quietest thing on the card on purpose: it is the
-   one choice here that another tap will not undo. */
-.sm-btn-quit {
-  margin-top: 15px;
-  padding-top: 16px;
-  border: 0;
-  border-top: 1px solid rgba(142, 155, 171, 0.16);
-  border-radius: 0;
-  background: none;
+/* LEAVING THE GAME ENTIRELY — the same object on the pause card and on the
+   main menu (.sm-start-quit below borrows every line of this). The hub makes
+   it one button in every cabinet (CLAUDE.md §2, "One button, and it looks and
+   behaves the same in every game"): last in its column, full column width, a
+   little more air above it than between the others, SECONDARY — and this is
+   the mine's secondary: an empty plate, a brass hairline round it and brass
+   words, where every other button on the card is filled metal. Never the
+   primary cyan, because leaving is never the recommended action.
+
+   SENTENCE CASE, and this is the one button in the game that is. The strings
+   arrive as "Back to arcade" / "Tilbake til arkaden", nothing here raises
+   them, and the tracking drops to suit lower case — the brass capitals
+   everywhere else are this game's voice, and this one control is the hub's. */
+.sm-btn-quit,
+.sm-start-quit {
+  margin-top: 18px;
+  border: 1px solid rgba(255, 194, 31, 0.34);
+  background: transparent;
   box-shadow: none;
-  color: var(--sm-dim);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: rgba(255, 194, 31, 0.86);
+  font-size: 12px;
+  letter-spacing: 0.4px;
 }
+.sm-btn-quit .sm-btn-svg,
+.sm-start-quit .sm-btn-svg { filter: none; }
 .sm-btn-quit:hover:not(:disabled),
-.sm-btn-quit:focus-visible {
-  color: #cfe0ef;
-  background: rgba(142, 155, 171, 0.08);
+.sm-btn-quit:focus-visible,
+.sm-start-quit:hover:not(:disabled),
+.sm-start-quit:focus-visible {
+  color: var(--sm-gold);
+  border-color: rgba(255, 194, 31, 0.66);
+  background: rgba(255, 194, 31, 0.06);
+  filter: none;
 }
-.sm-btn-quit:disabled { color: var(--sm-dimmer); cursor: default; }
+.sm-btn-quit:disabled,
+.sm-start-quit:disabled { color: var(--sm-dimmer); border-color: var(--sm-border); cursor: default; }
 
 /* ===========================================================================
  * LANGUAGE ROW (pause card and sound panel)
@@ -1914,31 +1933,25 @@ textarea,
   color: rgba(255,255,255,0.22);
 }
 
-/* THE WAY OUT, top left — the corner you came in by. Pinned to the overlay for
-   the same reason the build stamp is: the panel in the middle scrolls on a
-   short phone and a door must not scroll away. Quiet and gold rather than
-   loud, because it is the one control on this screen that is not the game.
-   SUPERMINE ADVENTURE carries the same plate in the same corner; the two are
-   siblings and leaving should not be a different gesture in each. See the
-   ArcadeExit block in js/ui.js for when it exists at all — it is absent
-   entirely unless ../arcade/exit.js answered. */
+/* THE WAY OUT on the main menu: the last row of the panel's column, as wide
+   as the mode cards above it (two cards of 340 and their 16px gap side by
+   side, one card's 380 once they stack — see the max-width: 700px block), so
+   it reads as part of the menu and never as a third mode. Its look is the
+   pause card's quit button above, shared selector and all. It used to be a
+   small plate pinned to the overlay's top-left corner; ui.js says why it
+   moved. Absent entirely unless ../arcade/exit.js answered. */
 .sm-start-quit {
-  position: absolute;
-  left: max(14px, env(safe-area-inset-left, 0px));
-  top: max(12px, env(safe-area-inset-top, 0px));
-  padding: 8px 14px;
-  font-size: 9.5px;
-  letter-spacing: 2px;
-  color: rgba(255, 194, 31, 0.82);
-  border-color: rgba(255, 194, 31, 0.30);
-  background: rgba(10, 14, 20, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 696px;
+  min-height: 46px;
+  /* The column's own 22px gap already separates it; this is the "little
+     more" on top. */
+  margin-top: 6px;
 }
-.sm-start-quit:hover:not(:disabled),
-.sm-start-quit:focus-visible {
-  color: var(--sm-gold);
-  border-color: rgba(255, 194, 31, 0.6);
-}
-.sm-start-quit:disabled { color: var(--sm-dimmer); border-color: var(--sm-border); }
 
 /* ===========================================================================
  * THE CORNER CLUSTER — PERMANENT, AND FIXED TO THE PAGE
@@ -2244,6 +2257,7 @@ textarea,
      collapsed to just its padding. Height must come from content here. */
   .sm-mode { flex: 0 0 auto; width: 100%; max-width: 380px; }
   .sm-mode-blurb { flex: 0 0 auto; }
+  .sm-start-quit { max-width: 380px; }
 }
 @media (max-height: 560px) {
   .sm-start-logo { font-size: clamp(30px, 6vw, 52px); }
@@ -2361,6 +2375,11 @@ textarea,
    meant for a word would stretch it into a rectangle. */
 .sm-compact .sm-btn:not(.sm-iconbtn) { min-width: 62px; padding: 9px 10px; font-size: 10px; letter-spacing: 1px; }
 .sm-compact .sm-btn-svg { width: 18px; height: 18px; }
+/* ...but the way out keeps its own size and tracking: the rule above is
+   tuned for capitals, and sentence case at 10px with 1px tracking is the
+   one label on the card that would get harder to read rather than smaller. */
+.sm-compact .sm-btn-quit,
+.sm-compact .sm-start-quit { font-size: 11px; letter-spacing: 0.3px; }
 .sm-compact .sm-hint { display: none; }
 /* The whole top cluster is ~135px on a phone in landscape, so the percentage
    alone is not enough — the floor is what keeps the announcement off it. */
@@ -2484,8 +2503,20 @@ textarea,
   .sm-pause-title,
   .sm-compact .sm-pause-title { font-size: 22px; letter-spacing: 4px; text-indent: 4px; margin-bottom: 2px; }
   .sm-pause-btn { min-height: 38px; margin-top: 6px; }
-  .sm-btn-quit { margin-top: 8px; padding-top: 8px; }
+  .sm-btn-quit { margin-top: 12px; }
   .sm-lang-stack { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 8px; }
   .sm-lang-cap { margin: 0; flex: 0 0 auto; }
   .sm-lang-btn { min-height: 38px; padding: 6px 8px; }
+
+  /* THE MAIN MENU ON A PHONE ON ITS SIDE, since the way out moved into its
+     column (2026-10-11) and a 360-390px screen has no room for one more row
+     unless something gives. What gives: the CHOOSE HOW TO PLAY caption,
+     which the two cards below it say again in larger type; a little of the
+     column's rhythm; and 6px of the door's own height, stopping at 40 like
+     every other control here. That keeps the door clear of the build stamp
+     pinned to the overlay's bottom edge, and the panel stops scrolling. */
+  .sm-start-pick { display: none; }
+  .sm-start-inner,
+  .sm-compact .sm-start-inner { gap: 10px; padding-top: 10px; padding-bottom: 22px; }
+  .sm-start-quit { min-height: 40px; margin-top: 4px; }
 }

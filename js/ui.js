@@ -101,7 +101,7 @@ SM.ui = (function () {
    * KEEP IT IN STEP WITH sw.js's VERSION — it had drifted two releases behind,
    * which only ever shows on a first-visit load where nobody can check it
    * against anything, so a wrong number there is worse than none. */
-  var GAME_VERSION    = 'v1.11.0';
+  var GAME_VERSION    = 'v1.12.0';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -235,12 +235,14 @@ SM.ui = (function () {
           '<path d="M6.6 10.8h10.8v9.6H6.6z"/>' +
           '<path d="m7.4 3.6 9.2 7.2M16.6 3.6 7.4 10.8"/>',
 
-    // Quitting: the shaft, and an arrow riding up it. A door would be the
-    // obvious pick and the obvious pick is wrong here — there are no doors
-    // underground, and everything else in this set is pit furniture.
-    surface: '<path d="M4.6 20.4V6.6h6.4v13.8"/>' +
-             '<path d="M17.6 20.4V9.6"/>' +
-             '<path d="m14.1 13.1 3.5-3.5 3.5 3.5"/>',
+    // Leaving the game: the hub's shared back arrow, TO THE PATH DATA. This
+    // used to be pit furniture of our own (a shaft with an arrow riding up
+    // it), and it was a good drawing — but the way out is the one control the
+    // hub makes identical in every cabinet (CLAUDE.md §2, "One button, and it
+    // looks and behaves the same in every game"), so a player who learned it
+    // next door finds it here without reading. The stroke and colour are
+    // still ours, via uiGlyph().
+    back: '<path d="M19 12H5m6-6-6 6 6 6"/>',
 
     sound_on: '<path d="M4.4 9.4h3.3l4.9-4.1v13.4l-4.9-4.1H4.4z"/>' +
               '<path d="M15.7 9.2a3.9 3.9 0 0 1 0 5.6"/>' +
@@ -730,7 +732,7 @@ SM.ui = (function () {
       els.pauseQuit = menuButton(
         pcard,
         'sm-btn-quit',
-        UI_ICONS.surface,
+        UI_ICONS.back,
         'exit.arcade'
       );
       // exit.js's verb() picks WHICH word; this file says it in the player's
@@ -938,9 +940,7 @@ SM.ui = (function () {
      * the pause card is behind a run, so a player who arrived here and did not
      * want to pick a mode had nothing to press — and inside the arcade's
      * iframe there is no tab strip and no visible back button either. That was
-     * a room with no door. The launcher's FLOOR pill is its safety net for a
-     * game that never heard of exit.js, not for one that loads it and then
-     * hides the way out behind starting a run.
+     * a room with no door.
      *
      * Built only when there is somewhere to go back TO — exitOffered(), not a
      * bare `window.ArcadeExit`: exit.js is another repo's file and is allowed
@@ -948,28 +948,32 @@ SM.ui = (function () {
      * arcade and should not be offered it. What it SAYS is exit.js's answer,
      * because a button must not promise to close a tab no script may close.
      *
+     * THE LAST THING IN THE MENU'S COLUMN, full column width, with a little
+     * more air above it than the rest — and the same object, glyph and words
+     * as its twin on the pause card. It used to be a small gold plate pinned
+     * to the top-left corner of the overlay, which was sensible on its own
+     * terms (the panel scrolled on a short phone and a door must not scroll
+     * away) but made leaving a different gesture here than in every other
+     * cabinet. The hub fixed the place on 2026-10-11 (CLAUDE.md §2, "One
+     * button, and it looks and behaves the same in every game"), so the
+     * scrolling is now what gives way: the landscape block at the bottom of
+     * style.css trims the panel until the column, door included, fits a
+     * phone on its side.
+     *
      * DELIBERATELY SILENT, unlike its twin on the pause card. This is the one
      * screen where audio has not been unlocked yet — the mode cards are the
      * gesture that does that — and waking an AudioContext to click on the way
-     * OUT of the game would be the only thing it ever got used for.
-     *
-     * It hangs off the OVERLAY, not the panel, for the same reason the build
-     * stamp does: the panel scrolls on a short phone and a door must not
-     * scroll away. */
+     * OUT of the game would be the only thing it ever got used for. Escape on
+     * this screen presses it — see onKeyDown(). */
     if (exitOffered()) {
-      els.menuQuit = el('button', 'sm-btn sm-start-quit', els.start, '');
+      els.menuQuit = el('button', 'sm-btn sm-start-quit', sc, '');
       els.menuQuit.setAttribute('type', 'button');
+      el('span', 'sm-pause-ico', els.menuQuit).innerHTML = uiGlyph(UI_ICONS.back);
+      els.menuQuitLabel = el('span', 'sm-pause-label', els.menuQuit, '');
       els.menuQuit.addEventListener('click', function (e) {
         e.preventDefault();
         els.menuQuit.blur();
-        window.ArcadeExit.quit().then(function (how) {
-          // 'refused' means the browser would not close a tab it did not open.
-          // Say so on the button rather than leaving it looking dead.
-          if (how !== 'refused') return;
-          quitRefused = true;
-          els.menuQuit.disabled = true;
-          paintQuit();
-        });
+        menuQuit();
       });
     }
 
@@ -1143,9 +1147,23 @@ SM.ui = (function () {
 
   function paintQuit() {
     if (!window.ArcadeExit) return;
-    var w = null;
-    if (els.pauseQuitLabel) { w = quitWord(); els.pauseQuitLabel.textContent = w; }
-    if (els.menuQuit) els.menuQuit.textContent = w || quitWord();
+    var w = quitWord();
+    if (els.pauseQuitLabel) els.pauseQuitLabel.textContent = w;
+    if (els.menuQuitLabel) els.menuQuitLabel.textContent = w;
+  }
+
+  /** The start screen's way out. The button and Escape on that screen both
+   *  come through here, so they are one action and cannot drift apart. */
+  function menuQuit() {
+    if (!els.menuQuit || els.menuQuit.disabled) return;
+    window.ArcadeExit.quit().then(function (how) {
+      // 'refused' means the browser would not close a tab it did not open.
+      // Say so on the button rather than leaving it looking dead.
+      if (how !== 'refused') return;
+      quitRefused = true;
+      els.menuQuit.disabled = true;
+      paintQuit();
+    });
   }
 
   /* =====================================================================
@@ -1258,7 +1276,12 @@ SM.ui = (function () {
        MACHINERY by keyboard would also be sawing the wheel left and right.
        Stopping propagation here keeps the key: we never preventDefault, so
        the range still moves. */
-    input.addEventListener('keydown', function (e) { e.stopPropagation(); });
+    // ...all but Escape, which is the panel's BACK and must reach onKeyDown
+    // even from a focused slider, or the one key that closes the panel would
+    // be the one key that does nothing while you are using it.
+    input.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' && e.key !== 'Esc') e.stopPropagation();
+    });
     input.addEventListener('keyup', function (e) { e.stopPropagation(); });
 
     var out = el('output', 'sm-sound-out', row, '100');
@@ -1672,28 +1695,63 @@ SM.ui = (function () {
   }
 
   /**
-   * ESC / P pause the run. input.js is frozen and does not know these keys, so
-   * this listener is ui.js's own — and it is on WINDOW in the bubble phase,
-   * which is exactly where the high-score field's stopPropagation() already
-   * shields it, so typing a name still cannot pause the game.
+   * ESCAPE, AND P. ONE HANDLER, ONE ACTION PER PRESS.
+   *
+   * The hub's rule (CLAUDE.md §2, "Escape goes one step back, and from the
+   * start screen that step is the arcade") in this game's states, checked in
+   * this order because the first one that is true is the one on top:
+   *
+   *   sound panel open    -> its BACK (closeSound), over any screen
+   *   pause card open     -> close it, the run carries on
+   *   driving             -> open the pause card (and pause)
+   *   main menu, nothing  -> the "Back to arcade" button, exactly as if it
+   *     else open            were pressed — and only when it is shown
+   *   end-of-run summary  -> nothing. It is not the start screen, it is not a
+   *                          run, and its one button is RUN IT AGAIN; a press
+   *                          that left the game from here would throw away a
+   *                          score the player has not had a chance to save.
+   *
+   * So two presses from anywhere in a run land on the pause card, which has
+   * the way out on it, and no single press ever throws a run away.
+   *
+   * P is the older pause key and keeps doing only that: it toggles the card
+   * mid-run and is ignored everywhere else — the way out is Escape's alone.
+   *
+   * WHY NOTHING ELSE HEARS THE SAME PRESS. input.js (frozen) owns the driving
+   * keys and has never known Escape or P, so there is nothing to race; the
+   * sliders and language plates stop propagation of their own keys but let
+   * Escape through, so a focused control is never a trap (the name field
+   * swallows everything, and may: it lives on the summary, where Escape has
+   * nothing to do, and P there is a letter in somebody's name). The one listener
+   * that does see every key is sound.js's capture-phase audio unlock, which
+   * only resumes a context and acts on nothing. Auto-repeat is ignored for
+   * the same reason a held key must not count twice: holding Escape would
+   * otherwise open and close the pause card at the repeat rate.
+   *
+   * On WINDOW in the bubble phase, which is exactly where the high-score
+   * field's stopPropagation() already shields it.
    */
   function onKeyDown(e) {
     if (!e) return;
     var k = e.key;
-    /* The sound panel comes first and takes Escape outright, and it has to:
-       the panel opens from every screen now, including mid-run, and without
-       this the key would go to the pause toggle below and resume a run that
-       still has a scrim and a volume slider over it. Escape leaves by exactly
-       the door BACK does — closeSound() — so the two cannot disagree. */
-    if (soundOpen && (k === 'Escape' || k === 'Esc')) {
+    var esc = (k === 'Escape' || k === 'Esc');
+    var p = (k === 'p' || k === 'P');
+    if (!esc && !p) return;
+
+    if (soundOpen) {
+      if (!esc) return;
       e.preventDefault();
-      closeSound();
+      if (!e.repeat) closeSound();
       return;
     }
-    if (k === 'Escape' || k === 'Esc' || k === 'p' || k === 'P') {
-      if (!canPause() && !pauseOpen) return;
+    if (pauseOpen || canPause()) {
       e.preventDefault();
-      togglePause();
+      if (!e.repeat) togglePause();
+      return;
+    }
+    if (esc && !started && els.menuQuit && !summaryOpen) {
+      e.preventDefault();
+      if (!e.repeat) menuQuit();
     }
   }
 

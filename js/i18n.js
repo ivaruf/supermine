@@ -77,9 +77,13 @@
       'pause.resume': 'FORTSETT',
       'pause.restart': 'START PÅ NYTT',
       'pause.menu': 'HOVEDMENY',
-      'exit.arcade': 'TILBAKE TIL ARKADEN',
-      'exit.close': 'LUKK',
-      'exit.refused': 'LUKK FANEN SELV',
+      /* The way out is the one button in the mine NOT in brass capitals: the
+         hub makes it the same object in every cabinet, words and case
+         included (CLAUDE.md §2, "One button..."), and style.css leaves its
+         case alone. */
+      'exit.arcade': 'Tilbake til arkaden',
+      'exit.close': 'Lukk',
+      'exit.refused': 'Lukk fanen selv',
 
       /* --- power-up splash, toasts -------------------------------------- */
       'splash.boost': 'TURBO!',
@@ -257,9 +261,9 @@
       'pause.resume': 'RESUME',
       'pause.restart': 'RESTART',
       'pause.menu': 'MAIN MENU',
-      'exit.arcade': 'BACK TO ARCADE',
-      'exit.close': 'CLOSE',
-      'exit.refused': 'CLOSE THIS TAB YOURSELF',
+      'exit.arcade': 'Back to arcade',
+      'exit.close': 'Close',
+      'exit.refused': 'Close this tab yourself',
 
       'splash.boost': 'BOOST MODE',
       'splash.boostSub': function (s) { return '+' + s + ' SEC  ·  SPEED SURGE'; },

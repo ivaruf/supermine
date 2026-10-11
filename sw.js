@@ -150,7 +150,7 @@
 //         ADVENTURE's offline install, because that game's prefix starts with
 //         ours. Both scoped properly now.
 // v1.10.2 A tablet no longer selects the HUD or opens Copy / Look Up.
-const VERSION = 'v1.11.0'; // the mine speaks bokmål first and English on request (js/i18n.js), and its menus say PLAY and BACK
+const VERSION = 'v1.12.0'; // one way out, the same as every other cabinet: Back to arcade, last in the menu column, and Escape walks toward it
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.
