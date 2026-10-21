@@ -152,7 +152,8 @@
 // v1.10.2 A tablet no longer selects the HUD or opens Copy / Look Up.
 // v1.12.0 One way out, the same as every other cabinet: Back to arcade, last in
 //         the menu column, and Escape walks toward it.
-const VERSION = 'v1.13.2'; // language lives on the menu card only; the start screen spends its room on the ways in and the way out
+// v1.13.3 An opening sting: the rig bores down and SUPERMINE punches in.
+const VERSION = 'v1.13.3'; // opening sting (js/intro.js): the rig bores down through the strata and the name lands on the menu
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.
@@ -196,6 +197,7 @@ const ASSETS = [
   './js/ui.js',
   './js/main.js',
   './js/touch-guard.js',
+  './js/intro.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

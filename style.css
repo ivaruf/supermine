@@ -2458,3 +2458,19 @@ textarea,
   }
   .sm-pause-set > .sm-sound-row:first-child { margin-top: 6px; }
 }
+
+/* ===========================================================================
+ * THE OPENING STING (js/intro.js) — a canvas the script creates and removes.
+ * Over everything, the corner plates at 30 included, because it is a
+ * curtain: for its three seconds nothing under it is meant to be reachable,
+ * and a tap anywhere on it is the skip.
+ * ======================================================================== */
+#intro {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 40;
+  touch-action: none;
+  cursor: pointer;
+}

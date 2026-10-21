@@ -46,6 +46,13 @@
 </head>
 <body>
 
+<!-- The three-second opening sting: the rig bores down through the strata and
+     the name punches in. Its own canvas, created and removed by the script;
+     any tap or key skips it. Async and first in <body>, so it plays while the
+     fourteen SM scripts below load, and nothing in SM knows it exists. The
+     one addition to this file since i18n.js. -->
+<script src="js/intro.js" async></script>
+
 <!-- Everything is drawn here. -->
 <canvas id="game"></canvas>
 

@@ -105,6 +105,13 @@ text looks it up by key: `ui.js` for the DOM (repainting on the `arcade:lang` ev
 English in their own tables as a fallback; the words shown come from `i18n.js` by id
 (`up.<id>`, `mat.<id>`, and each zone's `key`).
 
+Ahead of everything, as the first thing in `<body>`, `js/intro.js` loads `async`: the
+three-second opening sting (the rig bores down through the strata and the name lands
+on the menu's wordmark). It is not part of `SM`, reads nothing from it, creates and
+removes its own `<canvas id="intro">`, and skips on any tap or key — swallowed in the
+capture phase on `window`, so the skipping press never reaches `input.js` or `ui.js`.
+If it fails, the game is exactly as it was without it.
+
 Load order only guarantees that the objects **exist**. All the cross-references above
 happen at *runtime*, inside `update()`/`render()`, so circular references are fine.
 
