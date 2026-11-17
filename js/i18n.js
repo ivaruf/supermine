@@ -156,7 +156,7 @@
       /* --- the volumes, on the menu card ---------------------------------- */
       'sound.music': 'MUSIKK',
       'sound.effects': 'EFFEKTER',
-      'sound.hint': 'MUSIKKEN ER TAKTEN, OG DEN BLIR TYKKERE JO RIKERE ÅRENE BLIR. ' +
+      'sound.hint': 'MUSIKKEN ER TAKTEN, OG DEN BLIR KRAFTIGERE JO RIKERE ÅRENE BLIR. ' +
         'EFFEKTER ER MOTOREN, KVERNA OG ALT DU KNUSER. ' +
         'DRA I EN AV DEM, SÅ HØRER DU DEN.',
       'sound.back': 'TILBAKE',
@@ -188,7 +188,7 @@
       'up.magnet': 'MAGNETSAMLERE',
       'up.magnet.desc': 'Samlearmene folder seg ut. Magneten når 65 % lenger.',
       'up.multiplier': 'MALMRAFFINERI',
-      'up.multiplier.desc': 'Alt du samler er verdt 1,7 ganger mer.',
+      'up.multiplier.desc': 'Alt du samler, er verdt 1,7 ganger mer.',
       'up.rear_conveyor': 'SAMLEBÅND BAK',
       'up.rear_conveyor.desc': 'Et samlebånd plukker opp alt bak deg.',
       'up.explosive_pulse': 'SPRENGPULS',

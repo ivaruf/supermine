@@ -702,14 +702,17 @@ textarea,
   background: radial-gradient(ellipse at center, rgba(4,6,9,0.55), rgba(2,3,5,0.9));
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.22s ease;
+  /* Hidden as well as transparent, so a closed card's buttons leave the tab
+     order and the screen reader; it waits out the fade before it goes. */
+  visibility: hidden;
+  transition: opacity 0.22s ease, visibility 0s 0.22s;
   /* Above the summary (15) AND the start overlay (20), because the same card
      is the Settings face over both of them now. In a run neither is up.
      BELOW .sm-corner (30): the three bars that opened it stay lit above its
      scrim, which is what lets a second press close it. */
   z-index: 22;
 }
-.sm-pause-on { opacity: 1; pointer-events: auto; }
+.sm-pause-on { opacity: 1; pointer-events: auto; visibility: visible; transition-delay: 0s; }
 
 .sm-pause-card {
   width: min(380px, 90vw);
@@ -1340,12 +1343,13 @@ textarea,
   background: radial-gradient(ellipse at center, rgba(4,6,9,0.55), rgba(2,3,5,0.88));
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.4s ease;
+  visibility: hidden;              /* see .sm-pause */
+  transition: opacity 0.4s ease, visibility 0s 0.4s;
   /* Above the clock (6) and the upgrade rail (4) so the whole HUD dims when
      the run ends, but below the start overlay (20). */
   z-index: 15;
 }
-.sm-summary-on { opacity: 1; pointer-events: auto; }
+.sm-summary-on { opacity: 1; pointer-events: auto; visibility: visible; transition-delay: 0s; }
 
 .sm-card {
   position: relative;
@@ -1707,7 +1711,8 @@ textarea,
   transition: opacity 0.45s ease;
   z-index: 20;
 }
-.sm-start-off { opacity: 0; pointer-events: none; }
+/* Hidden as well as transparent once it has faded: see .sm-pause. */
+.sm-start-off { opacity: 0; pointer-events: none; visibility: hidden; transition: opacity 0.45s ease, visibility 0s 0.45s; }
 
 /* The menu is a real panel, vertically centred with a fixed rhythm, rather
    than a stack of margins that drifted apart as copy was added. `gap` on a

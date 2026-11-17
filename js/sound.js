@@ -977,8 +977,10 @@ SM.sound = (function () {
 
   function unlock() {
     if (!ensureContext()) return;
-    if (actx.state === 'suspended') {
-      try { actx.resume(); } catch (e) { /* ignore */ }
+    // Not only 'suspended': iOS parks a context in 'interrupted' after a call
+    // or a lock, and only a later gesture brings it back.
+    if (actx.state !== 'running') {
+      try { var r = actx.resume(); if (r && r.catch) r.catch(function () {}); } catch (e) { /* ignore */ }
     }
   }
 
@@ -988,15 +990,21 @@ SM.sound = (function () {
 
     // Browsers block audio until a user gesture.
     SM.events.on('input:firstgesture', unlock);
-    var kick = function () {
-      unlock();
-      window.removeEventListener('pointerdown', kick, true);
-      window.removeEventListener('keydown', kick, true);
-      window.removeEventListener('touchstart', kick, true);
-    };
+    // Every gesture, not just the first, so a context iOS has interrupted
+    // mid-session wakes on the next tap.
+    var kick = function () { unlock(); };
     window.addEventListener('pointerdown', kick, true);
     window.addEventListener('keydown', kick, true);
     window.addEventListener('touchstart', kick, true);
+    // A hidden tab goes quiet: the drone and the grinder are held on their
+    // last note when the frames stop, and would play on behind it.
+    document.addEventListener('visibilitychange', function () {
+      if (!actx) return;
+      try {
+        var r = document.hidden ? actx.suspend() : actx.resume();
+        if (r && r.catch) r.catch(function () {});
+      } catch (e) { /* ignore */ }
+    }, false);
 
     // Hot events: counters only.
     SM.events.on('material:destroyed', onDestroyed);

@@ -63,12 +63,20 @@ SM.input = (function () {
 
   /* --- keyboard ------------------------------------------------------ */
 
+  // No key counts as the first gesture: the mode cards on the title are the
+  // only way into a run, so steering, R or M there must not start one with no
+  // mode picked. (sound.js unlocks audio on any key by itself.)
   function onKeyDown(e) {
     var k = e.key;
-    if (k === 'a' || k === 'A' || k === 'ArrowLeft') { keyLeft = true; noteGesture(); e.preventDefault(); }
-    else if (k === 'd' || k === 'D' || k === 'ArrowRight') { keyRight = true; noteGesture(); e.preventDefault(); }
-    else if (k === 'r' || k === 'R') { noteGesture(); SM.events.emit('input:restart', null); }
-    else if (k === 'm' || k === 'M') { noteGesture(); SM.events.emit('input:mutetoggle', null); }
+    if (k === 'a' || k === 'A' || k === 'ArrowLeft') { keyLeft = true; e.preventDefault(); }
+    else if (k === 'd' || k === 'D' || k === 'ArrowRight') { keyRight = true; e.preventDefault(); }
+    else if (k === 'r' || k === 'R') {
+      // Not on the title or under Settings: restart would set the world
+      // running behind the menu.
+      if (SM.ui && SM.ui.canRestart && !SM.ui.canRestart()) return;
+      SM.events.emit('input:restart', null);
+    }
+    else if (k === 'm' || k === 'M') { SM.events.emit('input:mutetoggle', null); }
   }
 
   function onKeyUp(e) {

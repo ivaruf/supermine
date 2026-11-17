@@ -101,7 +101,7 @@ SM.ui = (function () {
    * KEEP IT IN STEP WITH sw.js's VERSION — it had drifted two releases behind,
    * which only ever shows on a first-visit load where nobody can check it
    * against anything, so a wrong number there is worse than none. */
-  var GAME_VERSION    = 'v1.13.4';
+  var GAME_VERSION    = 'v1.13.5';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -2928,8 +2928,9 @@ SM.ui = (function () {
     swReg.waiting.postMessage({ type: 'SKIP_WAITING' });
     // controllerchange never comes after a hard refresh (uncontrolled page) or
     // from a waiting worker gone redundant, so reload anyway: a stuck pill
-    // costs the update, a spare reload costs a menu screen.
-    setTimeout(function () { location.reload(); }, 3000);
+    // costs the update, a spare reload costs a menu screen. Play stays live
+    // meanwhile, so the same guard as controllerchange: never mid-run.
+    setTimeout(function () { if (!started) location.reload(); }, 3000);
   }
 
   /**
@@ -2988,6 +2989,7 @@ SM.ui = (function () {
     update: update,
     toast: toast,
     getCurrency: getCurrency,
-    isSummaryOpen: function () { return summaryOpen; }
+    isSummaryOpen: function () { return summaryOpen; },
+    canRestart: function () { return started && !settingsOpen; }
   };
 })();

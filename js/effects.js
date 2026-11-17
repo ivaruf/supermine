@@ -107,6 +107,8 @@ SM.effects = (function () {
   var FIREWORK_MAX     = 0.85;
 
   var SCREEN_FLASH_MAX = 0.52;
+  // Under reduced motion the full-screen flash keeps about a third of its alpha.
+  var REDUCED_MOTION = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
   var GRADE_MAX_ALPHA  = 0.085;
 
   /* =====================================================================
@@ -1463,7 +1465,7 @@ SM.effects = (function () {
         ctx.fillRect(b.minX, b.minY, bw, bh);
       }
       if (flashAmt > 0.002) {
-        ctx.globalAlpha = flashAmt;
+        ctx.globalAlpha = flashAmt * (REDUCED_MOTION && REDUCED_MOTION.matches ? 0.3 : 1);
         ctx.fillStyle = 'rgb(' + flashR + ',' + flashG + ',' + flashB + ')';
         ctx.fillRect(b.minX, b.minY, bw, bh);
       }

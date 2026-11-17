@@ -153,7 +153,7 @@
 // v1.12.0 One way out, the same as every other cabinet: Back to arcade, last in
 //         the menu column, and Escape walks toward it.
 // v1.13.3 An opening sting: the rig bores down and SUPERMINE punches in.
-const VERSION = 'v1.13.4'; // the update button reloads even when controllerchange never comes; Escape leaves the name field; a refused close says window, not tab
+const VERSION = 'v1.13.5'; // only a mode card starts a run; R waits for a run; closed cards leave the tab order; audio sleeps in a hidden tab and wakes on any tap; reduced motion stills the shake and dims the flash
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.
