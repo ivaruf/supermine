@@ -153,7 +153,7 @@
 // v1.12.0 One way out, the same as every other cabinet: Back to arcade, last in
 //         the menu column, and Escape walks toward it.
 // v1.13.3 An opening sting: the rig bores down and SUPERMINE punches in.
-const VERSION = 'v1.13.3'; // opening sting (js/intro.js): the rig bores down through the strata and the name lands on the menu
+const VERSION = 'v1.13.4'; // the update button reloads even when controllerchange never comes; Escape leaves the name field; a refused close says window, not tab
 const CACHE = `supermine-${VERSION}`;
 
 /* THE TWO PREFIXES, AND WHY THE SECOND ONE EXISTS.

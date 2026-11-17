@@ -88,7 +88,7 @@
          case alone. */
       'exit.arcade': 'Tilbake til arkaden',
       'exit.close': 'Lukk',
-      'exit.refused': 'Lukk fanen selv',
+      'exit.refused': 'Lukk vinduet selv',
 
       /* --- power-up splash, toasts -------------------------------------- */
       'splash.boost': 'TURBO!',
@@ -267,7 +267,7 @@
       'settings.title': 'SETTINGS',
       'exit.arcade': 'Back to arcade',
       'exit.close': 'Close',
-      'exit.refused': 'Close this tab yourself',
+      'exit.refused': 'Close the window yourself',
 
       'splash.boost': 'BOOST MODE',
       'splash.boostSub': function (s) { return '+' + s + ' SEC  ·  SPEED SURGE'; },

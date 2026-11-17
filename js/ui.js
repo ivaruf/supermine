@@ -101,7 +101,7 @@ SM.ui = (function () {
    * KEEP IT IN STEP WITH sw.js's VERSION — it had drifted two releases behind,
    * which only ever shows on a first-visit load where nobody can check it
    * against anything, so a wrong number there is worse than none. */
-  var GAME_VERSION    = 'v1.13.3';
+  var GAME_VERSION    = 'v1.13.4';
 
   var SCORE_KEY       = 'supermine.scores.v1';
   var SCORE_MAX       = 10;     // top ten, nothing else is kept
@@ -882,6 +882,9 @@ SM.ui = (function () {
       if (e.key === 'Enter') {
         e.preventDefault();          // no implicit form submit / page reload
         submitScore();
+      } else if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault();          // Escape in a text field only leaves the field
+        els.hsInput.blur();
       }
     });
     els.hsInput.addEventListener('keyup', function (e) { e.stopPropagation(); });
@@ -1105,7 +1108,7 @@ SM.ui = (function () {
    * something quit() will not do. We hand it the words in the current
    * language, and ask again on every switch.
    * ================================================================== */
-  var quitRefused = false;       // the browser would not close this tab
+  var quitRefused = false;       // the browser would not close this window
 
   function quitWord() {
     if (quitRefused) return T('exit.refused');
@@ -1698,8 +1701,9 @@ SM.ui = (function () {
    * keys and has never known Escape or P, so there is nothing to race; the
    * sliders and language plates stop propagation of their own keys but let
    * Escape through, so a focused control is never a trap (the name field
-   * swallows everything, and may: it lives on the summary, where Escape has
-   * nothing to do, and P there is a letter in somebody's name). The one listener
+   * swallows everything, Escape included, which only leaves the field: it lives
+   * on the summary, where Escape has nothing else to do, and P there is a
+   * letter in somebody's name). The one listener
    * that does see every key is sound.js's capture-phase audio unlock, which
    * only resumes a context and acts on nothing. Auto-repeat is ignored for
    * the same reason a held key must not count twice: holding Escape would
@@ -2921,6 +2925,10 @@ SM.ui = (function () {
     paintUpdate();
     els.update.disabled = true;
     swReg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    // controllerchange never comes after a hard refresh (uncontrolled page) or
+    // from a waiting worker gone redundant, so reload anyway: a stuck pill
+    // costs the update, a spare reload costs a menu screen.
+    setTimeout(function () { location.reload(); }, 3000);
   }
 
   /**
