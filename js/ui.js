@@ -696,7 +696,9 @@ SM.ui = (function () {
     /* The Settings face's way back to whatever it was opened over. Silent,
      * like the rest of this card off a run: play() rate-limits on the sim
      * clock, which is held while the menu is up. */
-    els.setBack = menuButton(prun, 'sm-set-only', UI_ICONS.back, 'sound.back');
+    /* No glyph: the back arrow belongs to the way out to the arcade, and a
+     * panel's Back that wore it too would look like a second exit. */
+    els.setBack = menuButton(prun, 'sm-set-only', null, 'sound.back');
     els.setBack.addEventListener('click', function (e) {
       e.preventDefault();
       closeSettings();
@@ -1095,8 +1097,7 @@ SM.ui = (function () {
   function menuButton(parent, cls, icon, key) {
     var b = el('button', 'sm-btn sm-pause-btn ' + cls, parent);
     b.setAttribute('type', 'button');
-    var ico = el('span', 'sm-pause-ico', b);
-    ico.innerHTML = uiGlyph(icon);
+    if (icon) el('span', 'sm-pause-ico', b).innerHTML = uiGlyph(icon);
     elT('span', 'sm-pause-label', b, key);
     return b;
   }

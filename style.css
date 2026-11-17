@@ -1890,6 +1890,7 @@ textarea,
   line-height: 1.6;
   letter-spacing: 1.6px;
   color: var(--sm-dimmer);
+  white-space: pre-wrap;   /* the strings space their groups with runs of spaces */
 }
 .sm-keys-touch { display: none; }
 .sm-compact .sm-keys-desk,
